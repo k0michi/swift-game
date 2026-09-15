@@ -1,0 +1,116 @@
+name: Setup Swift
+description: Install and cache an exact Swift toolchain on macOS, Linux, or Windows
+
+inputs:
+  swift-version:
+    description: Exact Swift toolchain version
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install Linux system dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes libcurl4-openssl-dev
+
+    - name: Cache Swift toolchain on macOS
+      if: runner.os == 'macOS'
+      id: cache-macos
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.swiftly
+          ~/Library/Developer/Toolchains
+        key: macos-swift-${{ inputs.swift-version }}
+
+    - name: Cache Swift toolchain on Linux
+      if: runner.os == 'Linux'
+      id: cache-linux
+      uses: actions/cache@v6
+      with:
+        path: ~/.local/share/swiftly
+        key: linux-swift-${{ inputs.swift-version }}
+
+    - name: Cache Swift toolchain on Windows
+      if: runner.os == 'Windows'
+      id: cache-windows
+      uses: actions/cache@v6
+      with:
+        path: ~/AppData/Local/Programs/Swift
+        key: windows-swift-${{ inputs.swift-version }}
+
+    - name: Install Swift on macOS
+      if: runner.os == 'macOS' && steps.cache-macos.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+      run: |
+        curl --fail --location --output swiftly.pkg https://download.swift.org/swiftly/darwin/swiftly.pkg
+        installer -pkg swiftly.pkg -target CurrentUserHomeDirectory
+        ~/.swiftly/bin/swiftly init --skip-install --quiet-shell-followup --assume-yes
+        ~/.swiftly/bin/swiftly install --use "$SWIFT_VERSION"
+
+    - name: Install Swift on Linux
+      if: runner.os == 'Linux' && steps.cache-linux.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+      run: |
+        curl --fail --location --output swiftly.tar.gz "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
+        tar zxf swiftly.tar.gz
+        ./swiftly init --skip-install --quiet-shell-followup --assume-yes
+        . "$HOME/.local/share/swiftly/env.sh"
+        swiftly install --use "$SWIFT_VERSION"
+
+    - name: Install Swift on Windows
+      if: runner.os == 'Windows' && steps.cache-windows.outputs.cache-hit != 'true'
+      shell: pwsh
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+      run: |
+        winget install --id Swift.Toolchain --exact --version $env:SWIFT_VERSION --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
+
+    - name: Configure Swift on macOS
+      if: runner.os == 'macOS'
+      shell: bash
+      run: echo "$HOME/.swiftly/bin" >> "$GITHUB_PATH"
+
+    - name: Configure Swift on Linux
+      if: runner.os == 'Linux'
+      shell: bash
+      run: echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
+
+    - name: Configure Swift on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+      run: |
+        $swiftRoot = Join-Path $env:LOCALAPPDATA 'Programs\Swift'
+        $swiftBin = Join-Path $swiftRoot "Toolchains\$env:SWIFT_VERSION+Asserts\usr\bin"
+        $sdkRoot = Join-Path $swiftRoot "Platforms\$env:SWIFT_VERSION\Windows.platform\Developer\SDKs\Windows.sdk"
+        if (-not (Test-Path $swiftBin)) {
+          throw "Swift toolchain was not installed at $swiftBin"
+        }
+        if (-not (Test-Path $sdkRoot)) {
+          throw "Swift Windows SDK was not installed at $sdkRoot"
+        }
+        $swiftBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        "SDKROOT=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+    - name: Verify Swift version on macOS or Linux
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+      run: swift --version | grep "$SWIFT_VERSION"
+
+    - name: Verify Swift version on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+      run: swift --version | Select-String $env:SWIFT_VERSION
