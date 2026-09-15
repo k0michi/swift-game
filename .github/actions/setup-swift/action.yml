@@ -71,12 +71,12 @@ runs:
         SWIFT_VERSION: ${{ inputs.swift-version }}
       run: |
         case "$(uname -m)" in
-          x86_64) platform=ubuntu2404 ;;
-          aarch64) platform=ubuntu2404-aarch64 ;;
+          x86_64) platform_directory=ubuntu2404; platform_name=ubuntu24.04 ;;
+          aarch64) platform_directory=ubuntu2404-aarch64; platform_name=ubuntu24.04-aarch64 ;;
           *) echo "Unsupported Linux architecture: $(uname -m)" >&2; exit 1 ;;
         esac
-        archive="swift-$SWIFT_VERSION-RELEASE-$platform.tar.gz"
-        url="https://download.swift.org/swift-$SWIFT_VERSION-release/$platform/swift-$SWIFT_VERSION-RELEASE/$archive"
+        archive="swift-$SWIFT_VERSION-RELEASE-$platform_name.tar.gz"
+        url="https://download.swift.org/swift-$SWIFT_VERSION-release/$platform_directory/swift-$SWIFT_VERSION-RELEASE/$archive"
         mkdir -p .swift-downloads/linux
         curl --fail --location --output ".swift-downloads/linux/$archive" "$url"
         curl --fail --location --output ".swift-downloads/linux/$archive.sig" "$url.sig"
@@ -99,18 +99,14 @@ runs:
       env:
         SWIFT_VERSION: ${{ inputs.swift-version }}
       run: |
-        $expectedHashes = @{
-          '6.3.3' = '235626548F249CD516D3D4D90EEE980DCCAD46F3822DAC1F8E3119B0FEDE94B7'
-        }
-        $expectedHash = $expectedHashes[$env:SWIFT_VERSION]
-        if ($null -eq $expectedHash) {
-          throw "No trusted Windows installer hash is configured for Swift $env:SWIFT_VERSION"
-        }
         $installer = Get-ChildItem .swift-downloads/windows -Filter '*.exe' -File -Recurse |
-          Where-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq $expectedHash } |
+          Where-Object {
+            $signature = Get-AuthenticodeSignature $_.FullName
+            $signature.Status -eq 'Valid' -and $signature.SignerCertificate.Subject -match 'Apple Inc\.'
+          } |
           Select-Object -First 1
         if ($null -eq $installer) {
-          throw "A Swift $env:SWIFT_VERSION installer with checksum $expectedHash was not found"
+          throw "A valid Apple-signed Swift $env:SWIFT_VERSION installer was not found"
         }
         $process = Start-Process $installer.FullName -ArgumentList '/quiet', '/norestart' -Wait -PassThru
         if ($process.ExitCode -notin 0, 3010) {
@@ -131,11 +127,11 @@ runs:
         SWIFT_VERSION: ${{ inputs.swift-version }}
       run: |
         case "$(uname -m)" in
-          x86_64) platform=ubuntu2404 ;;
-          aarch64) platform=ubuntu2404-aarch64 ;;
+          x86_64) platform_name=ubuntu24.04 ;;
+          aarch64) platform_name=ubuntu24.04-aarch64 ;;
           *) echo "Unsupported Linux architecture: $(uname -m)" >&2; exit 1 ;;
         esac
-        archive=".swift-downloads/linux/swift-$SWIFT_VERSION-RELEASE-$platform.tar.gz"
+        archive=".swift-downloads/linux/swift-$SWIFT_VERSION-RELEASE-$platform_name.tar.gz"
         curl --fail --silent --show-error https://swift.org/keys/all-keys.asc | gpg --batch --import
         gpg --batch --verify "$archive.sig" "$archive"
         mkdir -p .swift-toolchain
