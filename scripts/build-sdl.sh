@@ -17,8 +17,9 @@ set -- \
     -B "$build_directory" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$install_directory" \
-    -DSDL_SHARED=OFF \
+    -DSDL_SHARED=ON \
     -DSDL_STATIC=ON \
+    -DSDL_DEPS_SHARED=ON \
     -DSDL_INSTALL=ON \
     -DSDL_TEST_LIBRARY=OFF \
     -DSDL_TESTS=OFF \
