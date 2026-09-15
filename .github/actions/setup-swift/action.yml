@@ -118,7 +118,10 @@ runs:
       shell: bash
       env:
         SWIFT_VERSION: ${{ inputs.swift-version }}
-      run: installer -pkg ".swift-downloads/macos/swift-$SWIFT_VERSION.pkg" -target CurrentUserHomeDirectory
+      run: |
+        package=".swift-downloads/macos/swift-$SWIFT_VERSION.pkg"
+        pkgutil --check-signature "$package"
+        installer -pkg "$package" -target CurrentUserHomeDirectory
 
     - name: Install Swift on Linux
       if: runner.os == 'Linux'
@@ -132,7 +135,7 @@ runs:
           *) echo "Unsupported Linux architecture: $(uname -m)" >&2; exit 1 ;;
         esac
         archive=".swift-downloads/linux/swift-$SWIFT_VERSION-RELEASE-$platform_name.tar.gz"
-        curl --fail --silent --show-error https://swift.org/keys/all-keys.asc | gpg --batch --import
+        curl --fail --location --silent --show-error https://swift.org/keys/all-keys.asc | gpg --batch --import
         gpg --batch --verify "$archive.sig" "$archive"
         mkdir -p .swift-toolchain
         find .swift-toolchain -mindepth 1 -maxdepth 1 -exec rm -rf {} +
