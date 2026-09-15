@@ -5,16 +5,52 @@ on:
   pull_request:
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  macos:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.2"
+      - name: Install Swift 6.3.3
+        run: |
+          curl --fail --location --output swiftly.pkg https://download.swift.org/swiftly/darwin/swiftly.pkg
+          installer -pkg swiftly.pkg -target CurrentUserHomeDirectory
+          ~/.swiftly/bin/swiftly init --skip-install --quiet-shell-followup --assume-yes
+          ~/.swiftly/bin/swiftly install --use 6.3.3
+          echo "$HOME/.swiftly/bin" >> "$GITHUB_PATH"
+      - name: Verify Swift version
+        run: swift --version | grep '6.3.3'
+      - name: Build
+        run: swift build
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Swift 6.3.3
+        run: |
+          curl --fail --location --output swiftly.tar.gz "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
+          tar zxf swiftly.tar.gz
+          ./swiftly init --skip-install --quiet-shell-followup --assume-yes
+          . "$HOME/.local/share/swiftly/env.sh"
+          swiftly install --use 6.3.3
+          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
+      - name: Verify Swift version
+        run: swift --version | grep '6.3.3'
+      - name: Build
+        run: swift build
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Swift 6.3.3
+        shell: pwsh
+        run: |
+          winget install --id Swift.Toolchain --exact --version 6.3.3 --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          "$machinePath;$userPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Verify Swift version
+        shell: pwsh
+        run: swift --version | Select-String '6.3.3'
       - name: Build
         run: swift build
