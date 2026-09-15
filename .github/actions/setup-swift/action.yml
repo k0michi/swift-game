@@ -14,7 +14,9 @@ runs:
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install --yes libcurl4-openssl-dev
+        sudo apt-get install --yes binutils gnupg2 libc6-dev libcurl4-openssl-dev \
+          libedit2 libgcc-13-dev libncurses-dev libpython3-dev libsqlite3-0 \
+          libstdc++-13-dev libxml2-dev libz3-dev tzdata zip unzip zlib1g-dev
 
     - name: Install SDL build dependencies
       if: runner.os == 'Linux'
@@ -28,72 +30,150 @@ runs:
           libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev libusb-1.0-0-dev \
           libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
 
-    - name: Cache Swift toolchain on macOS
+    - name: Restore Swift installer cache on macOS
       if: runner.os == 'macOS'
       id: cache-macos
-      uses: actions/cache@v6
+      uses: actions/cache/restore@v6
       with:
-        path: |
-          ~/.swiftly
-          ~/Library/Developer/Toolchains
-        key: macos-swift-${{ inputs.swift-version }}
+        path: .swift-downloads/macos
+        key: swift-installer-v1-macos-${{ runner.arch }}-${{ inputs.swift-version }}
 
-    - name: Cache Swift toolchain on Linux
+    - name: Restore Swift archive cache on Linux
       if: runner.os == 'Linux'
       id: cache-linux
-      uses: actions/cache@v6
+      uses: actions/cache/restore@v6
       with:
-        path: ~/.local/share/swiftly
-        key: linux-swift-${{ inputs.swift-version }}
+        path: .swift-downloads/linux
+        key: swift-archive-v1-linux-${{ runner.arch }}-${{ inputs.swift-version }}
 
-    - name: Cache Swift toolchain on Windows
+    - name: Restore Swift installer cache on Windows
       if: runner.os == 'Windows'
       id: cache-windows
-      uses: actions/cache@v6
+      uses: actions/cache/restore@v6
       with:
-        path: ~/AppData/Local/Programs/Swift
-        key: windows-swift-${{ inputs.swift-version }}
+        path: .swift-downloads/windows
+        key: swift-installer-v1-windows-${{ runner.arch }}-${{ inputs.swift-version }}
 
-    - name: Install Swift on macOS
+    - name: Download Swift installer on macOS
       if: runner.os == 'macOS' && steps.cache-macos.outputs.cache-hit != 'true'
       shell: bash
       env:
         SWIFT_VERSION: ${{ inputs.swift-version }}
       run: |
-        curl --fail --location --output swiftly.pkg https://download.swift.org/swiftly/darwin/swiftly.pkg
-        installer -pkg swiftly.pkg -target CurrentUserHomeDirectory
-        ~/.swiftly/bin/swiftly init --skip-install --quiet-shell-followup --assume-yes
-        ~/.swiftly/bin/swiftly install --use "$SWIFT_VERSION"
+        mkdir -p .swift-downloads/macos
+        curl --fail --location --output ".swift-downloads/macos/swift-$SWIFT_VERSION.pkg" \
+          "https://download.swift.org/swift-$SWIFT_VERSION-release/xcode/swift-$SWIFT_VERSION-RELEASE/swift-$SWIFT_VERSION-RELEASE-osx.pkg"
 
-    - name: Install Swift on Linux
+    - name: Download Swift archive on Linux
       if: runner.os == 'Linux' && steps.cache-linux.outputs.cache-hit != 'true'
       shell: bash
       env:
         SWIFT_VERSION: ${{ inputs.swift-version }}
       run: |
-        curl --fail --location --output swiftly.tar.gz "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
-        tar zxf swiftly.tar.gz
-        ./swiftly init --skip-install --quiet-shell-followup --assume-yes
-        . "$HOME/.local/share/swiftly/env.sh"
-        swiftly install --use "$SWIFT_VERSION"
+        case "$(uname -m)" in
+          x86_64) platform=ubuntu2404 ;;
+          aarch64) platform=ubuntu2404-aarch64 ;;
+          *) echo "Unsupported Linux architecture: $(uname -m)" >&2; exit 1 ;;
+        esac
+        archive="swift-$SWIFT_VERSION-RELEASE-$platform.tar.gz"
+        url="https://download.swift.org/swift-$SWIFT_VERSION-release/$platform/swift-$SWIFT_VERSION-RELEASE/$archive"
+        mkdir -p .swift-downloads/linux
+        curl --fail --location --output ".swift-downloads/linux/$archive" "$url"
+        curl --fail --location --output ".swift-downloads/linux/$archive.sig" "$url.sig"
 
-    - name: Install Swift on Windows
+    - name: Download Swift installer on Windows
       if: runner.os == 'Windows' && steps.cache-windows.outputs.cache-hit != 'true'
       shell: pwsh
       env:
         SWIFT_VERSION: ${{ inputs.swift-version }}
       run: |
-        winget install --id Swift.Toolchain --exact --version $env:SWIFT_VERSION --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
+        New-Item -ItemType Directory -Force .swift-downloads/windows | Out-Null
+        winget download --id Swift.Toolchain --exact --version $env:SWIFT_VERSION --source winget --download-directory .swift-downloads/windows --accept-package-agreements --accept-source-agreements --disable-interactivity
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to download the Swift $env:SWIFT_VERSION installer"
+        }
+
+    - name: Install Swift on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+      run: |
+        $expectedHashes = @{
+          '6.3.3' = '235626548F249CD516D3D4D90EEE980DCCAD46F3822DAC1F8E3119B0FEDE94B7'
+        }
+        $expectedHash = $expectedHashes[$env:SWIFT_VERSION]
+        if ($null -eq $expectedHash) {
+          throw "No trusted Windows installer hash is configured for Swift $env:SWIFT_VERSION"
+        }
+        $installer = Get-ChildItem .swift-downloads/windows -Filter '*.exe' -File -Recurse |
+          Where-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq $expectedHash } |
+          Select-Object -First 1
+        if ($null -eq $installer) {
+          throw "A Swift $env:SWIFT_VERSION installer with checksum $expectedHash was not found"
+        }
+        $process = Start-Process $installer.FullName -ArgumentList '/quiet', '/norestart' -Wait -PassThru
+        if ($process.ExitCode -notin 0, 3010) {
+          throw "Swift installer failed with exit code $($process.ExitCode)"
+        }
+
+    - name: Install Swift on macOS
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+      run: installer -pkg ".swift-downloads/macos/swift-$SWIFT_VERSION.pkg" -target CurrentUserHomeDirectory
+
+    - name: Install Swift on Linux
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+      run: |
+        case "$(uname -m)" in
+          x86_64) platform=ubuntu2404 ;;
+          aarch64) platform=ubuntu2404-aarch64 ;;
+          *) echo "Unsupported Linux architecture: $(uname -m)" >&2; exit 1 ;;
+        esac
+        archive=".swift-downloads/linux/swift-$SWIFT_VERSION-RELEASE-$platform.tar.gz"
+        curl --fail --silent --show-error https://swift.org/keys/all-keys.asc | gpg --batch --import
+        gpg --batch --verify "$archive.sig" "$archive"
+        mkdir -p .swift-toolchain
+        find .swift-toolchain -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        tar -xzf "$archive" --strip-components=1 -C .swift-toolchain
+
+    - name: Save Swift installer cache on macOS
+      if: runner.os == 'macOS' && steps.cache-macos.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: .swift-downloads/macos
+        key: swift-installer-v1-macos-${{ runner.arch }}-${{ inputs.swift-version }}
+
+    - name: Save Swift archive cache on Linux
+      if: runner.os == 'Linux' && steps.cache-linux.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: .swift-downloads/linux
+        key: swift-archive-v1-linux-${{ runner.arch }}-${{ inputs.swift-version }}
+
+    - name: Save Swift installer cache on Windows
+      if: runner.os == 'Windows' && steps.cache-windows.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: .swift-downloads/windows
+        key: swift-installer-v1-windows-${{ runner.arch }}-${{ inputs.swift-version }}
 
     - name: Configure Swift on macOS
       if: runner.os == 'macOS'
       shell: bash
-      run: echo "$HOME/.swiftly/bin" >> "$GITHUB_PATH"
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+      run: echo "$HOME/Library/Developer/Toolchains/swift-$SWIFT_VERSION-RELEASE.xctoolchain/usr/bin" >> "$GITHUB_PATH"
 
     - name: Configure Swift on Linux
       if: runner.os == 'Linux'
       shell: bash
-      run: echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
+      run: echo "$GITHUB_WORKSPACE/.swift-toolchain/usr/bin" >> "$GITHUB_PATH"
 
     - name: Configure Swift on Windows
       if: runner.os == 'Windows'
@@ -104,13 +184,20 @@ runs:
         $swiftRoot = Join-Path $env:LOCALAPPDATA 'Programs\Swift'
         $swiftBin = Join-Path $swiftRoot "Toolchains\$env:SWIFT_VERSION+Asserts\usr\bin"
         $sdkRoot = Join-Path $swiftRoot "Platforms\$env:SWIFT_VERSION\Windows.platform\Developer\SDKs\Windows.sdk"
+        $swiftCore = Get-ChildItem (Join-Path $swiftRoot 'Runtimes') -Filter swiftCore.dll -File -Recurse |
+          Select-Object -First 1
         if (-not (Test-Path $swiftBin)) {
           throw "Swift toolchain was not installed at $swiftBin"
         }
         if (-not (Test-Path $sdkRoot)) {
           throw "Swift Windows SDK was not installed at $sdkRoot"
         }
+        if ($null -eq $swiftCore) {
+          throw "Swift runtime containing swiftCore.dll was not installed under $swiftRoot\Runtimes"
+        }
+        $swiftRuntimeBin = $swiftCore.Directory.FullName
         $swiftBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        $swiftRuntimeBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         "SDKROOT=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
     - name: Verify Swift version on macOS or Linux

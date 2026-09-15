@@ -1,4 +1,6 @@
 .build/
+.swift-downloads/
+.swift-toolchain/
 .swiftpm/
 Package.resolved
 .DS_Store

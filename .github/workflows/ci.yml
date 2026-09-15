@@ -1,5 +1,9 @@
 name: CI
 
+env:
+  SWIFT_VERSION: 6.3.3
+  BUILD_CACHE_VERSION: 2
+
 on:
   push:
   pull_request:
@@ -19,13 +23,20 @@ jobs:
 
       - uses: ./.github/actions/setup-swift
         with:
-          swift-version: 6.3.3
+          swift-version: ${{ env.SWIFT_VERSION }}
+
+      - name: Compute build cache context
+        id: build-cache-context
+        shell: bash
+        run: echo "sdl-revision=$(git rev-parse HEAD:Dependencies/SDL)" >> "$GITHUB_OUTPUT"
 
       - name: Cache build
         uses: actions/cache@v6
         with:
           path: .build
-          key: ${{ runner.os }}-swift-6.3.3-sdl-${{ hashFiles('Dependencies/SDL/CMakeLists.txt', 'Package.swift', 'cmake/**', 'scripts/**') }}
+          key: build-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-sdl-${{ steps.build-cache-context.outputs.sdl-revision }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Sources/**', 'Tests/**', 'cmake/**', 'scripts/**') }}
+          restore-keys: |
+            build-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-sdl-${{ steps.build-cache-context.outputs.sdl-revision }}-
 
       - name: Build on macOS or Linux
         if: runner.os != 'Windows'
