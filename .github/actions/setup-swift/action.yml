@@ -125,4 +125,13 @@ runs:
       shell: pwsh
       env:
         SWIFT_VERSION: ${{ inputs.swift-version }}
-      run: swift --version | Select-String $env:SWIFT_VERSION
+      run: |
+        $versionOutput = (& swift --version 2>&1 | Out-String).Trim()
+        $swiftExitCode = $LASTEXITCODE
+        Write-Host $versionOutput
+        if ($swiftExitCode -ne 0) {
+          throw "Swift executable failed with exit code $swiftExitCode"
+        }
+        if (-not $versionOutput.Contains($env:SWIFT_VERSION)) {
+          throw "Expected Swift $env:SWIFT_VERSION, but got: $versionOutput"
+        }
