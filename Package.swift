@@ -19,6 +19,10 @@ func readSDLFlags(named name: String) -> [String] {
 let sdlCompilerFlags = readSDLFlags(named: "compiler")
 let sdlSwiftCompilerFlags = sdlCompilerFlags.flatMap { ["-Xcc", $0] }
 let sdlLinkerFlags = readSDLFlags(named: "linker").flatMap { flag -> [String] in
+    if flag == "-pthread" {
+        return ["-lpthread"]
+    }
+
     guard flag.hasPrefix("-Wl,") else {
         return [flag]
     }
