@@ -27,6 +27,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Swift 6.3.3
         run: |
+          sudo apt-get update
+          sudo apt-get install --yes libcurl4-openssl-dev
           curl --fail --location --output swiftly.tar.gz "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
           tar zxf swiftly.tar.gz
           ./swiftly init --skip-install --quiet-shell-followup --assume-yes
@@ -49,6 +51,12 @@ jobs:
           $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
           $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
           "$machinePath;$userPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $swiftRoot = Join-Path $env:LOCALAPPDATA 'Programs\Swift'
+          $sdkRoot = Join-Path $swiftRoot 'Platforms\6.3.3\Windows.platform\Developer\SDKs\Windows.sdk'
+          if (-not (Test-Path $sdkRoot)) {
+            throw "Swift Windows SDK was not installed at $sdkRoot"
+          }
+          "SDKROOT=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Verify Swift version
         shell: pwsh
         run: swift --version | Select-String '6.3.3'
