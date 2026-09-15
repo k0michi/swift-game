@@ -13,16 +13,16 @@ if (-not (Test-Path (Join-Path $SourceDirectory "CMakeLists.txt"))) {
 cmake `
     -S $SourceDirectory `
     -B $BuildDirectory `
-    -DCMAKE_BUILD_TYPE=Release `
-    -DCMAKE_INSTALL_PREFIX=$InstallDirectory `
-    -DSDL_SHARED=ON `
-    -DSDL_STATIC=ON `
-    -DSDL_DEPS_SHARED=ON `
-    -DSDL_INSTALL=ON `
-    -DSDL_TEST_LIBRARY=OFF `
-    -DSDL_TESTS=OFF `
-    -DSDL_EXAMPLES=OFF `
-    -DSDL_INSTALL_DOCS=OFF
+    "-DCMAKE_BUILD_TYPE=Release" `
+    "-DCMAKE_INSTALL_PREFIX=$InstallDirectory" `
+    "-DSDL_SHARED=ON" `
+    "-DSDL_STATIC=ON" `
+    "-DSDL_DEPS_SHARED=ON" `
+    "-DSDL_INSTALL=ON" `
+    "-DSDL_TEST_LIBRARY=OFF" `
+    "-DSDL_TESTS=OFF" `
+    "-DSDL_EXAMPLES=OFF" `
+    "-DSDL_INSTALL_DOCS=OFF"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 cmake --build $BuildDirectory --config Release --parallel
@@ -36,5 +36,5 @@ cmake `
     -B (Join-Path $DependencyDirectory "metadata") `
     "-DSDL3_DIR=$InstallDirectory/cmake" `
     "-DOUTPUT_DIRECTORY=$DependencyDirectory" `
-    -DCMAKE_BUILD_TYPE=Release
+    "-DCMAKE_BUILD_TYPE=Release"
 exit $LASTEXITCODE
