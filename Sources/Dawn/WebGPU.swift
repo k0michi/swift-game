@@ -51,7 +51,7 @@ public final class Instance {
 
         guard result.status == WGPURequestAdapterStatus_Success, let handle = result.adapter else {
             throw WebGPUError.requestAdapterFailed(
-                status: result.status.rawValue,
+                status: UInt32(truncatingIfNeeded: result.status.rawValue),
                 message: result.message
             )
         }
