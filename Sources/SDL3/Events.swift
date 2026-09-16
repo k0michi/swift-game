@@ -172,7 +172,9 @@ private func makeEvent(from event: SDL_Event) -> any Event {
             timestamp: event.key.timestamp,
             windowID: WindowID(rawValue: event.key.windowID),
             which: KeyboardID(rawValue: event.key.which),
-            scancode: Scancode(rawValue: event.key.scancode.rawValue),
+            scancode: Scancode(
+                rawValue: UInt32(truncatingIfNeeded: event.key.scancode.rawValue)
+            ),
             key: Keycode(rawValue: event.key.key),
             mod: Keymod(rawValue: event.key.mod),
             raw: event.key.raw,
@@ -211,7 +213,9 @@ private func makeEvent(from event: SDL_Event) -> any Event {
             which: MouseID(rawValue: event.wheel.which),
             x: event.wheel.x,
             y: event.wheel.y,
-            direction: MouseWheelDirection(rawValue: event.wheel.direction.rawValue),
+            direction: MouseWheelDirection(
+                rawValue: UInt32(truncatingIfNeeded: event.wheel.direction.rawValue)
+            ),
             mouseX: event.wheel.mouse_x,
             mouseY: event.wheel.mouse_y,
             integerX: event.wheel.integer_x,
