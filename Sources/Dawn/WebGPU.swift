@@ -5,6 +5,28 @@ public enum WebGPUError: Error, Equatable {
     case requestAdapterFailed(status: UInt32, message: String)
 }
 
+// WGPUBackendType
+public enum BackendType: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case null = 0x0000_0001
+    case webGPU = 0x0000_0002
+    case d3D11 = 0x0000_0003
+    case d3D12 = 0x0000_0004
+    case metal = 0x0000_0005
+    case vulkan = 0x0000_0006
+    case openGL = 0x0000_0007
+    case openGLES = 0x0000_0008
+}
+
+// WGPURequestAdapterOptions
+public struct RequestAdapterOptions: Sendable {
+    public var backendType: BackendType
+
+    public init(backendType: BackendType = .undefined) {
+        self.backendType = backendType
+    }
+}
+
 public final class Instance {
     let handle: WGPUInstance
 
@@ -24,9 +46,10 @@ public final class Instance {
 
     // wgpuInstanceRequestAdapter
     public func requestAdapter(
-        options: WGPURequestAdapterOptions = WGPURequestAdapterOptions()
+        options: RequestAdapterOptions = RequestAdapterOptions()
     ) async throws -> Adapter {
-        var options = options
+        var cOptions = CDawn.WGPURequestAdapterOptions()
+        cOptions.backendType = options.backendType.cValue
         let result: AdapterRequestResult = await withCheckedContinuation { continuation in
             let context = AdapterRequestContext(continuation)
             let retainedContext = Unmanaged.passRetained(context).toOpaque()
@@ -46,7 +69,7 @@ public final class Instance {
                     returning: AdapterRequestResult(status: status, adapter: adapter, message: text)
                 )
             }
-            _ = wgpuInstanceRequestAdapter(handle, &options, callbackInfo)
+            _ = wgpuInstanceRequestAdapter(handle, &cOptions, callbackInfo)
         }
 
         guard result.status == WGPURequestAdapterStatus_Success, let handle = result.adapter else {
@@ -56,6 +79,22 @@ public final class Instance {
             )
         }
         return Adapter(handle: handle, instance: self)
+    }
+}
+
+private extension BackendType {
+    var cValue: WGPUBackendType {
+        switch self {
+        case .undefined: WGPUBackendType_Undefined
+        case .null: WGPUBackendType_Null
+        case .webGPU: WGPUBackendType_WebGPU
+        case .d3D11: WGPUBackendType_D3D11
+        case .d3D12: WGPUBackendType_D3D12
+        case .metal: WGPUBackendType_Metal
+        case .vulkan: WGPUBackendType_Vulkan
+        case .openGL: WGPUBackendType_OpenGL
+        case .openGLES: WGPUBackendType_OpenGLES
+        }
     }
 }
 

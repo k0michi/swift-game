@@ -97,6 +97,13 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "DawnTests",
+            dependencies: ["Dawn"],
+            swiftSettings: [
+                .unsafeFlags(dawnSwiftCompilerFlags),
+            ]
+        ),
+        .testTarget(
             name: "SDL3Tests",
             dependencies: ["SDL3"],
             swiftSettings: [
