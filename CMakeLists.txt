@@ -1,0 +1,25 @@
+cmake_minimum_required(VERSION 3.24)
+
+project(SwiftGameDependencies LANGUAGES C)
+
+include(FetchContent)
+
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+set(SDL_DEPS_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_INSTALL ON CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SDL_INSTALL_DOCS OFF CACHE BOOL "" FORCE)
+set(SDL_HIDAPI_LIBUSB ON CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    SDL
+    GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+    GIT_TAG fa2c02bb6e21974a89ea9824bc53c9932abe5f9c
+    GIT_SHALLOW FALSE
+    GIT_PROGRESS TRUE
+)
+
+FetchContent_MakeAvailable(SDL)
