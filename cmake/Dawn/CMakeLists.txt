@@ -47,6 +47,17 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(dawn)
 
 if(DEFINED DAWN_METADATA_DIRECTORY)
+    set(DAWN_CXX_RUNTIME_LINKER_FLAGS "")
+    if(UNIX AND NOT APPLE)
+        foreach(LIBRARY IN LISTS CMAKE_CXX_IMPLICIT_LINK_LIBRARIES)
+            if(IS_ABSOLUTE "${LIBRARY}" OR LIBRARY MATCHES "^-")
+                string(APPEND DAWN_CXX_RUNTIME_LINKER_FLAGS "${LIBRARY}\n")
+            else()
+                string(APPEND DAWN_CXX_RUNTIME_LINKER_FLAGS "-l${LIBRARY}\n")
+            endif()
+        endforeach()
+    endif()
+
     file(MAKE_DIRECTORY "${DAWN_METADATA_DIRECTORY}")
     file(GENERATE
         OUTPUT "${DAWN_METADATA_DIRECTORY}/compiler-flags.txt"
@@ -54,6 +65,6 @@ if(DEFINED DAWN_METADATA_DIRECTORY)
     )
     file(GENERATE
         OUTPUT "${DAWN_METADATA_DIRECTORY}/linker-flags.txt"
-        CONTENT "$<TARGET_FILE:dawn::webgpu_dawn>\n$<JOIN:$<TARGET_PROPERTY:dawn::webgpu_dawn,INTERFACE_LINK_LIBRARIES>,\n>\n"
+        CONTENT "$<TARGET_FILE:dawn::webgpu_dawn>\n$<JOIN:$<TARGET_PROPERTY:dawn::webgpu_dawn,INTERFACE_LINK_LIBRARIES>,\n>\n${DAWN_CXX_RUNTIME_LINKER_FLAGS}"
     )
 endif()
