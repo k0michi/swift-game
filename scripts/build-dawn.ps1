@@ -19,7 +19,7 @@ cmake `
     "-DCMAKE_CXX_COMPILER=$ClangCL"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-cmake --build $BuildDirectory --config Release --parallel
+cmake --build $BuildDirectory --config Release --target webgpu_dawn --parallel
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 cmake --install $BuildDirectory --config Release

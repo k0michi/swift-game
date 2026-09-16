@@ -22,5 +22,5 @@ if [ "$(uname -s)" = "Darwin" ]; then
 fi
 
 cmake "$@"
-cmake --build "$build_directory" --config Release --parallel
+cmake --build "$build_directory" --config Release --target webgpu_dawn --parallel
 cmake --install "$build_directory" --config Release
