@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(ExtractSDLTarget LANGUAGES NONE)
+project(ExtractSDLTarget LANGUAGES C)
 
 find_package(SDL3 CONFIG REQUIRED COMPONENTS SDL3-static)
 

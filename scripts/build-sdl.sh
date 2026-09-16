@@ -29,4 +29,5 @@ cmake \
     -B "$repository_root/.build/dependencies/sdl3/metadata" \
     -DCMAKE_PREFIX_PATH="$install_directory" \
     -DOUTPUT_DIRECTORY="$repository_root/.build/dependencies/sdl3" \
+    -DCMAKE_C_COMPILER="$swift_bin_directory/clang" \
     -DCMAKE_BUILD_TYPE=Release

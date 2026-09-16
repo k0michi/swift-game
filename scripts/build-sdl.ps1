@@ -29,5 +29,6 @@ cmake `
     -B (Join-Path $DependencyDirectory "metadata") `
     "-DCMAKE_PREFIX_PATH=$InstallDirectory" `
     "-DOUTPUT_DIRECTORY=$DependencyDirectory" `
+    "-DCMAKE_C_COMPILER=$ClangCL" `
     "-DCMAKE_BUILD_TYPE=Release"
 exit $LASTEXITCODE
