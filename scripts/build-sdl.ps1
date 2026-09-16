@@ -26,6 +26,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 cmake `
     --fresh `
+    -G Ninja `
     -S (Join-Path $RepositoryRoot "cmake/ExtractSDLTarget") `
     -B (Join-Path $DependencyDirectory "metadata") `
     "-DCMAKE_PREFIX_PATH=$InstallDirectory" `

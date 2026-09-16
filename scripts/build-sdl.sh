@@ -8,6 +8,8 @@ install_directory="$repository_root/.build/dependencies/sdl3/install"
 swift_bin_directory=$(dirname "$(command -v swiftc)")
 
 set -- \
+    --fresh \
+    -G Ninja \
     -S "$repository_root" \
     -B "$build_directory" \
     -DCMAKE_BUILD_TYPE=Release \
@@ -26,6 +28,7 @@ cmake --install "$build_directory" --config Release
 
 cmake \
     --fresh \
+    -G Ninja \
     -S "$repository_root/cmake/ExtractSDLTarget" \
     -B "$repository_root/.build/dependencies/sdl3/metadata" \
     -DCMAKE_PREFIX_PATH="$install_directory" \

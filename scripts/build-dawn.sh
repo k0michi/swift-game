@@ -9,6 +9,8 @@ install_directory="$dependency_directory/install"
 swift_bin_directory=$(dirname "$(command -v swiftc)")
 
 set -- \
+    --fresh \
+    -G Ninja \
     -S "$repository_root/cmake/Dawn" \
     -B "$build_directory" \
     -DCMAKE_BUILD_TYPE=Release \
