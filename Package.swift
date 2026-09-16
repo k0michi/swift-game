@@ -5,6 +5,7 @@ import Foundation
 
 let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 let sdlFlagsRoot = "\(packageRoot)/.build/dependencies/sdl3"
+let dawnFlagsRoot = "\(packageRoot)/.build/dependencies/dawn"
 
 func readSDLFlags(named name: String) -> [String] {
     let path = "\(sdlFlagsRoot)/\(name)-flags.txt"
@@ -30,6 +31,27 @@ let sdlLinkerFlags = readSDLFlags(named: "linker").flatMap { flag -> [String] in
     return flag.dropFirst(4).split(separator: ",").flatMap { ["-Xlinker", String($0)] }
 }
 
+func readDawnFlags(named name: String) -> [String] {
+    let path = "\(dawnFlagsRoot)/\(name)-flags.txt"
+    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fatalError("Dawn build metadata is missing. Run ./scripts/build-dawn.sh first.")
+    }
+    return contents.split(whereSeparator: \.isNewline).map(String.init)
+}
+
+let dawnCompilerFlags = readDawnFlags(named: "compiler")
+let dawnSwiftCompilerFlags = dawnCompilerFlags.flatMap { ["-Xcc", $0] }
+let dawnLinkerFlags = readDawnFlags(named: "linker").flatMap { flag -> [String] in
+    if flag.contains("::") || flag.contains("$<") || flag == "dawn_public_config" || flag.contains("NOTFOUND") {
+        return []
+    }
+    if flag.hasPrefix("-framework ") {
+        return ["-framework", String(flag.dropFirst("-framework ".count))]
+    }
+    guard flag.hasPrefix("-Wl,") else { return [flag] }
+    return flag.dropFirst(4).split(separator: ",").flatMap { ["-Xlinker", String($0)] }
+}
+
 let package = Package(
     name: "SwiftGame",
     platforms: [
@@ -38,6 +60,7 @@ let package = Package(
     products: [
         .executable(name: "swift-game", targets: ["SwiftGame"]),
         .library(name: "SDL3", targets: ["SDL3"]),
+        .library(name: "Dawn", targets: ["Dawn"]),
     ],
     targets: [
         .target(
@@ -48,6 +71,16 @@ let package = Package(
             linkerSettings: [
                 .unsafeFlags(sdlLinkerFlags),
             ]
+        ),
+        .target(
+            name: "CDawn",
+            cSettings: [.unsafeFlags(dawnCompilerFlags)],
+            linkerSettings: [.unsafeFlags(dawnLinkerFlags)]
+        ),
+        .target(
+            name: "Dawn",
+            dependencies: ["CDawn"],
+            swiftSettings: [.unsafeFlags(dawnSwiftCompilerFlags)]
         ),
         .target(
             name: "SDL3",
