@@ -61,16 +61,12 @@ jobs:
         shell: pwsh
         run: ./scripts/build.ps1
 
-      - name: Smoke test on macOS or Linux
+      - name: Test SDL3 wrapper on macOS or Linux
         if: runner.os != 'Windows'
         shell: bash
-        env:
-          SDL_VIDEODRIVER: dummy
-        run: .build/debug/swift-game
+        run: ./scripts/test.sh
 
-      - name: Smoke test on Windows
+      - name: Test SDL3 wrapper on Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          SDL_VIDEODRIVER: dummy
-        run: ./.build/debug/swift-game.exe
+        run: ./scripts/test.ps1

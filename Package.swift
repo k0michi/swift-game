@@ -63,5 +63,12 @@ let package = Package(
                 .unsafeFlags(sdlSwiftCompilerFlags),
             ]
         ),
+        .testTarget(
+            name: "SDL3Tests",
+            dependencies: ["SDL3"],
+            swiftSettings: [
+                .unsafeFlags(sdlSwiftCompilerFlags),
+            ]
+        ),
     ]
 )
