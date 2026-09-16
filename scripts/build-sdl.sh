@@ -24,6 +24,7 @@ cmake --build "$build_directory" --config Release --parallel
 cmake --install "$build_directory" --config Release
 
 cmake \
+    --fresh \
     -S "$repository_root/cmake/ExtractSDLTarget" \
     -B "$repository_root/.build/dependencies/sdl3/metadata" \
     -DCMAKE_PREFIX_PATH="$install_directory" \

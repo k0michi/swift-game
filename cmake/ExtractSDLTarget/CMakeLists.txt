@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 project(ExtractSDLTarget LANGUAGES NONE)
 
-find_package(SDL3 CONFIG REQUIRED)
+find_package(SDL3 CONFIG REQUIRED COMPONENTS SDL3-static)
 
 if(NOT DEFINED OUTPUT_DIRECTORY)
     message(FATAL_ERROR "OUTPUT_DIRECTORY is required")

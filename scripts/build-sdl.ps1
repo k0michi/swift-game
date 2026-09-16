@@ -8,6 +8,8 @@ $SwiftBinDirectory = Split-Path -Parent (Get-Command swiftc).Source
 $ClangCL = Join-Path $SwiftBinDirectory "clang-cl.exe"
 
 cmake `
+    --fresh `
+    -G Ninja `
     -S $RepositoryRoot `
     -B $BuildDirectory `
     "-DCMAKE_BUILD_TYPE=Release" `
@@ -22,6 +24,7 @@ cmake --install $BuildDirectory --config Release
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 cmake `
+    --fresh `
     -S (Join-Path $RepositoryRoot "cmake/ExtractSDLTarget") `
     -B (Join-Path $DependencyDirectory "metadata") `
     "-DCMAKE_PREFIX_PATH=$InstallDirectory" `
