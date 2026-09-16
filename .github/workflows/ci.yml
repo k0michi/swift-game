@@ -46,9 +46,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: .build
-          key: build-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-native-${{ steps.build-cache-context.outputs.native-source }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Sources/**', 'Tests/**', 'cmake/**', 'scripts/**') }}
+          key: build-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-native-${{ steps.build-cache-context.outputs.native-source }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Sources/**', 'Tests/**', 'cmake/**', 'Scripts/**') }}
           restore-keys: |
             build-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-native-${{ steps.build-cache-context.outputs.native-source }}-
+            build-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-
 
       - name: Build on macOS or Linux
         if: runner.os != 'Windows'
