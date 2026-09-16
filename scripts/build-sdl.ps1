@@ -14,7 +14,8 @@ cmake `
     -B $BuildDirectory `
     "-DCMAKE_BUILD_TYPE=Release" `
     "-DCMAKE_INSTALL_PREFIX=$InstallDirectory" `
-    "-DCMAKE_C_COMPILER=$ClangCL"
+    "-DCMAKE_C_COMPILER=$ClangCL" `
+    "-DCMAKE_CXX_COMPILER=$ClangCL"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 cmake --build $BuildDirectory --config Release --parallel

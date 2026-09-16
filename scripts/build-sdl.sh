@@ -12,7 +12,8 @@ set -- \
     -B "$build_directory" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$install_directory" \
-    -DCMAKE_C_COMPILER="$swift_bin_directory/clang"
+    -DCMAKE_C_COMPILER="$swift_bin_directory/clang" \
+    -DCMAKE_CXX_COMPILER="$swift_bin_directory/clang++"
 
 if [ "$(uname -s)" = "Darwin" ]; then
     set -- "$@" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
