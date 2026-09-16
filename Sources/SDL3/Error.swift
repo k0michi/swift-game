@@ -1,5 +1,6 @@
 import CSDL3
 
+// SDL_GetError
 public struct SDLError: Error, Equatable, CustomStringConvertible {
     public let operation: String
     public let message: String

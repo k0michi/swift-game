@@ -1,5 +1,6 @@
 import CSDL3
 
+// SDL_WindowID
 public struct WindowID: RawRepresentable, Equatable, Hashable, Sendable {
     public let rawValue: UInt32
 
@@ -8,6 +9,7 @@ public struct WindowID: RawRepresentable, Equatable, Hashable, Sendable {
     }
 }
 
+// SDL_WindowFlags
 public struct WindowFlags: OptionSet, Sendable {
     public let rawValue: UInt64
 
@@ -43,6 +45,7 @@ public struct WindowFlags: OptionSet, Sendable {
     public static let notFocusable = Self(rawValue: CSDL3_WINDOW_NOT_FOCUSABLE)
 }
 
+// SDL_Window
 @MainActor
 public final class Window {
     private let system: System
@@ -58,6 +61,7 @@ public final class Window {
     }
 }
 
+// SDL_CreateWindow
 @MainActor
 public func createWindow(
     title: String,

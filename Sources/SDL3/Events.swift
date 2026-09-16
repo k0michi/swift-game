@@ -1,5 +1,6 @@
 import CSDL3
 
+// SDL_EventType
 public struct EventType: RawRepresentable, Equatable, Hashable, Sendable {
     public let rawValue: UInt32
 
@@ -49,27 +50,35 @@ public struct EventType: RawRepresentable, Equatable, Hashable, Sendable {
     public static let keyUp = Self(rawValue: 0x301)
     public static let textEditing = Self(rawValue: 0x302)
     public static let textInput = Self(rawValue: 0x303)
+    public static let keymapChanged = Self(rawValue: 0x304)
+    public static let keyboardAdded = Self(rawValue: 0x305)
+    public static let keyboardRemoved = Self(rawValue: 0x306)
 
     public static let mouseMotion = Self(rawValue: 0x400)
     public static let mouseButtonDown = Self(rawValue: 0x401)
     public static let mouseButtonUp = Self(rawValue: 0x402)
     public static let mouseWheel = Self(rawValue: 0x403)
+    public static let mouseAdded = Self(rawValue: 0x404)
+    public static let mouseRemoved = Self(rawValue: 0x405)
 
     public static let pollSentinel = Self(rawValue: 0x7F00)
     public static let user = Self(rawValue: 0x8000)
     public static let last = Self(rawValue: 0xFFFF)
 }
 
+// SDL_Event
 public protocol Event: Sendable {
     var type: EventType { get }
     var timestamp: UInt64 { get }
 }
 
+// SDL_CommonEvent
 public struct CommonEvent: Event {
     public let type: EventType
     public let timestamp: UInt64
 }
 
+// SDL_WindowEvent
 public struct WindowEvent: Event {
     public let type: EventType
     public let timestamp: UInt64
@@ -78,11 +87,68 @@ public struct WindowEvent: Event {
     public let data2: Int32
 }
 
+// SDL_KeyboardEvent
+public struct KeyboardEvent: Event {
+    public let type: EventType
+    public let timestamp: UInt64
+    public let windowID: WindowID
+    public let which: KeyboardID
+    public let scancode: Scancode
+    public let key: Keycode
+    public let mod: Keymod
+    public let raw: UInt16
+    public let down: Bool
+    public let `repeat`: Bool
+}
+
+// SDL_MouseMotionEvent
+public struct MouseMotionEvent: Event {
+    public let type: EventType
+    public let timestamp: UInt64
+    public let windowID: WindowID
+    public let which: MouseID
+    public let state: MouseButtonFlags
+    public let x: Float
+    public let y: Float
+    public let xrel: Float
+    public let yrel: Float
+}
+
+// SDL_MouseButtonEvent
+public struct MouseButtonEvent: Event {
+    public let type: EventType
+    public let timestamp: UInt64
+    public let windowID: WindowID
+    public let which: MouseID
+    public let button: UInt8
+    public let down: Bool
+    public let clicks: UInt8
+    public let x: Float
+    public let y: Float
+}
+
+// SDL_MouseWheelEvent
+public struct MouseWheelEvent: Event {
+    public let type: EventType
+    public let timestamp: UInt64
+    public let windowID: WindowID
+    public let which: MouseID
+    public let x: Float
+    public let y: Float
+    public let direction: MouseWheelDirection
+    public let mouseX: Float
+    public let mouseY: Float
+    public let integerX: Int32
+    public let integerY: Int32
+}
+
+// SDL_QuitEvent
 public struct QuitEvent: Event {
     public let type: EventType
     public let timestamp: UInt64
 }
 
+// SDL_Event
 public struct UnknownEvent: Event {
     public let type: EventType
     public let timestamp: UInt64
@@ -100,6 +166,57 @@ private func makeEvent(from event: SDL_Event) -> any Event {
             data1: event.window.data1,
             data2: event.window.data2
         )
+    case EventType.keyDown.rawValue, EventType.keyUp.rawValue:
+        return KeyboardEvent(
+            type: type,
+            timestamp: event.key.timestamp,
+            windowID: WindowID(rawValue: event.key.windowID),
+            which: KeyboardID(rawValue: event.key.which),
+            scancode: Scancode(rawValue: event.key.scancode.rawValue),
+            key: Keycode(rawValue: event.key.key),
+            mod: Keymod(rawValue: event.key.mod),
+            raw: event.key.raw,
+            down: event.key.down,
+            repeat: event.key.repeat
+        )
+    case EventType.mouseMotion.rawValue:
+        return MouseMotionEvent(
+            type: type,
+            timestamp: event.motion.timestamp,
+            windowID: WindowID(rawValue: event.motion.windowID),
+            which: MouseID(rawValue: event.motion.which),
+            state: MouseButtonFlags(rawValue: event.motion.state),
+            x: event.motion.x,
+            y: event.motion.y,
+            xrel: event.motion.xrel,
+            yrel: event.motion.yrel
+        )
+    case EventType.mouseButtonDown.rawValue, EventType.mouseButtonUp.rawValue:
+        return MouseButtonEvent(
+            type: type,
+            timestamp: event.button.timestamp,
+            windowID: WindowID(rawValue: event.button.windowID),
+            which: MouseID(rawValue: event.button.which),
+            button: event.button.button,
+            down: event.button.down,
+            clicks: event.button.clicks,
+            x: event.button.x,
+            y: event.button.y
+        )
+    case EventType.mouseWheel.rawValue:
+        return MouseWheelEvent(
+            type: type,
+            timestamp: event.wheel.timestamp,
+            windowID: WindowID(rawValue: event.wheel.windowID),
+            which: MouseID(rawValue: event.wheel.which),
+            x: event.wheel.x,
+            y: event.wheel.y,
+            direction: MouseWheelDirection(rawValue: event.wheel.direction.rawValue),
+            mouseX: event.wheel.mouse_x,
+            mouseY: event.wheel.mouse_y,
+            integerX: event.wheel.integer_x,
+            integerY: event.wheel.integer_y
+        )
     case EventType.quit.rawValue:
         return QuitEvent(type: type, timestamp: event.quit.timestamp)
     case EventType.terminating.rawValue ... EventType.systemThemeChanged.rawValue:
@@ -109,11 +226,13 @@ private func makeEvent(from event: SDL_Event) -> any Event {
     }
 }
 
+// SDL_PumpEvents
 @MainActor
 public func pumpEvents() {
     SDL_PumpEvents()
 }
 
+// SDL_PollEvent
 @MainActor
 public func pollEvent() -> (any Event)? {
     var event = SDL_Event()

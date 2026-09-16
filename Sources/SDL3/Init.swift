@@ -1,5 +1,6 @@
 import CSDL3
 
+// SDL_InitFlags
 public struct InitFlags: OptionSet, Sendable {
     public let rawValue: UInt32
 
@@ -17,6 +18,7 @@ public struct InitFlags: OptionSet, Sendable {
     public static let camera = Self(rawValue: SDL_INIT_CAMERA)
 }
 
+// SDL_Quit
 @MainActor
 public final class System {
     static weak var active: System?
@@ -28,6 +30,7 @@ public final class System {
     }
 }
 
+// SDL_Init
 @MainActor
 public func `init`(flags: InitFlags) throws -> System {
     guard System.active == nil else {
@@ -46,6 +49,7 @@ public func `init`(flags: InitFlags) throws -> System {
     return system
 }
 
+// SDL_QuitSubSystem
 @MainActor
 public final class Subsystem {
     private let flags: InitFlags
@@ -61,6 +65,7 @@ public final class Subsystem {
     }
 }
 
+// SDL_InitSubSystem
 @MainActor
 public func initSubsystem(flags: InitFlags) throws -> Subsystem {
     guard let system = System.active else {
@@ -77,6 +82,7 @@ public func initSubsystem(flags: InitFlags) throws -> Subsystem {
     return Subsystem(flags: flags, system: system)
 }
 
+// SDL_WasInit
 @MainActor
 public func wasInit(flags: InitFlags) -> InitFlags {
     InitFlags(rawValue: SDL_WasInit(flags.rawValue))
