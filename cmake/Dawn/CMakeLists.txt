@@ -65,6 +65,6 @@ if(DEFINED DAWN_METADATA_DIRECTORY)
     )
     file(GENERATE
         OUTPUT "${DAWN_METADATA_DIRECTORY}/linker-flags.txt"
-        CONTENT "$<TARGET_FILE:dawn::webgpu_dawn>\n$<JOIN:$<TARGET_PROPERTY:dawn::webgpu_dawn,INTERFACE_LINK_LIBRARIES>,\n>\n${DAWN_CXX_RUNTIME_LINKER_FLAGS}"
+        CONTENT "$<TARGET_FILE:dawn::webgpu_dawn>\n$<JOIN:$<TARGET_PROPERTY:dawn::webgpu_dawn,LINK_LIBRARIES>,\n>\n$<JOIN:$<TARGET_PROPERTY:dawn::webgpu_dawn,INTERFACE_LINK_LIBRARIES>,\n>\n${DAWN_CXX_RUNTIME_LINKER_FLAGS}"
     )
 endif()
