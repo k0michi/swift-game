@@ -12,7 +12,9 @@ extension SDL3Tests {
             h: 240,
             flags: [.hidden, .resizable]
         )
+        let properties = try getWindowProperties(window: window)
 
+        #expect(properties.rawValue != 0)
         withExtendedLifetime((system, window)) {}
     }
 

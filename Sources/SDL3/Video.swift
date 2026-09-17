@@ -45,11 +45,33 @@ public struct WindowFlags: OptionSet, Sendable {
     public static let notFocusable = Self(rawValue: CSDL3_WINDOW_NOT_FOCUSABLE)
 }
 
+// SDL_PROP_WINDOW_WIN32_HWND_POINTER
+public let propWindowWin32HWNDPointer = "SDL.window.win32.hwnd"
+
+// SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER
+public let propWindowWin32InstancePointer = "SDL.window.win32.instance"
+
+// SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER
+public let propWindowWaylandDisplayPointer = "SDL.window.wayland.display"
+
+// SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER
+public let propWindowWaylandSurfacePointer = "SDL.window.wayland.surface"
+
+// SDL_PROP_WINDOW_X11_DISPLAY_POINTER
+public let propWindowX11DisplayPointer = "SDL.window.x11.display"
+
+// SDL_PROP_WINDOW_X11_WINDOW_NUMBER
+public let propWindowX11WindowNumber = "SDL.window.x11.window"
+
 // SDL_Window
 @MainActor
 public final class Window {
     private let system: System
     private let pointer: OpaquePointer
+
+    var cPointer: OpaquePointer {
+        pointer
+    }
 
     fileprivate init(system: System, pointer: OpaquePointer) {
         self.system = system
@@ -81,4 +103,14 @@ public func createWindow(
     }
 
     return Window(system: system, pointer: pointer)
+}
+
+// SDL_GetWindowProperties
+@MainActor
+public func getWindowProperties(window: Window) throws -> PropertiesID {
+    let rawValue = SDL_GetWindowProperties(window.cPointer)
+    guard rawValue != 0 else {
+        throw SDLError(operation: "SDL_GetWindowProperties")
+    }
+    return PropertiesID(rawValue: rawValue)
 }

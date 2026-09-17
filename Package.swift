@@ -61,8 +61,11 @@ let package = Package(
         .executable(name: "swift-game", targets: ["SwiftGame"]),
         .library(name: "SDL3", targets: ["SDL3"]),
         .library(name: "Dawn", targets: ["Dawn"]),
+        .library(name: "SDL3Dawn", targets: ["SDL3Dawn"]),
+        .library(name: "Interop", targets: ["Interop"]),
     ],
     targets: [
+        .target(name: "Interop"),
         .target(
             name: "CSDL3",
             cSettings: [
@@ -79,15 +82,19 @@ let package = Package(
         ),
         .target(
             name: "Dawn",
-            dependencies: ["CDawn"],
+            dependencies: ["CDawn", "Interop"],
             swiftSettings: [.unsafeFlags(dawnSwiftCompilerFlags)]
         ),
         .target(
             name: "SDL3",
-            dependencies: ["CSDL3"],
+            dependencies: ["CSDL3", "Interop"],
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags),
             ]
+        ),
+        .target(
+            name: "SDL3Dawn",
+            dependencies: ["SDL3", "Dawn"]
         ),
         .executableTarget(
             name: "SwiftGame",
@@ -98,7 +105,7 @@ let package = Package(
         ),
         .testTarget(
             name: "DawnTests",
-            dependencies: ["Dawn"],
+            dependencies: ["Dawn", "Interop"],
             swiftSettings: [
                 .unsafeFlags(dawnSwiftCompilerFlags),
             ]
@@ -109,6 +116,10 @@ let package = Package(
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags),
             ]
+        ),
+        .testTarget(
+            name: "InteropTests",
+            dependencies: ["Interop"]
         ),
     ]
 )
