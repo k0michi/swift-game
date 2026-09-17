@@ -56,7 +56,15 @@ struct WebGPUTests {
             options: RequestAdapterOptions(backendType: .null)
         )
         let device = try await adapter.requestDevice()
+        let configuration = SurfaceConfiguration(
+            device: device,
+            format: .bgra8Unorm,
+            width: 1280,
+            height: 720
+        )
 
+        #expect(configuration.usage == .renderAttachment)
+        #expect(configuration.presentMode == .fifo)
         withExtendedLifetime((instance, adapter, device)) {}
     }
 }

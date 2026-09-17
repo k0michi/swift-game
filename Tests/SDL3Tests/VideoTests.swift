@@ -13,8 +13,10 @@ extension SDL3Tests {
             flags: [.hidden, .resizable]
         )
         let properties = try getWindowProperties(window: window)
+        let pixelSize = try getWindowSizeInPixels(window: window)
 
         #expect(properties.rawValue != 0)
+        #expect(pixelSize == WindowPixelSize(w: 320, h: 240))
         withExtendedLifetime((system, window)) {}
     }
 

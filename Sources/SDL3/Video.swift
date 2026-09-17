@@ -9,6 +9,16 @@ public struct WindowID: RawRepresentable, Equatable, Hashable, Sendable {
     }
 }
 
+public struct WindowPixelSize: Equatable, Hashable, Sendable {
+    public var w: Int32
+    public var h: Int32
+
+    public init(w: Int32, h: Int32) {
+        self.w = w
+        self.h = h
+    }
+}
+
 // SDL_WindowFlags
 public struct WindowFlags: OptionSet, Sendable {
     public let rawValue: UInt64
@@ -113,4 +123,15 @@ public func getWindowProperties(window: Window) throws -> PropertiesID {
         throw SDLError(operation: "SDL_GetWindowProperties")
     }
     return PropertiesID(rawValue: rawValue)
+}
+
+// SDL_GetWindowSizeInPixels
+@MainActor
+public func getWindowSizeInPixels(window: Window) throws -> WindowPixelSize {
+    var w: Int32 = 0
+    var h: Int32 = 0
+    guard SDL_GetWindowSizeInPixels(window.cPointer, &w, &h) else {
+        throw SDLError(operation: "SDL_GetWindowSizeInPixels")
+    }
+    return WindowPixelSize(w: w, h: h)
 }

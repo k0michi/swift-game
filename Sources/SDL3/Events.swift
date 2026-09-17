@@ -1,6 +1,7 @@
 import CSDL3
 
 // SDL_EventType
+// TODO: Migrate the remaining SDL_EventType values.
 public struct EventType: RawRepresentable, Equatable, Hashable, Sendable {
     public let rawValue: UInt32
 

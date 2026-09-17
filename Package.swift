@@ -98,9 +98,9 @@ let package = Package(
         ),
         .executableTarget(
             name: "SwiftGame",
-            dependencies: ["SDL3"],
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn"],
             swiftSettings: [
-                .unsafeFlags(sdlSwiftCompilerFlags),
+                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
             ]
         ),
         .testTarget(
