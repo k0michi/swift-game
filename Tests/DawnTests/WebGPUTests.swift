@@ -149,6 +149,9 @@ struct WebGPUTests {
         let shaderModule = try device.createShaderModule(
             descriptor: ShaderModuleDescriptor(
                 nextInChain: ShaderSourceWGSL(
+                    nextInChain: ShaderModuleCompilationOptions(
+                        strictMath: true
+                    ),
                     code: """
                         @compute @workgroup_size(1)
                         fn main() {}
@@ -159,5 +162,27 @@ struct WebGPUTests {
         )
 
         withExtendedLifetime((instance, adapter, device, shaderModule)) {}
+    }
+
+    @Test
+    func shaderModuleSPIRVDescriptorsPreserveCode() throws {
+        let spirv: [UInt32] = [0x0723_0203, 0x0001_0000]
+        let options = DawnShaderModuleSPIRVOptionsDescriptor(
+            allowNonUniformDerivatives: true
+        )
+        let source = ShaderSourceSPIRV(
+            nextInChain: options,
+            code: spirv
+        )
+        let dawnSource = DawnShaderSourceSPIRV(code: spirv)
+
+        #expect(source.chain.sType == .shaderSourceSPIRV)
+        #expect(source.code == spirv)
+        #expect(
+            source.chain.next?.chain.sType
+                == .dawnShaderModuleSPIRVOptionsDescriptor
+        )
+        #expect(dawnSource.chain.sType == .dawnShaderSourceSPIRV)
+        #expect(dawnSource.code == spirv)
     }
 }

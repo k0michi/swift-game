@@ -14,6 +14,7 @@ public enum WebGPUError: Error, Equatable {
     case createBufferFailed
     case createBindGroupFailed
     case createShaderModuleFailed
+    case shaderSourceSPIRVTooLarge
     case createCommandEncoderFailed
     case createBindGroupLayoutFailed
     case beginRenderPassFailed
@@ -52,6 +53,9 @@ public enum SType: UInt32, Sendable {
     case surfaceSourceWindowsHWND = 0x0000_0005
     case surfaceSourceXlibWindow = 0x0000_0006
     case surfaceSourceWaylandSurface = 0x0000_0007
+    case dawnShaderModuleSPIRVOptionsDescriptor = 0x0005_000B
+    case shaderModuleCompilationOptions = 0x0005_0019
+    case dawnShaderSourceSPIRV = 0x0005_0053
 }
 
 // WGPUChainedStruct
@@ -69,8 +73,73 @@ public protocol ChainedStructNode {
     var chain: ChainedStruct { get set }
 }
 
+// WGPUDawnShaderModuleSPIRVOptionsDescriptor
+public struct DawnShaderModuleSPIRVOptionsDescriptor: ChainedStructNode {
+    public var chain: ChainedStruct
+    public var allowNonUniformDerivatives: Bool
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        allowNonUniformDerivatives: Bool = false
+    ) {
+        self.chain = ChainedStruct(
+            next: nextInChain,
+            sType: .dawnShaderModuleSPIRVOptionsDescriptor
+        )
+        self.allowNonUniformDerivatives = allowNonUniformDerivatives
+    }
+}
+
+// WGPUDawnShaderSourceSPIRV
+public struct DawnShaderSourceSPIRV: ChainedStructNode {
+    public var chain: ChainedStruct
+    public var code: [UInt32]
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        code: [UInt32]
+    ) {
+        self.chain = ChainedStruct(
+            next: nextInChain,
+            sType: .dawnShaderSourceSPIRV
+        )
+        self.code = code
+    }
+}
+
+// WGPUShaderModuleCompilationOptions
+public struct ShaderModuleCompilationOptions: ChainedStructNode {
+    public var chain: ChainedStruct
+    public var strictMath: Bool
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        strictMath: Bool = false
+    ) {
+        self.chain = ChainedStruct(
+            next: nextInChain,
+            sType: .shaderModuleCompilationOptions
+        )
+        self.strictMath = strictMath
+    }
+}
+
 // WGPUShaderSourceSPIRV
-// TODO: Migrate WGPUShaderSourceSPIRV.
+public struct ShaderSourceSPIRV: ChainedStructNode {
+    public var chain: ChainedStruct
+    public var code: [UInt32]
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        code: [UInt32]
+    ) {
+        self.chain = ChainedStruct(
+            next: nextInChain,
+            sType: .shaderSourceSPIRV
+        )
+        self.code = code
+    }
+}
 
 // WGPUShaderSourceWGSL
 public struct ShaderSourceWGSL: ChainedStructNode {
@@ -89,9 +158,6 @@ public struct ShaderSourceWGSL: ChainedStructNode {
     }
 }
 
-// TODO: Migrate WGPUDawnShaderModuleSPIRVOptionsDescriptor.
-// TODO: Migrate WGPUDawnShaderSourceSPIRV.
-// TODO: Migrate WGPUShaderModuleCompilationOptions.
 // WGPUShaderModuleDescriptor
 public struct ShaderModuleDescriptor {
     public var nextInChain: (any ChainedStructNode)?
@@ -1426,6 +1492,10 @@ private extension SType {
         case .surfaceSourceWindowsHWND: WGPUSType_SurfaceSourceWindowsHWND
         case .surfaceSourceXlibWindow: WGPUSType_SurfaceSourceXlibWindow
         case .surfaceSourceWaylandSurface: WGPUSType_SurfaceSourceWaylandSurface
+        case .dawnShaderModuleSPIRVOptionsDescriptor:
+            WGPUSType_DawnShaderModuleSPIRVOptionsDescriptor
+        case .shaderModuleCompilationOptions: WGPUSType_ShaderModuleCompilationOptions
+        case .dawnShaderSourceSPIRV: WGPUSType_DawnShaderSourceSPIRV
         }
     }
 }
@@ -1668,6 +1738,67 @@ private func withCChain<Result>(
     }
 
     switch node {
+    case let options as DawnShaderModuleSPIRVOptionsDescriptor:
+        return try withCChain(options.chain.next) { next in
+            var cOptions = WGPUDawnShaderModuleSPIRVOptionsDescriptor()
+            cOptions.chain.next = next
+            cOptions.chain.sType = options.chain.sType.cValue
+            cOptions.allowNonUniformDerivatives = options.allowNonUniformDerivatives ? 1 : 0
+            return try withUnsafeMutablePointer(to: &cOptions) { options in
+                try body(
+                    UnsafeMutableRawPointer(options)
+                        .assumingMemoryBound(to: WGPUChainedStruct.self)
+                )
+            }
+        }
+    case let source as DawnShaderSourceSPIRV:
+        return try withCChain(source.chain.next) { next in
+            try source.code.withUnsafeBufferPointer { code in
+                var cSource = WGPUDawnShaderSourceSPIRV()
+                cSource.chain.next = next
+                cSource.chain.sType = source.chain.sType.cValue
+                cSource.codeSize = code.count
+                cSource.code = code.baseAddress
+                return try withUnsafeMutablePointer(to: &cSource) { source in
+                    try body(
+                        UnsafeMutableRawPointer(source)
+                            .assumingMemoryBound(to: WGPUChainedStruct.self)
+                    )
+                }
+            }
+        }
+    case let options as ShaderModuleCompilationOptions:
+        return try withCChain(options.chain.next) { next in
+            var cOptions = WGPUShaderModuleCompilationOptions()
+            cOptions.chain.next = next
+            cOptions.chain.sType = options.chain.sType.cValue
+            cOptions.strictMath = options.strictMath ? 1 : 0
+            return try withUnsafeMutablePointer(to: &cOptions) { options in
+                try body(
+                    UnsafeMutableRawPointer(options)
+                        .assumingMemoryBound(to: WGPUChainedStruct.self)
+                )
+            }
+        }
+    case let source as ShaderSourceSPIRV:
+        guard let codeSize = UInt32(exactly: source.code.count) else {
+            throw WebGPUError.shaderSourceSPIRVTooLarge
+        }
+        return try withCChain(source.chain.next) { next in
+            try source.code.withUnsafeBufferPointer { code in
+                var cSource = WGPUShaderSourceSPIRV()
+                cSource.chain.next = next
+                cSource.chain.sType = source.chain.sType.cValue
+                cSource.codeSize = codeSize
+                cSource.code = code.baseAddress
+                return try withUnsafeMutablePointer(to: &cSource) { source in
+                    try body(
+                        UnsafeMutableRawPointer(source)
+                            .assumingMemoryBound(to: WGPUChainedStruct.self)
+                    )
+                }
+            }
+        }
     case let source as ShaderSourceWGSL:
         return try withCChain(source.chain.next) { next in
             try withWGPUStringView(source.code) { code in
