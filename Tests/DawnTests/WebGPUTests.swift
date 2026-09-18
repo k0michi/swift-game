@@ -211,4 +211,72 @@ struct WebGPUTests {
 
         withExtendedLifetime((instance, adapter, device, pipelineLayout)) {}
     }
+
+    @Test
+    func createsVertexAndFragmentStates() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let shaderModule = try device.createShaderModule(
+            descriptor: ShaderModuleDescriptor(
+                nextInChain: ShaderSourceWGSL(
+                    code: """
+                        @vertex
+                        fn vertexMain(@location(0) position: vec2f) -> @builtin(position) vec4f {
+                            return vec4f(position, 0.0, 1.0);
+                        }
+
+                        @fragment
+                        fn fragmentMain() -> @location(0) vec4f {
+                            return vec4f(1.0, 0.0, 0.0, 1.0);
+                        }
+                        """
+                )
+            )
+        )
+        let vertex = VertexState(
+            module: shaderModule,
+            entryPoint: "vertexMain",
+            buffers: [
+                VertexBufferLayout(
+                    stepMode: .vertex,
+                    arrayStride: 8,
+                    attributes: [
+                        VertexAttribute(
+                            format: .float32x2,
+                            offset: 0,
+                            shaderLocation: 0
+                        )
+                    ]
+                )
+            ]
+        )
+        let fragment = FragmentState(
+            module: shaderModule,
+            entryPoint: "fragmentMain",
+            targets: [
+                ColorTargetState(
+                    format: .bgra8Unorm,
+                    blend: BlendState(
+                        color: BlendComponent(
+                            operation: .add,
+                            srcFactor: .srcAlpha,
+                            dstFactor: .oneMinusSrcAlpha
+                        ),
+                        alpha: BlendComponent(
+                            operation: .add,
+                            srcFactor: .one,
+                            dstFactor: .zero
+                        )
+                    )
+                )
+            ]
+        )
+
+        #expect(vertex.buffers[0].attributes[0].format == .float32x2)
+        #expect(fragment.targets[0].writeMask == .all)
+        withExtendedLifetime((instance, adapter, device, vertex, fragment)) {}
+    }
 }

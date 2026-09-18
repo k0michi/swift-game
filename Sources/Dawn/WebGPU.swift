@@ -56,6 +56,7 @@ public enum SType: UInt32, Sendable {
     case surfaceSourceWaylandSurface = 0x0000_0007
     case dawnShaderModuleSPIRVOptionsDescriptor = 0x0005_000B
     case shaderModuleCompilationOptions = 0x0005_0019
+    case colorTargetStateExpandResolveTextureDawn = 0x0005_001A
     case dawnShaderSourceSPIRV = 0x0005_0053
 }
 
@@ -401,6 +402,107 @@ public struct TextureFormat: RawRepresentable, Equatable, Hashable, Sendable {
     public static let opaqueYCbCrAndroid = Self(rawValue: 0x0005_0007)
 }
 
+// WGPUBlendFactor
+public enum BlendFactor: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case zero = 0x0000_0001
+    case one = 0x0000_0002
+    case src = 0x0000_0003
+    case oneMinusSrc = 0x0000_0004
+    case srcAlpha = 0x0000_0005
+    case oneMinusSrcAlpha = 0x0000_0006
+    case dst = 0x0000_0007
+    case oneMinusDst = 0x0000_0008
+    case dstAlpha = 0x0000_0009
+    case oneMinusDstAlpha = 0x0000_000A
+    case srcAlphaSaturated = 0x0000_000B
+    case constant = 0x0000_000C
+    case oneMinusConstant = 0x0000_000D
+    case src1 = 0x0000_000E
+    case oneMinusSrc1 = 0x0000_000F
+    case src1Alpha = 0x0000_0010
+    case oneMinusSrc1Alpha = 0x0000_0011
+}
+
+// WGPUBlendOperation
+public enum BlendOperation: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case add = 0x0000_0001
+    case subtract = 0x0000_0002
+    case reverseSubtract = 0x0000_0003
+    case min = 0x0000_0004
+    case max = 0x0000_0005
+}
+
+// WGPUVertexFormat
+public enum VertexFormat: UInt32, Sendable {
+    case uint8 = 0x0000_0001
+    case uint8x2 = 0x0000_0002
+    case uint8x4 = 0x0000_0003
+    case sint8 = 0x0000_0004
+    case sint8x2 = 0x0000_0005
+    case sint8x4 = 0x0000_0006
+    case unorm8 = 0x0000_0007
+    case unorm8x2 = 0x0000_0008
+    case unorm8x4 = 0x0000_0009
+    case snorm8 = 0x0000_000A
+    case snorm8x2 = 0x0000_000B
+    case snorm8x4 = 0x0000_000C
+    case uint16 = 0x0000_000D
+    case uint16x2 = 0x0000_000E
+    case uint16x4 = 0x0000_000F
+    case sint16 = 0x0000_0010
+    case sint16x2 = 0x0000_0011
+    case sint16x4 = 0x0000_0012
+    case unorm16 = 0x0000_0013
+    case unorm16x2 = 0x0000_0014
+    case unorm16x4 = 0x0000_0015
+    case snorm16 = 0x0000_0016
+    case snorm16x2 = 0x0000_0017
+    case snorm16x4 = 0x0000_0018
+    case float16 = 0x0000_0019
+    case float16x2 = 0x0000_001A
+    case float16x4 = 0x0000_001B
+    case float32 = 0x0000_001C
+    case float32x2 = 0x0000_001D
+    case float32x3 = 0x0000_001E
+    case float32x4 = 0x0000_001F
+    case uint32 = 0x0000_0020
+    case uint32x2 = 0x0000_0021
+    case uint32x3 = 0x0000_0022
+    case uint32x4 = 0x0000_0023
+    case sint32 = 0x0000_0024
+    case sint32x2 = 0x0000_0025
+    case sint32x3 = 0x0000_0026
+    case sint32x4 = 0x0000_0027
+    case unorm10_10_10_2 = 0x0000_0028
+    case unorm8x4BGRA = 0x0000_0029
+    case snorm10_10_10_2 = 0x0000_002A
+}
+
+// WGPUVertexStepMode
+public enum VertexStepMode: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case vertex = 0x0000_0001
+    case instance = 0x0000_0002
+}
+
+// WGPUColorWriteMask
+public struct ColorWriteMask: OptionSet, Sendable {
+    public let rawValue: UInt64
+
+    public init(rawValue: UInt64) {
+        self.rawValue = rawValue
+    }
+
+    public static let none: Self = []
+    public static let red = Self(rawValue: 0x0000_0000_0000_0001)
+    public static let green = Self(rawValue: 0x0000_0000_0000_0002)
+    public static let blue = Self(rawValue: 0x0000_0000_0000_0004)
+    public static let alpha = Self(rawValue: 0x0000_0000_0000_0008)
+    public static let all: Self = [.red, .green, .blue, .alpha]
+}
+
 // WGPUBufferBindingType
 public enum BufferBindingType: UInt32, Sendable {
     case bindingNotUsed = 0x0000_0000
@@ -706,6 +808,174 @@ public struct PipelineLayoutDescriptor {
         self.label = label
         self.bindGroupLayouts = bindGroupLayouts
         self.immediateSize = immediateSize
+    }
+}
+
+// WGPUBlendComponent
+public struct BlendComponent {
+    public var operation: BlendOperation
+    public var srcFactor: BlendFactor
+    public var dstFactor: BlendFactor
+
+    public init(
+        operation: BlendOperation = .undefined,
+        srcFactor: BlendFactor = .undefined,
+        dstFactor: BlendFactor = .undefined
+    ) {
+        self.operation = operation
+        self.srcFactor = srcFactor
+        self.dstFactor = dstFactor
+    }
+}
+
+// WGPUColorTargetStateExpandResolveTextureDawn
+public struct ColorTargetStateExpandResolveTextureDawn: ChainedStructNode {
+    public var chain: ChainedStruct
+    public var enabled: Bool
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        enabled: Bool = false
+    ) {
+        self.chain = ChainedStruct(
+            next: nextInChain,
+            sType: .colorTargetStateExpandResolveTextureDawn
+        )
+        self.enabled = enabled
+    }
+}
+
+// WGPUConstantEntry
+public struct ConstantEntry {
+    public var nextInChain: (any ChainedStructNode)?
+    public var key: String
+    public var value: Double
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        key: String,
+        value: Double
+    ) {
+        self.nextInChain = nextInChain
+        self.key = key
+        self.value = value
+    }
+}
+
+// WGPUVertexAttribute
+public struct VertexAttribute {
+    public var nextInChain: (any ChainedStructNode)?
+    public var format: VertexFormat
+    public var offset: UInt64
+    public var shaderLocation: UInt32
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        format: VertexFormat,
+        offset: UInt64,
+        shaderLocation: UInt32
+    ) {
+        self.nextInChain = nextInChain
+        self.format = format
+        self.offset = offset
+        self.shaderLocation = shaderLocation
+    }
+}
+
+// WGPUBlendState
+public struct BlendState {
+    public var color: BlendComponent
+    public var alpha: BlendComponent
+
+    public init(color: BlendComponent, alpha: BlendComponent) {
+        self.color = color
+        self.alpha = alpha
+    }
+}
+
+// WGPUVertexBufferLayout
+public struct VertexBufferLayout {
+    public var nextInChain: (any ChainedStructNode)?
+    public var stepMode: VertexStepMode
+    public var arrayStride: UInt64
+    public var attributes: [VertexAttribute]
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        stepMode: VertexStepMode = .undefined,
+        arrayStride: UInt64,
+        attributes: [VertexAttribute]
+    ) {
+        self.nextInChain = nextInChain
+        self.stepMode = stepMode
+        self.arrayStride = arrayStride
+        self.attributes = attributes
+    }
+}
+
+// WGPUColorTargetState
+public struct ColorTargetState {
+    public var nextInChain: (any ChainedStructNode)?
+    public var format: TextureFormat
+    public var blend: BlendState?
+    public var writeMask: ColorWriteMask
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        format: TextureFormat,
+        blend: BlendState? = nil,
+        writeMask: ColorWriteMask = .all
+    ) {
+        self.nextInChain = nextInChain
+        self.format = format
+        self.blend = blend
+        self.writeMask = writeMask
+    }
+}
+
+// WGPUVertexState
+public struct VertexState {
+    public var nextInChain: (any ChainedStructNode)?
+    public var module: ShaderModule
+    public var entryPoint: String?
+    public var constants: [ConstantEntry]
+    public var buffers: [VertexBufferLayout]
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        module: ShaderModule,
+        entryPoint: String? = nil,
+        constants: [ConstantEntry] = [],
+        buffers: [VertexBufferLayout] = []
+    ) {
+        self.nextInChain = nextInChain
+        self.module = module
+        self.entryPoint = entryPoint
+        self.constants = constants
+        self.buffers = buffers
+    }
+}
+
+// WGPUFragmentState
+public struct FragmentState {
+    public var nextInChain: (any ChainedStructNode)?
+    public var module: ShaderModule
+    public var entryPoint: String?
+    public var constants: [ConstantEntry]
+    public var targets: [ColorTargetState]
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        module: ShaderModule,
+        entryPoint: String? = nil,
+        constants: [ConstantEntry] = [],
+        targets: [ColorTargetState]
+    ) {
+        self.nextInChain = nextInChain
+        self.module = module
+        self.entryPoint = entryPoint
+        self.constants = constants
+        self.targets = targets
     }
 }
 
@@ -1548,7 +1818,106 @@ private extension SType {
         case .dawnShaderModuleSPIRVOptionsDescriptor:
             WGPUSType_DawnShaderModuleSPIRVOptionsDescriptor
         case .shaderModuleCompilationOptions: WGPUSType_ShaderModuleCompilationOptions
+        case .colorTargetStateExpandResolveTextureDawn:
+            WGPUSType_ColorTargetStateExpandResolveTextureDawn
         case .dawnShaderSourceSPIRV: WGPUSType_DawnShaderSourceSPIRV
+        }
+    }
+}
+
+private extension BlendFactor {
+    var cValue: WGPUBlendFactor {
+        switch self {
+        case .undefined: WGPUBlendFactor_Undefined
+        case .zero: WGPUBlendFactor_Zero
+        case .one: WGPUBlendFactor_One
+        case .src: WGPUBlendFactor_Src
+        case .oneMinusSrc: WGPUBlendFactor_OneMinusSrc
+        case .srcAlpha: WGPUBlendFactor_SrcAlpha
+        case .oneMinusSrcAlpha: WGPUBlendFactor_OneMinusSrcAlpha
+        case .dst: WGPUBlendFactor_Dst
+        case .oneMinusDst: WGPUBlendFactor_OneMinusDst
+        case .dstAlpha: WGPUBlendFactor_DstAlpha
+        case .oneMinusDstAlpha: WGPUBlendFactor_OneMinusDstAlpha
+        case .srcAlphaSaturated: WGPUBlendFactor_SrcAlphaSaturated
+        case .constant: WGPUBlendFactor_Constant
+        case .oneMinusConstant: WGPUBlendFactor_OneMinusConstant
+        case .src1: WGPUBlendFactor_Src1
+        case .oneMinusSrc1: WGPUBlendFactor_OneMinusSrc1
+        case .src1Alpha: WGPUBlendFactor_Src1Alpha
+        case .oneMinusSrc1Alpha: WGPUBlendFactor_OneMinusSrc1Alpha
+        }
+    }
+}
+
+private extension BlendOperation {
+    var cValue: WGPUBlendOperation {
+        switch self {
+        case .undefined: WGPUBlendOperation_Undefined
+        case .add: WGPUBlendOperation_Add
+        case .subtract: WGPUBlendOperation_Subtract
+        case .reverseSubtract: WGPUBlendOperation_ReverseSubtract
+        case .min: WGPUBlendOperation_Min
+        case .max: WGPUBlendOperation_Max
+        }
+    }
+}
+
+private extension VertexStepMode {
+    var cValue: WGPUVertexStepMode {
+        switch self {
+        case .undefined: WGPUVertexStepMode_Undefined
+        case .vertex: WGPUVertexStepMode_Vertex
+        case .instance: WGPUVertexStepMode_Instance
+        }
+    }
+}
+
+private extension VertexFormat {
+    var cValue: WGPUVertexFormat {
+        switch self {
+        case .uint8: WGPUVertexFormat_Uint8
+        case .uint8x2: WGPUVertexFormat_Uint8x2
+        case .uint8x4: WGPUVertexFormat_Uint8x4
+        case .sint8: WGPUVertexFormat_Sint8
+        case .sint8x2: WGPUVertexFormat_Sint8x2
+        case .sint8x4: WGPUVertexFormat_Sint8x4
+        case .unorm8: WGPUVertexFormat_Unorm8
+        case .unorm8x2: WGPUVertexFormat_Unorm8x2
+        case .unorm8x4: WGPUVertexFormat_Unorm8x4
+        case .snorm8: WGPUVertexFormat_Snorm8
+        case .snorm8x2: WGPUVertexFormat_Snorm8x2
+        case .snorm8x4: WGPUVertexFormat_Snorm8x4
+        case .uint16: WGPUVertexFormat_Uint16
+        case .uint16x2: WGPUVertexFormat_Uint16x2
+        case .uint16x4: WGPUVertexFormat_Uint16x4
+        case .sint16: WGPUVertexFormat_Sint16
+        case .sint16x2: WGPUVertexFormat_Sint16x2
+        case .sint16x4: WGPUVertexFormat_Sint16x4
+        case .unorm16: WGPUVertexFormat_Unorm16
+        case .unorm16x2: WGPUVertexFormat_Unorm16x2
+        case .unorm16x4: WGPUVertexFormat_Unorm16x4
+        case .snorm16: WGPUVertexFormat_Snorm16
+        case .snorm16x2: WGPUVertexFormat_Snorm16x2
+        case .snorm16x4: WGPUVertexFormat_Snorm16x4
+        case .float16: WGPUVertexFormat_Float16
+        case .float16x2: WGPUVertexFormat_Float16x2
+        case .float16x4: WGPUVertexFormat_Float16x4
+        case .float32: WGPUVertexFormat_Float32
+        case .float32x2: WGPUVertexFormat_Float32x2
+        case .float32x3: WGPUVertexFormat_Float32x3
+        case .float32x4: WGPUVertexFormat_Float32x4
+        case .uint32: WGPUVertexFormat_Uint32
+        case .uint32x2: WGPUVertexFormat_Uint32x2
+        case .uint32x3: WGPUVertexFormat_Uint32x3
+        case .uint32x4: WGPUVertexFormat_Uint32x4
+        case .sint32: WGPUVertexFormat_Sint32
+        case .sint32x2: WGPUVertexFormat_Sint32x2
+        case .sint32x3: WGPUVertexFormat_Sint32x3
+        case .sint32x4: WGPUVertexFormat_Sint32x4
+        case .unorm10_10_10_2: WGPUVertexFormat_Unorm10_10_10_2
+        case .unorm8x4BGRA: WGPUVertexFormat_Unorm8x4BGRA
+        case .snorm10_10_10_2: WGPUVertexFormat_Snorm10_10_10_2
         }
     }
 }
@@ -1791,6 +2160,19 @@ private func withCChain<Result>(
     }
 
     switch node {
+    case let state as ColorTargetStateExpandResolveTextureDawn:
+        return try withCChain(state.chain.next) { next in
+            var cState = WGPUColorTargetStateExpandResolveTextureDawn()
+            cState.chain.next = next
+            cState.chain.sType = state.chain.sType.cValue
+            cState.enabled = state.enabled ? 1 : 0
+            return try withUnsafeMutablePointer(to: &cState) { state in
+                try body(
+                    UnsafeMutableRawPointer(state)
+                        .assumingMemoryBound(to: WGPUChainedStruct.self)
+                )
+            }
+        }
     case let options as DawnShaderModuleSPIRVOptionsDescriptor:
         return try withCChain(options.chain.next) { next in
             var cOptions = WGPUDawnShaderModuleSPIRVOptionsDescriptor()
@@ -1952,6 +2334,206 @@ private func withWGPUStringView<Result>(
         view.data = buffer.baseAddress
         view.length = string.utf8.count
         return try body(view)
+    }
+}
+
+private func withCVertexState<Result>(
+    _ state: VertexState,
+    body: (WGPUVertexState) throws -> Result
+) throws -> Result {
+    try withCChain(state.nextInChain) { nextInChain in
+        try withWGPUStringView(state.entryPoint) { entryPoint in
+            try withCConstantEntries(state.constants, index: 0, converted: []) { constants in
+                try withCVertexBufferLayouts(state.buffers, index: 0, converted: []) { buffers in
+                    try constants.withUnsafeBufferPointer { constants in
+                        try buffers.withUnsafeBufferPointer { buffers in
+                            var cState = WGPUVertexState()
+                            cState.nextInChain = nextInChain
+                            cState.module = state.module.handle
+                            cState.entryPoint = entryPoint
+                            cState.constantCount = constants.count
+                            cState.constants = constants.baseAddress
+                            cState.bufferCount = buffers.count
+                            cState.buffers = buffers.baseAddress
+                            return try body(cState)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private func withCFragmentState<Result>(
+    _ state: FragmentState,
+    body: (WGPUFragmentState) throws -> Result
+) throws -> Result {
+    try withCChain(state.nextInChain) { nextInChain in
+        try withWGPUStringView(state.entryPoint) { entryPoint in
+            try withCConstantEntries(state.constants, index: 0, converted: []) { constants in
+                try withCColorTargetStates(state.targets, index: 0, converted: []) { targets in
+                    try constants.withUnsafeBufferPointer { constants in
+                        try targets.withUnsafeBufferPointer { targets in
+                            var cState = WGPUFragmentState()
+                            cState.nextInChain = nextInChain
+                            cState.module = state.module.handle
+                            cState.entryPoint = entryPoint
+                            cState.constantCount = constants.count
+                            cState.constants = constants.baseAddress
+                            cState.targetCount = targets.count
+                            cState.targets = targets.baseAddress
+                            return try body(cState)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private func withCConstantEntries<Result>(
+    _ entries: [ConstantEntry],
+    index: Int,
+    converted: [WGPUConstantEntry],
+    body: ([WGPUConstantEntry]) throws -> Result
+) throws -> Result {
+    guard index < entries.count else {
+        return try body(converted)
+    }
+
+    let entry = entries[index]
+    return try withCChain(entry.nextInChain) { nextInChain in
+        try withWGPUStringView(entry.key) { key in
+            var cEntry = WGPUConstantEntry()
+            cEntry.nextInChain = nextInChain
+            cEntry.key = key
+            cEntry.value = entry.value
+            var converted = converted
+            converted.append(cEntry)
+            return try withCConstantEntries(
+                entries,
+                index: index + 1,
+                converted: converted,
+                body: body
+            )
+        }
+    }
+}
+
+private func withCVertexAttributes<Result>(
+    _ attributes: [VertexAttribute],
+    index: Int,
+    converted: [WGPUVertexAttribute],
+    body: ([WGPUVertexAttribute]) throws -> Result
+) throws -> Result {
+    guard index < attributes.count else {
+        return try body(converted)
+    }
+
+    let attribute = attributes[index]
+    return try withCChain(attribute.nextInChain) { nextInChain in
+        var cAttribute = WGPUVertexAttribute()
+        cAttribute.nextInChain = nextInChain
+        cAttribute.format = attribute.format.cValue
+        cAttribute.offset = attribute.offset
+        cAttribute.shaderLocation = attribute.shaderLocation
+        var converted = converted
+        converted.append(cAttribute)
+        return try withCVertexAttributes(
+            attributes,
+            index: index + 1,
+            converted: converted,
+            body: body
+        )
+    }
+}
+
+private func withCVertexBufferLayouts<Result>(
+    _ layouts: [VertexBufferLayout],
+    index: Int,
+    converted: [WGPUVertexBufferLayout],
+    body: ([WGPUVertexBufferLayout]) throws -> Result
+) throws -> Result {
+    guard index < layouts.count else {
+        return try body(converted)
+    }
+
+    let layout = layouts[index]
+    return try withCChain(layout.nextInChain) { nextInChain in
+        try withCVertexAttributes(layout.attributes, index: 0, converted: []) { attributes in
+            try attributes.withUnsafeBufferPointer { attributes in
+                var cLayout = WGPUVertexBufferLayout()
+                cLayout.nextInChain = nextInChain
+                cLayout.stepMode = layout.stepMode.cValue
+                cLayout.arrayStride = layout.arrayStride
+                cLayout.attributeCount = attributes.count
+                cLayout.attributes = attributes.baseAddress
+                var converted = converted
+                converted.append(cLayout)
+                return try withCVertexBufferLayouts(
+                    layouts,
+                    index: index + 1,
+                    converted: converted,
+                    body: body
+                )
+            }
+        }
+    }
+}
+
+private func withCColorTargetStates<Result>(
+    _ targets: [ColorTargetState],
+    index: Int,
+    converted: [WGPUColorTargetState],
+    body: ([WGPUColorTargetState]) throws -> Result
+) throws -> Result {
+    guard index < targets.count else {
+        return try body(converted)
+    }
+
+    let target = targets[index]
+    return try withCChain(target.nextInChain) { nextInChain in
+        var cTarget = WGPUColorTargetState()
+        cTarget.nextInChain = nextInChain
+        cTarget.format = try target.format.cValue
+        cTarget.writeMask = target.writeMask.rawValue
+
+        guard let blend = target.blend else {
+            var converted = converted
+            converted.append(cTarget)
+            return try withCColorTargetStates(
+                targets,
+                index: index + 1,
+                converted: converted,
+                body: body
+            )
+        }
+
+        var cBlend = WGPUBlendState(
+            color: blend.color.cValue,
+            alpha: blend.alpha.cValue
+        )
+        return try withUnsafePointer(to: &cBlend) { blend in
+            cTarget.blend = blend
+            var converted = converted
+            converted.append(cTarget)
+            return try withCColorTargetStates(
+                targets,
+                index: index + 1,
+                converted: converted,
+                body: body
+            )
+        }
+    }
+}
+
+private extension BlendComponent {
+    var cValue: WGPUBlendComponent {
+        WGPUBlendComponent(
+            operation: operation.cValue,
+            srcFactor: srcFactor.cValue,
+            dstFactor: dstFactor.cValue
+        )
     }
 }
 
