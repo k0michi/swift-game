@@ -1810,9 +1810,30 @@ public final class RenderPassEncoder {
         self.commandEncoder = commandEncoder
     }
 
+    // wgpuRenderPassEncoderDraw
+    public func draw(
+        vertexCount: UInt32,
+        instanceCount: UInt32,
+        firstVertex: UInt32,
+        firstInstance: UInt32
+    ) {
+        wgpuRenderPassEncoderDraw(
+            handle,
+            vertexCount,
+            instanceCount,
+            firstVertex,
+            firstInstance
+        )
+    }
+
     // wgpuRenderPassEncoderEnd
     public func end() {
         wgpuRenderPassEncoderEnd(handle)
+    }
+
+    // wgpuRenderPassEncoderSetPipeline
+    public func setPipeline(_ pipeline: RenderPipeline) {
+        wgpuRenderPassEncoderSetPipeline(handle, pipeline.handle)
     }
 
     deinit {

@@ -291,19 +291,33 @@ struct WebGPUTests {
             descriptor: ShaderModuleDescriptor(
                 nextInChain: ShaderSourceWGSL(
                     code: """
+                        struct VertexOutput {
+                            @builtin(position) position: vec4f,
+                            @location(0) color: vec3f,
+                        }
+
                         @vertex
-                        fn vertexMain(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
+                        fn vertexMain(@builtin(vertex_index) index: u32) -> VertexOutput {
                             var positions = array(
                                 vec2f(0.0, 0.5),
                                 vec2f(-0.5, -0.5),
                                 vec2f(0.5, -0.5)
                             );
-                            return vec4f(positions[index], 0.0, 1.0);
+                            var colors = array(
+                                vec3f(1.0, 0.0, 0.0),
+                                vec3f(0.0, 1.0, 0.0),
+                                vec3f(0.0, 0.0, 1.0)
+                            );
+
+                            var output: VertexOutput;
+                            output.position = vec4f(positions[index], 0.0, 1.0);
+                            output.color = colors[index];
+                            return output;
                         }
 
                         @fragment
-                        fn fragmentMain() -> @location(0) vec4f {
-                            return vec4f(1.0, 0.0, 0.0, 1.0);
+                        fn fragmentMain(@location(0) color: vec3f) -> @location(0) vec4f {
+                            return vec4f(color, 1.0);
                         }
                         """
                 )
@@ -330,5 +344,57 @@ struct WebGPUTests {
         )
 
         withExtendedLifetime((instance, adapter, device, pipeline)) {}
+    }
+
+    @Test
+    func recordsTriangleDraw() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let queue = device.getQueue()
+        let shaderModule = try device.createShaderModule(
+            descriptor: ShaderModuleDescriptor(
+                nextInChain: ShaderSourceWGSL(
+                    code: """
+                        @vertex
+                        fn vertexMain(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
+                            var positions = array(
+                                vec2f(0.0, 0.5),
+                                vec2f(-0.5, -0.5),
+                                vec2f(0.5, -0.5)
+                            );
+                            return vec4f(positions[index], 0.0, 1.0);
+                        }
+                        """
+                )
+            )
+        )
+        let pipeline = try device.createRenderPipeline(
+            descriptor: RenderPipelineDescriptor(
+                vertex: VertexState(
+                    module: shaderModule,
+                    entryPoint: "vertexMain"
+                ),
+                primitive: PrimitiveState(topology: .triangleList)
+            )
+        )
+        let commandEncoder = try device.createCommandEncoder()
+        let renderPass = try commandEncoder.beginRenderPass(
+            descriptor: RenderPassDescriptor(colorAttachments: [])
+        )
+        renderPass.setPipeline(pipeline)
+        renderPass.draw(
+            vertexCount: 3,
+            instanceCount: 1,
+            firstVertex: 0,
+            firstInstance: 0
+        )
+        renderPass.end()
+        let commandBuffer = try commandEncoder.finish()
+        queue.submit([commandBuffer])
+
+        withExtendedLifetime((instance, adapter, device, queue, pipeline, commandBuffer)) {}
     }
 }
