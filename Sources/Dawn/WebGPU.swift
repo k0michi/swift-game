@@ -292,6 +292,17 @@ public enum TextureDimension: UInt32, Sendable {
     case `3D` = 0x0000_0003
 }
 
+// WGPUTextureAspect
+public enum TextureAspect: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case all = 0x0000_0001
+    case stencilOnly = 0x0000_0002
+    case depthOnly = 0x0000_0003
+    case plane0Only = 0x0005_0000
+    case plane1Only = 0x0005_0001
+    case plane2Only = 0x0005_0002
+}
+
 // WGPUExtent3D
 public struct Extent3D: Sendable {
     public var width: UInt32
@@ -343,6 +354,52 @@ public struct TextureDescriptor {
         self.mipLevelCount = mipLevelCount
         self.sampleCount = sampleCount
         self.viewFormats = viewFormats
+    }
+}
+
+// WGPU_MIP_LEVEL_COUNT_UNDEFINED
+public let mipLevelCountUndefined = UInt32.max
+
+// WGPU_ARRAY_LAYER_COUNT_UNDEFINED
+public let arrayLayerCountUndefined = UInt32.max
+
+// TODO: Migrate WGPUTextureComponentSwizzleDescriptor.
+// TODO: Migrate WGPUYCbCrVkDescriptor.
+// WGPUTextureViewDescriptor
+public struct TextureViewDescriptor {
+    public var nextInChain: (any ChainedStructNode)?
+    public var label: String?
+    public var format: TextureFormat
+    public var dimension: TextureViewDimension
+    public var baseMipLevel: UInt32
+    public var mipLevelCount: UInt32
+    public var baseArrayLayer: UInt32
+    public var arrayLayerCount: UInt32
+    public var aspect: TextureAspect
+    public var usage: TextureUsage
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        label: String? = nil,
+        format: TextureFormat = .undefined,
+        dimension: TextureViewDimension = .undefined,
+        baseMipLevel: UInt32 = 0,
+        mipLevelCount: UInt32 = mipLevelCountUndefined,
+        baseArrayLayer: UInt32 = 0,
+        arrayLayerCount: UInt32 = arrayLayerCountUndefined,
+        aspect: TextureAspect = .undefined,
+        usage: TextureUsage = []
+    ) {
+        self.nextInChain = nextInChain
+        self.label = label
+        self.format = format
+        self.dimension = dimension
+        self.baseMipLevel = baseMipLevel
+        self.mipLevelCount = mipLevelCount
+        self.baseArrayLayer = baseArrayLayer
+        self.arrayLayerCount = arrayLayerCount
+        self.aspect = aspect
+        self.usage = usage
     }
 }
 
@@ -1974,11 +2031,24 @@ public final class Texture {
     }
 
     // wgpuTextureCreateView
-    public func createView() throws -> TextureView {
-        guard let handle = wgpuTextureCreateView(handle, nil) else {
-            throw WebGPUError.createTextureViewFailed
+    public func createView(
+        descriptor: TextureViewDescriptor? = nil
+    ) throws -> TextureView {
+        let viewHandle: WGPUTextureView
+        if let descriptor {
+            viewHandle = try withCTextureViewDescriptor(descriptor) { cDescriptor in
+                guard let handle = wgpuTextureCreateView(self.handle, cDescriptor) else {
+                    throw WebGPUError.createTextureViewFailed
+                }
+                return handle
+            }
+        } else {
+            guard let handle = wgpuTextureCreateView(handle, nil) else {
+                throw WebGPUError.createTextureViewFailed
+            }
+            viewHandle = handle
         }
-        return TextureView(handle: handle, texture: self)
+        return TextureView(handle: viewHandle, texture: self)
     }
 
     deinit {
@@ -2485,6 +2555,20 @@ private extension TextureDimension {
     }
 }
 
+private extension TextureAspect {
+    var cValue: WGPUTextureAspect {
+        switch self {
+        case .undefined: WGPUTextureAspect_Undefined
+        case .all: WGPUTextureAspect_All
+        case .stencilOnly: WGPUTextureAspect_StencilOnly
+        case .depthOnly: WGPUTextureAspect_DepthOnly
+        case .plane0Only: WGPUTextureAspect_Plane0Only
+        case .plane1Only: WGPUTextureAspect_Plane1Only
+        case .plane2Only: WGPUTextureAspect_Plane2Only
+        }
+    }
+}
+
 private extension BufferBindingType {
     var cValue: WGPUBufferBindingType {
         switch self {
@@ -2805,6 +2889,28 @@ private func withCTextureDescriptor<Result>(
                 cDescriptor.viewFormats = viewFormats.baseAddress
                 return try withUnsafePointer(to: &cDescriptor, body)
             }
+        }
+    }
+}
+
+private func withCTextureViewDescriptor<Result>(
+    _ descriptor: TextureViewDescriptor,
+    body: (UnsafePointer<WGPUTextureViewDescriptor>) throws -> Result
+) throws -> Result {
+    try withCChain(descriptor.nextInChain) { nextInChain in
+        try withWGPUStringView(descriptor.label) { label in
+            var cDescriptor = WGPUTextureViewDescriptor()
+            cDescriptor.nextInChain = nextInChain
+            cDescriptor.label = label
+            cDescriptor.format = try descriptor.format.cValue
+            cDescriptor.dimension = descriptor.dimension.cValue
+            cDescriptor.baseMipLevel = descriptor.baseMipLevel
+            cDescriptor.mipLevelCount = descriptor.mipLevelCount
+            cDescriptor.baseArrayLayer = descriptor.baseArrayLayer
+            cDescriptor.arrayLayerCount = descriptor.arrayLayerCount
+            cDescriptor.aspect = descriptor.aspect.cValue
+            cDescriptor.usage = descriptor.usage.rawValue
+            return try withUnsafePointer(to: &cDescriptor, body)
         }
     }
 }

@@ -459,7 +459,19 @@ struct WebGPUTests {
                 format: .rgba8Unorm
             )
         )
-        let view = try texture.createView()
+        let view = try texture.createView(
+            descriptor: TextureViewDescriptor(
+                label: "checkerboard view",
+                format: .rgba8Unorm,
+                dimension: .`2D`,
+                baseMipLevel: 0,
+                mipLevelCount: 1,
+                baseArrayLayer: 0,
+                arrayLayerCount: 1,
+                aspect: .all,
+                usage: .textureBinding
+            )
+        )
 
         withExtendedLifetime((instance, adapter, device, texture, view)) {}
     }
