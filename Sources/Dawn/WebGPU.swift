@@ -12,6 +12,7 @@ public enum WebGPUError: Error, Equatable {
     case getCurrentTextureFailed(status: UInt32)
     case createTextureViewFailed
     case createCommandEncoderFailed
+    case createBindGroupLayoutFailed
     case beginRenderPassFailed
     case finishCommandEncoderFailed
     case presentFailed(status: UInt32)
@@ -289,6 +290,192 @@ public struct TextureFormat: RawRepresentable, Equatable, Hashable, Sendable {
     public static let r10X6BG10X6Biplanar422Unorm = Self(rawValue: 0x0005_0005)
     public static let r10X6BG10X6Biplanar444Unorm = Self(rawValue: 0x0005_0006)
     public static let opaqueYCbCrAndroid = Self(rawValue: 0x0005_0007)
+}
+
+// WGPUBufferBindingType
+public enum BufferBindingType: UInt32, Sendable {
+    case bindingNotUsed = 0x0000_0000
+    case undefined = 0x0000_0001
+    case uniform = 0x0000_0002
+    case storage = 0x0000_0003
+    case readOnlyStorage = 0x0000_0004
+}
+
+// WGPUSamplerBindingType
+public enum SamplerBindingType: UInt32, Sendable {
+    case bindingNotUsed = 0x0000_0000
+    case undefined = 0x0000_0001
+    case filtering = 0x0000_0002
+    case nonFiltering = 0x0000_0003
+    case comparison = 0x0000_0004
+}
+
+// WGPUStorageTextureAccess
+public enum StorageTextureAccess: UInt32, Sendable {
+    case bindingNotUsed = 0x0000_0000
+    case undefined = 0x0000_0001
+    case writeOnly = 0x0000_0002
+    case readOnly = 0x0000_0003
+    case readWrite = 0x0000_0004
+}
+
+// WGPUTextureSampleType
+public enum TextureSampleType: UInt32, Sendable {
+    case bindingNotUsed = 0x0000_0000
+    case undefined = 0x0000_0001
+    case float = 0x0000_0002
+    case unfilterableFloat = 0x0000_0003
+    case depth = 0x0000_0004
+    case sint = 0x0000_0005
+    case uint = 0x0000_0006
+}
+
+// WGPUTextureViewDimension
+public enum TextureViewDimension: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case `1D` = 0x0000_0001
+    case `2D` = 0x0000_0002
+    case `2DArray` = 0x0000_0003
+    case cube = 0x0000_0004
+    case cubeArray = 0x0000_0005
+    case `3D` = 0x0000_0006
+}
+
+// WGPUShaderStage
+public struct ShaderStage: OptionSet, Sendable {
+    public let rawValue: UInt64
+
+    public init(rawValue: UInt64) {
+        self.rawValue = rawValue
+    }
+
+    public static let none: Self = []
+    public static let vertex = Self(rawValue: 0x0000_0000_0000_0001)
+    public static let fragment = Self(rawValue: 0x0000_0000_0000_0002)
+    public static let compute = Self(rawValue: 0x0000_0000_0000_0004)
+}
+
+// WGPUBufferBindingLayout
+public struct BufferBindingLayout {
+    public var nextInChain: (any ChainedStructNode)?
+    public var type: BufferBindingType
+    public var hasDynamicOffset: Bool
+    public var minBindingSize: UInt64
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        type: BufferBindingType = .undefined,
+        hasDynamicOffset: Bool = false,
+        minBindingSize: UInt64 = 0
+    ) {
+        self.nextInChain = nextInChain
+        self.type = type
+        self.hasDynamicOffset = hasDynamicOffset
+        self.minBindingSize = minBindingSize
+    }
+}
+
+// WGPUSamplerBindingLayout
+public struct SamplerBindingLayout {
+    public var nextInChain: (any ChainedStructNode)?
+    public var type: SamplerBindingType
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        type: SamplerBindingType = .undefined
+    ) {
+        self.nextInChain = nextInChain
+        self.type = type
+    }
+}
+
+// WGPUTextureBindingLayout
+public struct TextureBindingLayout {
+    public var nextInChain: (any ChainedStructNode)?
+    public var sampleType: TextureSampleType
+    public var viewDimension: TextureViewDimension
+    public var multisampled: Bool
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        sampleType: TextureSampleType = .undefined,
+        viewDimension: TextureViewDimension = .undefined,
+        multisampled: Bool = false
+    ) {
+        self.nextInChain = nextInChain
+        self.sampleType = sampleType
+        self.viewDimension = viewDimension
+        self.multisampled = multisampled
+    }
+}
+
+// WGPUStorageTextureBindingLayout
+public struct StorageTextureBindingLayout {
+    public var nextInChain: (any ChainedStructNode)?
+    public var access: StorageTextureAccess
+    public var format: TextureFormat
+    public var viewDimension: TextureViewDimension
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        access: StorageTextureAccess = .undefined,
+        format: TextureFormat = .undefined,
+        viewDimension: TextureViewDimension = .undefined
+    ) {
+        self.nextInChain = nextInChain
+        self.access = access
+        self.format = format
+        self.viewDimension = viewDimension
+    }
+}
+
+// WGPUBindGroupLayoutEntry
+public struct BindGroupLayoutEntry {
+    public var nextInChain: (any ChainedStructNode)?
+    public var binding: UInt32
+    public var visibility: ShaderStage
+    public var bindingArraySize: UInt32
+    public var buffer: BufferBindingLayout
+    public var sampler: SamplerBindingLayout
+    public var texture: TextureBindingLayout
+    public var storageTexture: StorageTextureBindingLayout
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        binding: UInt32,
+        visibility: ShaderStage,
+        bindingArraySize: UInt32 = 0,
+        buffer: BufferBindingLayout = BufferBindingLayout(type: .bindingNotUsed),
+        sampler: SamplerBindingLayout = SamplerBindingLayout(type: .bindingNotUsed),
+        texture: TextureBindingLayout = TextureBindingLayout(sampleType: .bindingNotUsed),
+        storageTexture: StorageTextureBindingLayout = StorageTextureBindingLayout(access: .bindingNotUsed)
+    ) {
+        self.nextInChain = nextInChain
+        self.binding = binding
+        self.visibility = visibility
+        self.bindingArraySize = bindingArraySize
+        self.buffer = buffer
+        self.sampler = sampler
+        self.texture = texture
+        self.storageTexture = storageTexture
+    }
+}
+
+// WGPUBindGroupLayoutDescriptor
+public struct BindGroupLayoutDescriptor {
+    public var nextInChain: (any ChainedStructNode)?
+    public var label: String?
+    public var entries: [BindGroupLayoutEntry]
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        label: String? = nil,
+        entries: [BindGroupLayoutEntry]
+    ) {
+        self.nextInChain = nextInChain
+        self.label = label
+        self.entries = entries
+    }
 }
 
 // WGPUPresentMode
@@ -619,6 +806,19 @@ public final class Device: @unchecked Sendable {
         Queue(handle: wgpuDeviceGetQueue(handle), device: self)
     }
 
+    // wgpuDeviceCreateBindGroupLayout
+    public func createBindGroupLayout(
+        descriptor: BindGroupLayoutDescriptor
+    ) throws -> BindGroupLayout {
+        let handle = try withCBindGroupLayoutDescriptor(descriptor) { cDescriptor in
+            guard let handle = wgpuDeviceCreateBindGroupLayout(self.handle, cDescriptor) else {
+                throw WebGPUError.createBindGroupLayoutFailed
+            }
+            return handle
+        }
+        return BindGroupLayout(handle: handle, device: self)
+    }
+
     // wgpuDeviceCreateCommandEncoder
     public func createCommandEncoder(
         descriptor: CommandEncoderDescriptor = CommandEncoderDescriptor()
@@ -640,6 +840,21 @@ public final class Device: @unchecked Sendable {
     deinit {
         // wgpuDeviceRelease
         wgpuDeviceRelease(handle)
+    }
+}
+
+public final class BindGroupLayout {
+    let handle: WGPUBindGroupLayout
+    private let device: Device
+
+    init(handle: WGPUBindGroupLayout, device: Device) {
+        self.handle = handle
+        self.device = device
+    }
+
+    deinit {
+        // wgpuBindGroupLayoutRelease
+        wgpuBindGroupLayoutRelease(handle)
     }
 }
 
@@ -1076,6 +1291,70 @@ private extension TextureFormat {
     }
 }
 
+private extension BufferBindingType {
+    var cValue: WGPUBufferBindingType {
+        switch self {
+        case .bindingNotUsed: WGPUBufferBindingType_BindingNotUsed
+        case .undefined: WGPUBufferBindingType_Undefined
+        case .uniform: WGPUBufferBindingType_Uniform
+        case .storage: WGPUBufferBindingType_Storage
+        case .readOnlyStorage: WGPUBufferBindingType_ReadOnlyStorage
+        }
+    }
+}
+
+private extension SamplerBindingType {
+    var cValue: WGPUSamplerBindingType {
+        switch self {
+        case .bindingNotUsed: WGPUSamplerBindingType_BindingNotUsed
+        case .undefined: WGPUSamplerBindingType_Undefined
+        case .filtering: WGPUSamplerBindingType_Filtering
+        case .nonFiltering: WGPUSamplerBindingType_NonFiltering
+        case .comparison: WGPUSamplerBindingType_Comparison
+        }
+    }
+}
+
+private extension StorageTextureAccess {
+    var cValue: WGPUStorageTextureAccess {
+        switch self {
+        case .bindingNotUsed: WGPUStorageTextureAccess_BindingNotUsed
+        case .undefined: WGPUStorageTextureAccess_Undefined
+        case .writeOnly: WGPUStorageTextureAccess_WriteOnly
+        case .readOnly: WGPUStorageTextureAccess_ReadOnly
+        case .readWrite: WGPUStorageTextureAccess_ReadWrite
+        }
+    }
+}
+
+private extension TextureSampleType {
+    var cValue: WGPUTextureSampleType {
+        switch self {
+        case .bindingNotUsed: WGPUTextureSampleType_BindingNotUsed
+        case .undefined: WGPUTextureSampleType_Undefined
+        case .float: WGPUTextureSampleType_Float
+        case .unfilterableFloat: WGPUTextureSampleType_UnfilterableFloat
+        case .depth: WGPUTextureSampleType_Depth
+        case .sint: WGPUTextureSampleType_Sint
+        case .uint: WGPUTextureSampleType_Uint
+        }
+    }
+}
+
+private extension TextureViewDimension {
+    var cValue: WGPUTextureViewDimension {
+        switch self {
+        case .undefined: WGPUTextureViewDimension_Undefined
+        case .`1D`: WGPUTextureViewDimension_1D
+        case .`2D`: WGPUTextureViewDimension_2D
+        case .`2DArray`: WGPUTextureViewDimension_2DArray
+        case .cube: WGPUTextureViewDimension_Cube
+        case .cubeArray: WGPUTextureViewDimension_CubeArray
+        case .`3D`: WGPUTextureViewDimension_3D
+        }
+    }
+}
+
 private extension PresentMode {
     var cValue: WGPUPresentMode {
         switch self {
@@ -1215,6 +1494,93 @@ private func withWGPUStringView<Result>(
         view.data = buffer.baseAddress
         view.length = string.utf8.count
         return try body(view)
+    }
+}
+
+private func withCBindGroupLayoutDescriptor<Result>(
+    _ descriptor: BindGroupLayoutDescriptor,
+    body: (UnsafePointer<WGPUBindGroupLayoutDescriptor>) throws -> Result
+) throws -> Result {
+    try withCChain(descriptor.nextInChain) { nextInChain in
+        try withWGPUStringView(descriptor.label) { label in
+            try withCBindGroupLayoutEntries(
+                descriptor.entries,
+                index: 0,
+                converted: []
+            ) { entries in
+                try entries.withUnsafeBufferPointer { entries in
+                    var cDescriptor = WGPUBindGroupLayoutDescriptor()
+                    cDescriptor.nextInChain = nextInChain
+                    cDescriptor.label = label
+                    cDescriptor.entryCount = entries.count
+                    cDescriptor.entries = entries.baseAddress
+                    return try withUnsafePointer(to: &cDescriptor, body)
+                }
+            }
+        }
+    }
+}
+
+private func withCBindGroupLayoutEntries<Result>(
+    _ entries: [BindGroupLayoutEntry],
+    index: Int,
+    converted: [WGPUBindGroupLayoutEntry],
+    body: ([WGPUBindGroupLayoutEntry]) throws -> Result
+) throws -> Result {
+    guard index < entries.count else {
+        return try body(converted)
+    }
+
+    let entry = entries[index]
+    return try withCChain(entry.nextInChain) { nextInChain in
+        try withCChain(entry.buffer.nextInChain) { bufferNextInChain in
+            try withCChain(entry.sampler.nextInChain) { samplerNextInChain in
+                try withCChain(entry.texture.nextInChain) { textureNextInChain in
+                    try withCChain(entry.storageTexture.nextInChain) { storageTextureNextInChain in
+                        var cBuffer = WGPUBufferBindingLayout()
+                        cBuffer.nextInChain = bufferNextInChain
+                        cBuffer.type = entry.buffer.type.cValue
+                        cBuffer.hasDynamicOffset = entry.buffer.hasDynamicOffset ? 1 : 0
+                        cBuffer.minBindingSize = entry.buffer.minBindingSize
+
+                        var cSampler = WGPUSamplerBindingLayout()
+                        cSampler.nextInChain = samplerNextInChain
+                        cSampler.type = entry.sampler.type.cValue
+
+                        var cTexture = WGPUTextureBindingLayout()
+                        cTexture.nextInChain = textureNextInChain
+                        cTexture.sampleType = entry.texture.sampleType.cValue
+                        cTexture.viewDimension = entry.texture.viewDimension.cValue
+                        cTexture.multisampled = entry.texture.multisampled ? 1 : 0
+
+                        var cStorageTexture = WGPUStorageTextureBindingLayout()
+                        cStorageTexture.nextInChain = storageTextureNextInChain
+                        cStorageTexture.access = entry.storageTexture.access.cValue
+                        cStorageTexture.format = try entry.storageTexture.format.cValue
+                        cStorageTexture.viewDimension = entry.storageTexture.viewDimension.cValue
+
+                        var cEntry = WGPUBindGroupLayoutEntry()
+                        cEntry.nextInChain = nextInChain
+                        cEntry.binding = entry.binding
+                        cEntry.visibility = entry.visibility.rawValue
+                        cEntry.bindingArraySize = entry.bindingArraySize
+                        cEntry.buffer = cBuffer
+                        cEntry.sampler = cSampler
+                        cEntry.texture = cTexture
+                        cEntry.storageTexture = cStorageTexture
+
+                        var converted = converted
+                        converted.append(cEntry)
+                        return try withCBindGroupLayoutEntries(
+                            entries,
+                            index: index + 1,
+                            converted: converted,
+                            body: body
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

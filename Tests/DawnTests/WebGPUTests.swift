@@ -67,4 +67,30 @@ struct WebGPUTests {
         #expect(configuration.presentMode == .fifo)
         withExtendedLifetime((instance, adapter, device)) {}
     }
+
+    @Test
+    func createsBindGroupLayout() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let layout = try device.createBindGroupLayout(
+            descriptor: BindGroupLayoutDescriptor(
+                label: "uniforms",
+                entries: [
+                    BindGroupLayoutEntry(
+                        binding: 0,
+                        visibility: [.vertex, .fragment],
+                        buffer: BufferBindingLayout(
+                            type: .uniform,
+                            minBindingSize: 64
+                        )
+                    )
+                ]
+            )
+        )
+
+        withExtendedLifetime((instance, adapter, device, layout)) {}
+    }
 }
