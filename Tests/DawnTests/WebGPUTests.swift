@@ -438,4 +438,29 @@ struct WebGPUTests {
             (instance, adapter, device, queue, pipeline, vertexBuffer, commandBuffer)
         ) {}
     }
+
+    @Test
+    func createsTexture() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let texture = try device.createTexture(
+            descriptor: TextureDescriptor(
+                label: "checkerboard",
+                usage: [.copyDst, .textureBinding],
+                dimension: .`2D`,
+                size: Extent3D(
+                    width: 2,
+                    height: 2,
+                    depthOrArrayLayers: 1
+                ),
+                format: .rgba8Unorm
+            )
+        )
+        let view = try texture.createView()
+
+        withExtendedLifetime((instance, adapter, device, texture, view)) {}
+    }
 }

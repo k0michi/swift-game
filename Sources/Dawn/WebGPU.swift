@@ -11,6 +11,7 @@ public enum WebGPUError: Error, Equatable {
     case unsupportedTextureFormat(TextureFormat)
     case getCurrentTextureFailed(status: UInt32)
     case createTextureViewFailed
+    case createTextureFailed
     case createBufferFailed
     case createBindGroupFailed
     case createShaderModuleFailed
@@ -281,6 +282,68 @@ public struct TextureUsage: OptionSet, Sendable {
     public static let renderAttachment = Self(rawValue: 0x0000_0010)
     public static let transientAttachment = Self(rawValue: 0x0000_0020)
     public static let storageAttachment = Self(rawValue: 0x0000_0040)
+}
+
+// WGPUTextureDimension
+public enum TextureDimension: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case `1D` = 0x0000_0001
+    case `2D` = 0x0000_0002
+    case `3D` = 0x0000_0003
+}
+
+// WGPUExtent3D
+public struct Extent3D: Sendable {
+    public var width: UInt32
+    public var height: UInt32
+    public var depthOrArrayLayers: UInt32
+
+    public init(
+        width: UInt32,
+        height: UInt32,
+        depthOrArrayLayers: UInt32
+    ) {
+        self.width = width
+        self.height = height
+        self.depthOrArrayLayers = depthOrArrayLayers
+    }
+}
+
+// TODO: Migrate WGPUDawnTextureInternalUsageDescriptor.
+// TODO: Migrate WGPUTextureBindingViewDimension.
+// WGPUTextureDescriptor
+public struct TextureDescriptor {
+    public var nextInChain: (any ChainedStructNode)?
+    public var label: String?
+    public var usage: TextureUsage
+    public var dimension: TextureDimension
+    public var size: Extent3D
+    public var format: TextureFormat
+    public var mipLevelCount: UInt32
+    public var sampleCount: UInt32
+    public var viewFormats: [TextureFormat]
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        label: String? = nil,
+        usage: TextureUsage,
+        dimension: TextureDimension,
+        size: Extent3D,
+        format: TextureFormat,
+        mipLevelCount: UInt32 = 1,
+        sampleCount: UInt32 = 1,
+        viewFormats: [TextureFormat] = []
+    ) {
+        self.nextInChain = nextInChain
+        self.label = label
+        self.usage = usage
+        self.dimension = dimension
+        self.size = size
+        self.format = format
+        self.mipLevelCount = mipLevelCount
+        self.sampleCount = sampleCount
+        self.viewFormats = viewFormats
+    }
 }
 
 // WGPUTextureFormat
@@ -1557,6 +1620,19 @@ public final class Device: @unchecked Sendable {
         return ShaderModule(handle: handle, device: self)
     }
 
+    // wgpuDeviceCreateTexture
+    public func createTexture(
+        descriptor: TextureDescriptor
+    ) throws -> Texture {
+        let handle = try withCTextureDescriptor(descriptor) { cDescriptor in
+            guard let handle = wgpuDeviceCreateTexture(self.handle, cDescriptor) else {
+                throw WebGPUError.createTextureFailed
+            }
+            return handle
+        }
+        return Texture(handle: handle, owner: self)
+    }
+
     // wgpuDeviceCreateBindGroupLayout
     public func createBindGroupLayout(
         descriptor: BindGroupLayoutDescriptor
@@ -1890,11 +1966,11 @@ public final class CommandBuffer {
 
 public final class Texture {
     let handle: WGPUTexture
-    private let surface: Surface
+    private let owner: AnyObject
 
-    init(handle: WGPUTexture, surface: Surface) {
+    init(handle: WGPUTexture, owner: AnyObject) {
         self.handle = handle
-        self.surface = surface
+        self.owner = owner
     }
 
     // wgpuTextureCreateView
@@ -2021,7 +2097,7 @@ public final class Surface {
                 status: UInt32(truncatingIfNeeded: surfaceTexture.status.rawValue)
             )
         }
-        return Texture(handle: handle, surface: self)
+        return Texture(handle: handle, owner: self)
     }
 
     // wgpuSurfacePresent
@@ -2398,6 +2474,17 @@ private extension TextureFormat {
     }
 }
 
+private extension TextureDimension {
+    var cValue: WGPUTextureDimension {
+        switch self {
+        case .undefined: WGPUTextureDimension_Undefined
+        case .`1D`: WGPUTextureDimension_1D
+        case .`2D`: WGPUTextureDimension_2D
+        case .`3D`: WGPUTextureDimension_3D
+        }
+    }
+}
+
 private extension BufferBindingType {
     var cValue: WGPUBufferBindingType {
         switch self {
@@ -2690,6 +2777,35 @@ private func withWGPUStringView<Result>(
         view.data = buffer.baseAddress
         view.length = string.utf8.count
         return try body(view)
+    }
+}
+
+private func withCTextureDescriptor<Result>(
+    _ descriptor: TextureDescriptor,
+    body: (UnsafePointer<WGPUTextureDescriptor>) throws -> Result
+) throws -> Result {
+    try withCChain(descriptor.nextInChain) { nextInChain in
+        try withWGPUStringView(descriptor.label) { label in
+            let viewFormats = try descriptor.viewFormats.map { try $0.cValue }
+            return try viewFormats.withUnsafeBufferPointer { viewFormats in
+                var cDescriptor = WGPUTextureDescriptor()
+                cDescriptor.nextInChain = nextInChain
+                cDescriptor.label = label
+                cDescriptor.usage = descriptor.usage.rawValue
+                cDescriptor.dimension = descriptor.dimension.cValue
+                cDescriptor.size = WGPUExtent3D(
+                    width: descriptor.size.width,
+                    height: descriptor.size.height,
+                    depthOrArrayLayers: descriptor.size.depthOrArrayLayers
+                )
+                cDescriptor.format = try descriptor.format.cValue
+                cDescriptor.mipLevelCount = descriptor.mipLevelCount
+                cDescriptor.sampleCount = descriptor.sampleCount
+                cDescriptor.viewFormatCount = viewFormats.count
+                cDescriptor.viewFormats = viewFormats.baseAddress
+                return try withUnsafePointer(to: &cDescriptor, body)
+            }
+        }
     }
 }
 
