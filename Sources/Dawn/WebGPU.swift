@@ -429,6 +429,9 @@ public struct StorageTextureBindingLayout {
     }
 }
 
+// TODO: Migrate WGPUExternalTextureBindingLayout.
+// TODO: Migrate WGPUStaticSamplerBindingLayout.
+// TODO: Migrate WGPUTexelBufferAccess and WGPUTexelBufferBindingLayout.
 // WGPUBindGroupLayoutEntry
 public struct BindGroupLayoutEntry {
     public var nextInChain: (any ChainedStructNode)?
