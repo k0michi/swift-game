@@ -42,14 +42,21 @@ func readDawnFlags(named name: String) -> [String] {
 let dawnCompilerFlags = readDawnFlags(named: "compiler")
 let dawnSwiftCompilerFlags = dawnCompilerFlags.flatMap { ["-Xcc", $0] }
 let dawnLinkerFlags = readDawnFlags(named: "linker").flatMap { flag -> [String] in
-    if flag.contains("::") || flag.contains("$<") || flag == "dawn_public_config" || flag.contains("NOTFOUND") {
+    if flag.contains("::") || flag.contains("$<") || flag == "dawn_public_config" || flag.contains("NOTFOUND") || ["debug", "optimized", "general"].contains(flag) {
         return []
     }
     if flag.hasPrefix("-framework ") {
         return ["-framework", String(flag.dropFirst("-framework ".count))]
     }
-    guard flag.hasPrefix("-Wl,") else { return [flag] }
-    return flag.dropFirst(4).split(separator: ",").flatMap { ["-Xlinker", String($0)] }
+    if flag.hasPrefix("-Wl,") {
+        return flag.dropFirst(4).split(separator: ",").flatMap { ["-Xlinker", String($0)] }
+    }
+    if flag.hasPrefix("-") || flag.hasPrefix("/") || flag.contains(":") {
+        return [flag]
+    }
+
+    let libraryName = flag.hasSuffix(".lib") ? String(flag.dropLast(4)) : flag
+    return ["-l\(libraryName)"]
 }
 
 let package = Package(
