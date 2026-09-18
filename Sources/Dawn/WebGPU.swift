@@ -15,6 +15,7 @@ public enum WebGPUError: Error, Equatable {
     case createBindGroupFailed
     case createShaderModuleFailed
     case shaderSourceSPIRVTooLarge
+    case createPipelineLayoutFailed
     case createCommandEncoderFailed
     case createBindGroupLayoutFailed
     case beginRenderPassFailed
@@ -686,6 +687,28 @@ public struct BindGroupDescriptor {
     }
 }
 
+// TODO: Migrate WGPUPipelineLayoutResourceTable.
+// TODO: Migrate WGPUPipelineLayoutStorageAttachment and WGPUPipelineLayoutPixelLocalStorage.
+// WGPUPipelineLayoutDescriptor
+public struct PipelineLayoutDescriptor {
+    public var nextInChain: (any ChainedStructNode)?
+    public var label: String?
+    public var bindGroupLayouts: [BindGroupLayout]
+    public var immediateSize: UInt32
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        label: String? = nil,
+        bindGroupLayouts: [BindGroupLayout],
+        immediateSize: UInt32 = 0
+    ) {
+        self.nextInChain = nextInChain
+        self.label = label
+        self.bindGroupLayouts = bindGroupLayouts
+        self.immediateSize = immediateSize
+    }
+}
+
 // WGPUPresentMode
 public enum PresentMode: UInt32, Sendable {
     case undefined = 0x0000_0000
@@ -1079,6 +1102,19 @@ public final class Device: @unchecked Sendable {
         return BindGroupLayout(handle: handle, device: self)
     }
 
+    // wgpuDeviceCreatePipelineLayout
+    public func createPipelineLayout(
+        descriptor: PipelineLayoutDescriptor
+    ) throws -> PipelineLayout {
+        let handle = try withCPipelineLayoutDescriptor(descriptor) { cDescriptor in
+            guard let handle = wgpuDeviceCreatePipelineLayout(self.handle, cDescriptor) else {
+                throw WebGPUError.createPipelineLayoutFailed
+            }
+            return handle
+        }
+        return PipelineLayout(handle: handle, device: self, descriptor: descriptor)
+    }
+
     // wgpuDeviceCreateCommandEncoder
     public func createCommandEncoder(
         descriptor: CommandEncoderDescriptor = CommandEncoderDescriptor()
@@ -1178,6 +1214,23 @@ public final class BindGroupLayout {
     deinit {
         // wgpuBindGroupLayoutRelease
         wgpuBindGroupLayoutRelease(handle)
+    }
+}
+
+public final class PipelineLayout {
+    let handle: WGPUPipelineLayout
+    private let device: Device
+    private let descriptor: PipelineLayoutDescriptor
+
+    init(handle: WGPUPipelineLayout, device: Device, descriptor: PipelineLayoutDescriptor) {
+        self.handle = handle
+        self.device = device
+        self.descriptor = descriptor
+    }
+
+    deinit {
+        // wgpuPipelineLayoutRelease
+        wgpuPipelineLayoutRelease(handle)
     }
 }
 
@@ -1899,6 +1952,27 @@ private func withWGPUStringView<Result>(
         view.data = buffer.baseAddress
         view.length = string.utf8.count
         return try body(view)
+    }
+}
+
+private func withCPipelineLayoutDescriptor<Result>(
+    _ descriptor: PipelineLayoutDescriptor,
+    body: (UnsafePointer<WGPUPipelineLayoutDescriptor>) throws -> Result
+) throws -> Result {
+    try withCChain(descriptor.nextInChain) { nextInChain in
+        try withWGPUStringView(descriptor.label) { label in
+            let bindGroupLayouts: [WGPUBindGroupLayout?] =
+                descriptor.bindGroupLayouts.map(\.handle)
+            return try bindGroupLayouts.withUnsafeBufferPointer { bindGroupLayouts in
+                var cDescriptor = WGPUPipelineLayoutDescriptor()
+                cDescriptor.nextInChain = nextInChain
+                cDescriptor.label = label
+                cDescriptor.bindGroupLayoutCount = bindGroupLayouts.count
+                cDescriptor.bindGroupLayouts = bindGroupLayouts.baseAddress
+                cDescriptor.immediateSize = descriptor.immediateSize
+                return try withUnsafePointer(to: &cDescriptor, body)
+            }
+        }
     }
 }
 

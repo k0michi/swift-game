@@ -185,4 +185,30 @@ struct WebGPUTests {
         #expect(dawnSource.chain.sType == .dawnShaderSourceSPIRV)
         #expect(dawnSource.code == spirv)
     }
+
+    @Test
+    func createsPipelineLayout() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let firstBindGroupLayout = try device.createBindGroupLayout(
+            descriptor: BindGroupLayoutDescriptor(entries: [])
+        )
+        let secondBindGroupLayout = try device.createBindGroupLayout(
+            descriptor: BindGroupLayoutDescriptor(entries: [])
+        )
+        let pipelineLayout = try device.createPipelineLayout(
+            descriptor: PipelineLayoutDescriptor(
+                label: "pipeline",
+                bindGroupLayouts: [
+                    firstBindGroupLayout,
+                    secondBindGroupLayout,
+                ]
+            )
+        )
+
+        withExtendedLifetime((instance, adapter, device, pipelineLayout)) {}
+    }
 }
