@@ -2149,6 +2149,23 @@ public final class RenderPassEncoder {
         wgpuRenderPassEncoderSetPipeline(handle, pipeline.handle)
     }
 
+    // wgpuRenderPassEncoderSetBindGroup
+    public func setBindGroup(
+        groupIndex: UInt32,
+        group: BindGroup?,
+        dynamicOffsets: [UInt32] = []
+    ) {
+        dynamicOffsets.withUnsafeBufferPointer { dynamicOffsets in
+            wgpuRenderPassEncoderSetBindGroup(
+                handle,
+                groupIndex,
+                group?.handle,
+                dynamicOffsets.count,
+                dynamicOffsets.baseAddress
+            )
+        }
+    }
+
     // wgpuRenderPassEncoderSetVertexBuffer
     public func setVertexBuffer(
         slot: UInt32,

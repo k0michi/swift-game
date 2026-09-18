@@ -10,6 +10,24 @@ private enum DemoError: Error {
     case invalidWindowPixelSize
 }
 
+private struct DummyImage {
+    var width: UInt32
+    var height: UInt32
+    var pixels: [UInt8]
+}
+
+private func makeDummyImage(width: UInt32, height: UInt32) -> DummyImage {
+    let pixels = (0..<height).flatMap { y in
+        (0..<width).flatMap { x -> [UInt8] in
+            let isLight = ((x / 8) + (y / 8)).isMultiple(of: 2)
+            return isLight
+                ? [0xFF, 0xFF, 0xFF, 0xFF]
+                : [0x00, 0x00, 0x00, 0xFF]
+        }
+    }
+    return DummyImage(width: width, height: height, pixels: pixels)
+}
+
 @main
 @MainActor
 struct SwiftGame {
@@ -50,14 +68,86 @@ struct SwiftGame {
             adapter: adapter,
             window: window
         )
-        let pipeline = try createTrianglePipeline(
+        let image = makeDummyImage(width: 64, height: 64)
+        let texture = try device.createTexture(
+            descriptor: TextureDescriptor(
+                label: "dummy image",
+                usage: [.copyDst, .textureBinding],
+                dimension: .`2D`,
+                size: Extent3D(
+                    width: image.width,
+                    height: image.height,
+                    depthOrArrayLayers: 1
+                ),
+                format: .rgba8Unorm
+            )
+        )
+        image.pixels.withUnsafeBytes { data in
+            queue.writeTexture(
+                destination: TexelCopyTextureInfo(texture: texture),
+                data: data,
+                dataLayout: TexelCopyBufferLayout(
+                    bytesPerRow: image.width * 4,
+                    rowsPerImage: image.height
+                ),
+                writeSize: Extent3D(
+                    width: image.width,
+                    height: image.height,
+                    depthOrArrayLayers: 1
+                )
+            )
+        }
+        let textureView = try texture.createView()
+        let sampler = try device.createSampler(
+            descriptor: SamplerDescriptor(
+                label: "dummy image sampler",
+                addressModeU: .clampToEdge,
+                addressModeV: .clampToEdge,
+                addressModeW: .clampToEdge,
+                magFilter: .nearest,
+                minFilter: .nearest,
+                mipmapFilter: .nearest
+            )
+        )
+        let bindGroupLayout = try device.createBindGroupLayout(
+            descriptor: BindGroupLayoutDescriptor(
+                label: "dummy image bind group layout",
+                entries: [
+                    BindGroupLayoutEntry(
+                        binding: 0,
+                        visibility: .fragment,
+                        sampler: SamplerBindingLayout(type: .filtering)
+                    ),
+                    BindGroupLayoutEntry(
+                        binding: 1,
+                        visibility: .fragment,
+                        texture: TextureBindingLayout(
+                            sampleType: .float,
+                            viewDimension: .`2D`
+                        )
+                    ),
+                ]
+            )
+        )
+        let bindGroup = try device.createBindGroup(
+            descriptor: BindGroupDescriptor(
+                label: "dummy image bind group",
+                layout: bindGroupLayout,
+                entries: [
+                    BindGroupEntry(binding: 0, sampler: sampler),
+                    BindGroupEntry(binding: 1, textureView: textureView),
+                ]
+            )
+        )
+        let pipeline = try createTexturedTrianglePipeline(
             device: device,
-            format: surfaceFormat
+            format: surfaceFormat,
+            bindGroupLayout: bindGroupLayout
         )
         let vertexData: [Float] = [
-            0.0, 0.5, 1.0, 0.0, 0.0,
-            -0.5, -0.5, 0.0, 1.0, 0.0,
-            0.5, -0.5, 0.0, 0.0, 1.0,
+            0.0, 0.5, 0.5, 0.0,
+            -0.5, -0.5, 0.0, 1.0,
+            0.5, -0.5, 1.0, 1.0,
         ]
         let vertexBufferSize = UInt64(vertexData.count * MemoryLayout<Float>.stride)
         let vertexBuffer = try device.createBuffer(
@@ -102,11 +192,12 @@ struct SwiftGame {
             }
 
             do {
-                try drawTriangle(
+                try drawTexturedTriangle(
                     surface: surface,
                     device: device,
                     queue: queue,
                     pipeline: pipeline,
+                    bindGroup: bindGroup,
                     vertexBuffer: vertexBuffer,
                     vertexBufferSize: vertexBufferSize,
                     color: Color(
@@ -126,7 +217,10 @@ struct SwiftGame {
         }
 
         withExtendedLifetime(
-            (system, window, instance, adapter, device, surface, queue, pipeline, vertexBuffer)
+            (
+                system, window, instance, adapter, device, surface, queue, texture, textureView,
+                sampler, bindGroupLayout, bindGroup, pipeline, vertexBuffer
+            )
         ) {}
     }
 
@@ -177,9 +271,10 @@ struct SwiftGame {
         return format
     }
 
-    private static func createTrianglePipeline(
+    private static func createTexturedTrianglePipeline(
         device: Device,
-        format: TextureFormat
+        format: TextureFormat,
+        bindGroupLayout: BindGroupLayout
     ) throws -> RenderPipeline {
         let shaderModule = try device.createShaderModule(
             descriptor: ShaderModuleDescriptor(
@@ -187,23 +282,26 @@ struct SwiftGame {
                     code: """
                         struct VertexOutput {
                             @builtin(position) position: vec4f,
-                            @location(0) color: vec3f,
+                            @location(0) uv: vec2f,
                         }
+
+                        @group(0) @binding(0) var imageSampler: sampler;
+                        @group(0) @binding(1) var imageTexture: texture_2d<f32>;
 
                         @vertex
                         fn vertexMain(
                             @location(0) position: vec2f,
-                            @location(1) color: vec3f
+                            @location(1) uv: vec2f
                         ) -> VertexOutput {
                             var output: VertexOutput;
                             output.position = vec4f(position, 0.0, 1.0);
-                            output.color = color;
+                            output.uv = uv;
                             return output;
                         }
 
                         @fragment
-                        fn fragmentMain(@location(0) color: vec3f) -> @location(0) vec4f {
-                            return vec4f(color, 1.0);
+                        fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {
+                            return textureSample(imageTexture, imageSampler, uv);
                         }
                         """
                 ),
@@ -211,7 +309,7 @@ struct SwiftGame {
             )
         )
         let layout = try device.createPipelineLayout(
-            descriptor: PipelineLayoutDescriptor(bindGroupLayouts: [])
+            descriptor: PipelineLayoutDescriptor(bindGroupLayouts: [bindGroupLayout])
         )
         return try device.createRenderPipeline(
             descriptor: RenderPipelineDescriptor(
@@ -223,7 +321,7 @@ struct SwiftGame {
                     buffers: [
                         VertexBufferLayout(
                             stepMode: .vertex,
-                            arrayStride: 5 * UInt64(MemoryLayout<Float>.stride),
+                            arrayStride: 4 * UInt64(MemoryLayout<Float>.stride),
                             attributes: [
                                 VertexAttribute(
                                     format: .float32x2,
@@ -231,7 +329,7 @@ struct SwiftGame {
                                     shaderLocation: 0
                                 ),
                                 VertexAttribute(
-                                    format: .float32x3,
+                                    format: .float32x2,
                                     offset: 2 * UInt64(MemoryLayout<Float>.stride),
                                     shaderLocation: 1
                                 ),
@@ -249,11 +347,12 @@ struct SwiftGame {
         )
     }
 
-    private static func drawTriangle(
+    private static func drawTexturedTriangle(
         surface: Surface,
         device: Device,
         queue: Queue,
         pipeline: RenderPipeline,
+        bindGroup: BindGroup,
         vertexBuffer: Buffer,
         vertexBufferSize: UInt64,
         color: Color
@@ -274,6 +373,7 @@ struct SwiftGame {
             )
         )
         renderPass.setPipeline(pipeline)
+        renderPass.setBindGroup(groupIndex: 0, group: bindGroup)
         renderPass.setVertexBuffer(
             slot: 0,
             buffer: vertexBuffer,
