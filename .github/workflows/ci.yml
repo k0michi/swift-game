@@ -61,10 +61,31 @@ jobs:
         shell: pwsh
         run: ./scripts/build.ps1
 
-      - name: Test SDL3 wrapper on macOS or Linux
-        if: runner.os != 'Windows'
+      - name: Test SDL3 wrapper on macOS
+        if: runner.os == 'macOS'
         shell: bash
         run: ./scripts/test.sh
+
+      - name: Test with coverage on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ./scripts/test.sh --enable-code-coverage
+          coverage_data="$(find .build -type f -name default.profdata -print -quit)"
+          test_bundle="$(find .build -type f -name '*.xctest' -print -quit)"
+          test -n "$coverage_data"
+          test -n "$test_bundle"
+          llvm-cov export --format=lcov --instr-profile "$coverage_data" "$test_bundle" > coverage.lcov
+
+      - name: Upload Linux coverage to Codecov
+        if: runner.os == 'Linux'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.lcov
+          disable_search: true
+          flags: linux
+          fail_ci_if_error: true
 
       - name: Test SDL3 wrapper on Windows
         if: runner.os == 'Windows'
