@@ -7,7 +7,6 @@ $SwiftBinDirectory = Split-Path -Parent (Get-Command swiftc).Source
 $ClangCL = Join-Path $SwiftBinDirectory "clang-cl.exe"
 
 cmake `
-    --fresh `
     -G Ninja `
     -S (Join-Path $RepositoryRoot "cmake/Dawn") `
     -B $BuildDirectory `

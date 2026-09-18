@@ -8,7 +8,6 @@ build_directory="$dependency_directory/cmake-build"
 swift_bin_directory=$(dirname "$(command -v swiftc)")
 
 set -- \
-    --fresh \
     -G Ninja \
     -S "$repository_root/cmake/Dawn" \
     -B "$build_directory" \
