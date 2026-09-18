@@ -93,4 +93,49 @@ struct WebGPUTests {
 
         withExtendedLifetime((instance, adapter, device, layout)) {}
     }
+
+    @Test
+    func createsBindGroup() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let layout = try device.createBindGroupLayout(
+            descriptor: BindGroupLayoutDescriptor(
+                entries: [
+                    BindGroupLayoutEntry(
+                        binding: 0,
+                        visibility: [.vertex, .fragment],
+                        buffer: BufferBindingLayout(
+                            type: .uniform,
+                            minBindingSize: 64
+                        )
+                    )
+                ]
+            )
+        )
+        let buffer = try device.createBuffer(
+            descriptor: BufferDescriptor(
+                label: "uniforms",
+                usage: .uniform,
+                size: 64
+            )
+        )
+        let bindGroup = try device.createBindGroup(
+            descriptor: BindGroupDescriptor(
+                label: "uniforms",
+                layout: layout,
+                entries: [
+                    BindGroupEntry(
+                        binding: 0,
+                        buffer: buffer,
+                        size: 64
+                    )
+                ]
+            )
+        )
+
+        withExtendedLifetime((instance, adapter, device, bindGroup)) {}
+    }
 }

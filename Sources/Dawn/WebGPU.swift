@@ -11,6 +11,8 @@ public enum WebGPUError: Error, Equatable {
     case unsupportedTextureFormat(TextureFormat)
     case getCurrentTextureFailed(status: UInt32)
     case createTextureViewFailed
+    case createBufferFailed
+    case createBindGroupFailed
     case createCommandEncoderFailed
     case createBindGroupLayoutFailed
     case beginRenderPassFailed
@@ -355,6 +357,51 @@ public struct ShaderStage: OptionSet, Sendable {
     public static let compute = Self(rawValue: 0x0000_0000_0000_0004)
 }
 
+// WGPUBufferUsage
+public struct BufferUsage: OptionSet, Sendable {
+    public let rawValue: UInt64
+
+    public init(rawValue: UInt64) {
+        self.rawValue = rawValue
+    }
+
+    public static let none: Self = []
+    public static let mapRead = Self(rawValue: 0x0000_0000_0000_0001)
+    public static let mapWrite = Self(rawValue: 0x0000_0000_0000_0002)
+    public static let copySrc = Self(rawValue: 0x0000_0000_0000_0004)
+    public static let copyDst = Self(rawValue: 0x0000_0000_0000_0008)
+    public static let index = Self(rawValue: 0x0000_0000_0000_0010)
+    public static let vertex = Self(rawValue: 0x0000_0000_0000_0020)
+    public static let uniform = Self(rawValue: 0x0000_0000_0000_0040)
+    public static let storage = Self(rawValue: 0x0000_0000_0000_0080)
+    public static let indirect = Self(rawValue: 0x0000_0000_0000_0100)
+    public static let queryResolve = Self(rawValue: 0x0000_0000_0000_0200)
+    public static let texelBuffer = Self(rawValue: 0x0000_0000_0000_0400)
+}
+
+// WGPUBufferDescriptor
+public struct BufferDescriptor {
+    public var nextInChain: (any ChainedStructNode)?
+    public var label: String?
+    public var usage: BufferUsage
+    public var size: UInt64
+    public var mappedAtCreation: Bool
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        label: String? = nil,
+        usage: BufferUsage,
+        size: UInt64,
+        mappedAtCreation: Bool = false
+    ) {
+        self.nextInChain = nextInChain
+        self.label = label
+        self.usage = usage
+        self.size = size
+        self.mappedAtCreation = mappedAtCreation
+    }
+}
+
 // WGPUBufferBindingLayout
 public struct BufferBindingLayout {
     public var nextInChain: (any ChainedStructNode)?
@@ -477,6 +524,58 @@ public struct BindGroupLayoutDescriptor {
     ) {
         self.nextInChain = nextInChain
         self.label = label
+        self.entries = entries
+    }
+}
+
+// WGPU_WHOLE_SIZE
+public let wholeSize = UInt64.max
+
+// WGPUBindGroupEntry
+public struct BindGroupEntry {
+    public var nextInChain: (any ChainedStructNode)?
+    public var binding: UInt32
+    public var buffer: Buffer?
+    public var offset: UInt64
+    public var size: UInt64
+    public var sampler: Sampler?
+    public var textureView: TextureView?
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        binding: UInt32,
+        buffer: Buffer? = nil,
+        offset: UInt64 = 0,
+        size: UInt64 = wholeSize,
+        sampler: Sampler? = nil,
+        textureView: TextureView? = nil
+    ) {
+        self.nextInChain = nextInChain
+        self.binding = binding
+        self.buffer = buffer
+        self.offset = offset
+        self.size = size
+        self.sampler = sampler
+        self.textureView = textureView
+    }
+}
+
+// WGPUBindGroupDescriptor
+public struct BindGroupDescriptor {
+    public var nextInChain: (any ChainedStructNode)?
+    public var label: String?
+    public var layout: BindGroupLayout
+    public var entries: [BindGroupEntry]
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        label: String? = nil,
+        layout: BindGroupLayout,
+        entries: [BindGroupEntry]
+    ) {
+        self.nextInChain = nextInChain
+        self.label = label
+        self.layout = layout
         self.entries = entries
     }
 }
@@ -809,6 +908,40 @@ public final class Device: @unchecked Sendable {
         Queue(handle: wgpuDeviceGetQueue(handle), device: self)
     }
 
+    // wgpuDeviceCreateBuffer
+    public func createBuffer(
+        descriptor: BufferDescriptor
+    ) throws -> Buffer {
+        let handle = try withCChain(descriptor.nextInChain) { nextInChain in
+            try withWGPUStringView(descriptor.label) { label in
+                var cDescriptor = WGPUBufferDescriptor()
+                cDescriptor.nextInChain = nextInChain
+                cDescriptor.label = label
+                cDescriptor.usage = descriptor.usage.rawValue
+                cDescriptor.size = descriptor.size
+                cDescriptor.mappedAtCreation = descriptor.mappedAtCreation ? 1 : 0
+                guard let handle = wgpuDeviceCreateBuffer(self.handle, &cDescriptor) else {
+                    throw WebGPUError.createBufferFailed
+                }
+                return handle
+            }
+        }
+        return Buffer(handle: handle, device: self)
+    }
+
+    // wgpuDeviceCreateBindGroup
+    public func createBindGroup(
+        descriptor: BindGroupDescriptor
+    ) throws -> BindGroup {
+        let handle = try withCBindGroupDescriptor(descriptor) { cDescriptor in
+            guard let handle = wgpuDeviceCreateBindGroup(self.handle, cDescriptor) else {
+                throw WebGPUError.createBindGroupFailed
+            }
+            return handle
+        }
+        return BindGroup(handle: handle, device: self, descriptor: descriptor)
+    }
+
     // wgpuDeviceCreateBindGroupLayout
     public func createBindGroupLayout(
         descriptor: BindGroupLayoutDescriptor
@@ -843,6 +976,54 @@ public final class Device: @unchecked Sendable {
     deinit {
         // wgpuDeviceRelease
         wgpuDeviceRelease(handle)
+    }
+}
+
+public final class Buffer {
+    let handle: WGPUBuffer
+    private let device: Device
+
+    init(handle: WGPUBuffer, device: Device) {
+        self.handle = handle
+        self.device = device
+    }
+
+    deinit {
+        // wgpuBufferRelease
+        wgpuBufferRelease(handle)
+    }
+}
+
+// TODO: Implement WGPUSamplerDescriptor and wgpuDeviceCreateSampler.
+public final class Sampler {
+    let handle: WGPUSampler
+    private let device: Device
+
+    init(handle: WGPUSampler, device: Device) {
+        self.handle = handle
+        self.device = device
+    }
+
+    deinit {
+        // wgpuSamplerRelease
+        wgpuSamplerRelease(handle)
+    }
+}
+
+public final class BindGroup {
+    let handle: WGPUBindGroup
+    private let device: Device
+    private let descriptor: BindGroupDescriptor
+
+    init(handle: WGPUBindGroup, device: Device, descriptor: BindGroupDescriptor) {
+        self.handle = handle
+        self.device = device
+        self.descriptor = descriptor
+    }
+
+    deinit {
+        // wgpuBindGroupRelease
+        wgpuBindGroupRelease(handle)
     }
 }
 
@@ -1521,6 +1702,63 @@ private func withCBindGroupLayoutDescriptor<Result>(
                 }
             }
         }
+    }
+}
+
+private func withCBindGroupDescriptor<Result>(
+    _ descriptor: BindGroupDescriptor,
+    body: (UnsafePointer<WGPUBindGroupDescriptor>) throws -> Result
+) throws -> Result {
+    try withCChain(descriptor.nextInChain) { nextInChain in
+        try withWGPUStringView(descriptor.label) { label in
+            try withCBindGroupEntries(
+                descriptor.entries,
+                index: 0,
+                converted: []
+            ) { entries in
+                try entries.withUnsafeBufferPointer { entries in
+                    var cDescriptor = WGPUBindGroupDescriptor()
+                    cDescriptor.nextInChain = nextInChain
+                    cDescriptor.label = label
+                    cDescriptor.layout = descriptor.layout.handle
+                    cDescriptor.entryCount = entries.count
+                    cDescriptor.entries = entries.baseAddress
+                    return try withUnsafePointer(to: &cDescriptor, body)
+                }
+            }
+        }
+    }
+}
+
+private func withCBindGroupEntries<Result>(
+    _ entries: [BindGroupEntry],
+    index: Int,
+    converted: [WGPUBindGroupEntry],
+    body: ([WGPUBindGroupEntry]) throws -> Result
+) throws -> Result {
+    guard index < entries.count else {
+        return try body(converted)
+    }
+
+    let entry = entries[index]
+    return try withCChain(entry.nextInChain) { nextInChain in
+        var cEntry = WGPUBindGroupEntry()
+        cEntry.nextInChain = nextInChain
+        cEntry.binding = entry.binding
+        cEntry.buffer = entry.buffer?.handle
+        cEntry.offset = entry.offset
+        cEntry.size = entry.size
+        cEntry.sampler = entry.sampler?.handle
+        cEntry.textureView = entry.textureView?.handle
+
+        var converted = converted
+        converted.append(cEntry)
+        return try withCBindGroupEntries(
+            entries,
+            index: index + 1,
+            converted: converted,
+            body: body
+        )
     }
 }
 
