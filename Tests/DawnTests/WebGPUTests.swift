@@ -279,4 +279,56 @@ struct WebGPUTests {
         #expect(fragment.targets[0].writeMask == .all)
         withExtendedLifetime((instance, adapter, device, vertex, fragment)) {}
     }
+
+    @Test
+    func createsRenderPipeline() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let shaderModule = try device.createShaderModule(
+            descriptor: ShaderModuleDescriptor(
+                nextInChain: ShaderSourceWGSL(
+                    code: """
+                        @vertex
+                        fn vertexMain(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
+                            var positions = array(
+                                vec2f(0.0, 0.5),
+                                vec2f(-0.5, -0.5),
+                                vec2f(0.5, -0.5)
+                            );
+                            return vec4f(positions[index], 0.0, 1.0);
+                        }
+
+                        @fragment
+                        fn fragmentMain() -> @location(0) vec4f {
+                            return vec4f(1.0, 0.0, 0.0, 1.0);
+                        }
+                        """
+                )
+            )
+        )
+        let pipelineLayout = try device.createPipelineLayout(
+            descriptor: PipelineLayoutDescriptor(bindGroupLayouts: [])
+        )
+        let pipeline = try device.createRenderPipeline(
+            descriptor: RenderPipelineDescriptor(
+                label: "triangle",
+                layout: pipelineLayout,
+                vertex: VertexState(
+                    module: shaderModule,
+                    entryPoint: "vertexMain"
+                ),
+                primitive: PrimitiveState(topology: .triangleList),
+                fragment: FragmentState(
+                    module: shaderModule,
+                    entryPoint: "fragmentMain",
+                    targets: [ColorTargetState(format: .bgra8Unorm)]
+                )
+            )
+        )
+
+        withExtendedLifetime((instance, adapter, device, pipeline)) {}
+    }
 }

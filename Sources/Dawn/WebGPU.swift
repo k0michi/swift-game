@@ -16,6 +16,7 @@ public enum WebGPUError: Error, Equatable {
     case createShaderModuleFailed
     case shaderSourceSPIRVTooLarge
     case createPipelineLayoutFailed
+    case createRenderPipelineFailed
     case createCommandEncoderFailed
     case createBindGroupLayoutFailed
     case beginRenderPassFailed
@@ -485,6 +486,64 @@ public enum VertexStepMode: UInt32, Sendable {
     case undefined = 0x0000_0000
     case vertex = 0x0000_0001
     case instance = 0x0000_0002
+}
+
+// WGPUCompareFunction
+public enum CompareFunction: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case never = 0x0000_0001
+    case less = 0x0000_0002
+    case equal = 0x0000_0003
+    case lessEqual = 0x0000_0004
+    case greater = 0x0000_0005
+    case notEqual = 0x0000_0006
+    case greaterEqual = 0x0000_0007
+    case always = 0x0000_0008
+}
+
+// WGPUCullMode
+public enum CullMode: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case none = 0x0000_0001
+    case front = 0x0000_0002
+    case back = 0x0000_0003
+}
+
+// WGPUFrontFace
+public enum FrontFace: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case ccw = 0x0000_0001
+    case cw = 0x0000_0002
+}
+
+// WGPUIndexFormat
+public enum IndexFormat: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case uint16 = 0x0000_0001
+    case uint32 = 0x0000_0002
+}
+
+// WGPUPrimitiveTopology
+public enum PrimitiveTopology: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case pointList = 0x0000_0001
+    case lineList = 0x0000_0002
+    case lineStrip = 0x0000_0003
+    case triangleList = 0x0000_0004
+    case triangleStrip = 0x0000_0005
+}
+
+// WGPUStencilOperation
+public enum StencilOperation: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case keep = 0x0000_0001
+    case zero = 0x0000_0002
+    case replace = 0x0000_0003
+    case invert = 0x0000_0004
+    case incrementClamp = 0x0000_0005
+    case decrementClamp = 0x0000_0006
+    case incrementWrap = 0x0000_0007
+    case decrementWrap = 0x0000_0008
 }
 
 // WGPUColorWriteMask
@@ -979,6 +1038,145 @@ public struct FragmentState {
     }
 }
 
+// WGPUPrimitiveState
+public struct PrimitiveState {
+    public var nextInChain: (any ChainedStructNode)?
+    public var topology: PrimitiveTopology
+    public var stripIndexFormat: IndexFormat
+    public var frontFace: FrontFace
+    public var cullMode: CullMode
+    public var unclippedDepth: Bool
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        topology: PrimitiveTopology = .undefined,
+        stripIndexFormat: IndexFormat = .undefined,
+        frontFace: FrontFace = .undefined,
+        cullMode: CullMode = .undefined,
+        unclippedDepth: Bool = false
+    ) {
+        self.nextInChain = nextInChain
+        self.topology = topology
+        self.stripIndexFormat = stripIndexFormat
+        self.frontFace = frontFace
+        self.cullMode = cullMode
+        self.unclippedDepth = unclippedDepth
+    }
+}
+
+// WGPUStencilFaceState
+public struct StencilFaceState {
+    public var compare: CompareFunction
+    public var failOp: StencilOperation
+    public var depthFailOp: StencilOperation
+    public var passOp: StencilOperation
+
+    public init(
+        compare: CompareFunction = .undefined,
+        failOp: StencilOperation = .undefined,
+        depthFailOp: StencilOperation = .undefined,
+        passOp: StencilOperation = .undefined
+    ) {
+        self.compare = compare
+        self.failOp = failOp
+        self.depthFailOp = depthFailOp
+        self.passOp = passOp
+    }
+}
+
+// WGPUDepthStencilState
+public struct DepthStencilState {
+    public var nextInChain: (any ChainedStructNode)?
+    public var format: TextureFormat
+    public var depthWriteEnabled: Bool?
+    public var depthCompare: CompareFunction
+    public var stencilFront: StencilFaceState
+    public var stencilBack: StencilFaceState
+    public var stencilReadMask: UInt32
+    public var stencilWriteMask: UInt32
+    public var depthBias: Int32
+    public var depthBiasSlopeScale: Float
+    public var depthBiasClamp: Float
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        format: TextureFormat,
+        depthWriteEnabled: Bool? = nil,
+        depthCompare: CompareFunction = .undefined,
+        stencilFront: StencilFaceState = StencilFaceState(),
+        stencilBack: StencilFaceState = StencilFaceState(),
+        stencilReadMask: UInt32 = UInt32.max,
+        stencilWriteMask: UInt32 = UInt32.max,
+        depthBias: Int32 = 0,
+        depthBiasSlopeScale: Float = 0,
+        depthBiasClamp: Float = 0
+    ) {
+        self.nextInChain = nextInChain
+        self.format = format
+        self.depthWriteEnabled = depthWriteEnabled
+        self.depthCompare = depthCompare
+        self.stencilFront = stencilFront
+        self.stencilBack = stencilBack
+        self.stencilReadMask = stencilReadMask
+        self.stencilWriteMask = stencilWriteMask
+        self.depthBias = depthBias
+        self.depthBiasSlopeScale = depthBiasSlopeScale
+        self.depthBiasClamp = depthBiasClamp
+    }
+}
+
+// WGPUMultisampleState
+public struct MultisampleState {
+    public var nextInChain: (any ChainedStructNode)?
+    public var count: UInt32
+    public var mask: UInt32
+    public var alphaToCoverageEnabled: Bool
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        count: UInt32 = 1,
+        mask: UInt32 = UInt32.max,
+        alphaToCoverageEnabled: Bool = false
+    ) {
+        self.nextInChain = nextInChain
+        self.count = count
+        self.mask = mask
+        self.alphaToCoverageEnabled = alphaToCoverageEnabled
+    }
+}
+
+// WGPURenderPipelineDescriptor
+public struct RenderPipelineDescriptor {
+    public var nextInChain: (any ChainedStructNode)?
+    public var label: String?
+    public var layout: PipelineLayout?
+    public var vertex: VertexState
+    public var primitive: PrimitiveState
+    public var depthStencil: DepthStencilState?
+    public var multisample: MultisampleState
+    public var fragment: FragmentState?
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        label: String? = nil,
+        layout: PipelineLayout? = nil,
+        vertex: VertexState,
+        primitive: PrimitiveState = PrimitiveState(),
+        depthStencil: DepthStencilState? = nil,
+        multisample: MultisampleState = MultisampleState(),
+        fragment: FragmentState? = nil
+    ) {
+        self.nextInChain = nextInChain
+        self.label = label
+        self.layout = layout
+        self.vertex = vertex
+        self.primitive = primitive
+        self.depthStencil = depthStencil
+        self.multisample = multisample
+        self.fragment = fragment
+    }
+}
+
 // WGPUPresentMode
 public enum PresentMode: UInt32, Sendable {
     case undefined = 0x0000_0000
@@ -1385,6 +1583,19 @@ public final class Device: @unchecked Sendable {
         return PipelineLayout(handle: handle, device: self, descriptor: descriptor)
     }
 
+    // wgpuDeviceCreateRenderPipeline
+    public func createRenderPipeline(
+        descriptor: RenderPipelineDescriptor
+    ) throws -> RenderPipeline {
+        let handle = try withCRenderPipelineDescriptor(descriptor) { cDescriptor in
+            guard let handle = wgpuDeviceCreateRenderPipeline(self.handle, cDescriptor) else {
+                throw WebGPUError.createRenderPipelineFailed
+            }
+            return handle
+        }
+        return RenderPipeline(handle: handle, device: self, descriptor: descriptor)
+    }
+
     // wgpuDeviceCreateCommandEncoder
     public func createCommandEncoder(
         descriptor: CommandEncoderDescriptor = CommandEncoderDescriptor()
@@ -1501,6 +1712,23 @@ public final class PipelineLayout {
     deinit {
         // wgpuPipelineLayoutRelease
         wgpuPipelineLayoutRelease(handle)
+    }
+}
+
+public final class RenderPipeline {
+    let handle: WGPURenderPipeline
+    private let device: Device
+    private let descriptor: RenderPipelineDescriptor
+
+    init(handle: WGPURenderPipeline, device: Device, descriptor: RenderPipelineDescriptor) {
+        self.handle = handle
+        self.device = device
+        self.descriptor = descriptor
+    }
+
+    deinit {
+        // wgpuRenderPipelineRelease
+        wgpuRenderPipelineRelease(handle)
     }
 }
 
@@ -1922,6 +2150,82 @@ private extension VertexFormat {
     }
 }
 
+private extension CompareFunction {
+    var cValue: WGPUCompareFunction {
+        switch self {
+        case .undefined: WGPUCompareFunction_Undefined
+        case .never: WGPUCompareFunction_Never
+        case .less: WGPUCompareFunction_Less
+        case .equal: WGPUCompareFunction_Equal
+        case .lessEqual: WGPUCompareFunction_LessEqual
+        case .greater: WGPUCompareFunction_Greater
+        case .notEqual: WGPUCompareFunction_NotEqual
+        case .greaterEqual: WGPUCompareFunction_GreaterEqual
+        case .always: WGPUCompareFunction_Always
+        }
+    }
+}
+
+private extension CullMode {
+    var cValue: WGPUCullMode {
+        switch self {
+        case .undefined: WGPUCullMode_Undefined
+        case .none: WGPUCullMode_None
+        case .front: WGPUCullMode_Front
+        case .back: WGPUCullMode_Back
+        }
+    }
+}
+
+private extension FrontFace {
+    var cValue: WGPUFrontFace {
+        switch self {
+        case .undefined: WGPUFrontFace_Undefined
+        case .ccw: WGPUFrontFace_CCW
+        case .cw: WGPUFrontFace_CW
+        }
+    }
+}
+
+private extension IndexFormat {
+    var cValue: WGPUIndexFormat {
+        switch self {
+        case .undefined: WGPUIndexFormat_Undefined
+        case .uint16: WGPUIndexFormat_Uint16
+        case .uint32: WGPUIndexFormat_Uint32
+        }
+    }
+}
+
+private extension PrimitiveTopology {
+    var cValue: WGPUPrimitiveTopology {
+        switch self {
+        case .undefined: WGPUPrimitiveTopology_Undefined
+        case .pointList: WGPUPrimitiveTopology_PointList
+        case .lineList: WGPUPrimitiveTopology_LineList
+        case .lineStrip: WGPUPrimitiveTopology_LineStrip
+        case .triangleList: WGPUPrimitiveTopology_TriangleList
+        case .triangleStrip: WGPUPrimitiveTopology_TriangleStrip
+        }
+    }
+}
+
+private extension StencilOperation {
+    var cValue: WGPUStencilOperation {
+        switch self {
+        case .undefined: WGPUStencilOperation_Undefined
+        case .keep: WGPUStencilOperation_Keep
+        case .zero: WGPUStencilOperation_Zero
+        case .replace: WGPUStencilOperation_Replace
+        case .invert: WGPUStencilOperation_Invert
+        case .incrementClamp: WGPUStencilOperation_IncrementClamp
+        case .decrementClamp: WGPUStencilOperation_DecrementClamp
+        case .incrementWrap: WGPUStencilOperation_IncrementWrap
+        case .decrementWrap: WGPUStencilOperation_DecrementWrap
+        }
+    }
+}
+
 private extension TextureFormat {
     var cValue: WGPUTextureFormat {
         get throws {
@@ -2337,6 +2641,105 @@ private func withWGPUStringView<Result>(
     }
 }
 
+private func withCRenderPipelineDescriptor<Result>(
+    _ descriptor: RenderPipelineDescriptor,
+    body: (UnsafePointer<WGPURenderPipelineDescriptor>) throws -> Result
+) throws -> Result {
+    try withCChain(descriptor.nextInChain) { nextInChain in
+        try withWGPUStringView(descriptor.label) { label in
+            try withCVertexState(descriptor.vertex) { vertex in
+                try withCPrimitiveState(descriptor.primitive) { primitive in
+                    try withCDepthStencilState(descriptor.depthStencil) { depthStencil in
+                        try withCMultisampleState(descriptor.multisample) { multisample in
+                            try withOptionalCFragmentState(descriptor.fragment) { fragment in
+                                var cDescriptor = WGPURenderPipelineDescriptor()
+                                cDescriptor.nextInChain = nextInChain
+                                cDescriptor.label = label
+                                cDescriptor.layout = descriptor.layout?.handle
+                                cDescriptor.vertex = vertex
+                                cDescriptor.primitive = primitive
+                                cDescriptor.depthStencil = depthStencil
+                                cDescriptor.multisample = multisample
+                                cDescriptor.fragment = fragment
+                                return try withUnsafePointer(to: &cDescriptor, body)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private func withCPrimitiveState<Result>(
+    _ state: PrimitiveState,
+    body: (WGPUPrimitiveState) throws -> Result
+) throws -> Result {
+    try withCChain(state.nextInChain) { nextInChain in
+        var cState = WGPUPrimitiveState()
+        cState.nextInChain = nextInChain
+        cState.topology = state.topology.cValue
+        cState.stripIndexFormat = state.stripIndexFormat.cValue
+        cState.frontFace = state.frontFace.cValue
+        cState.cullMode = state.cullMode.cValue
+        cState.unclippedDepth = state.unclippedDepth ? 1 : 0
+        return try body(cState)
+    }
+}
+
+private func withCDepthStencilState<Result>(
+    _ state: DepthStencilState?,
+    body: (UnsafePointer<WGPUDepthStencilState>?) throws -> Result
+) throws -> Result {
+    guard let state else {
+        return try body(nil)
+    }
+
+    return try withCChain(state.nextInChain) { nextInChain in
+        var cState = WGPUDepthStencilState()
+        cState.nextInChain = nextInChain
+        cState.format = try state.format.cValue
+        cState.depthWriteEnabled = state.depthWriteEnabled.cValue
+        cState.depthCompare = state.depthCompare.cValue
+        cState.stencilFront = state.stencilFront.cValue
+        cState.stencilBack = state.stencilBack.cValue
+        cState.stencilReadMask = state.stencilReadMask
+        cState.stencilWriteMask = state.stencilWriteMask
+        cState.depthBias = state.depthBias
+        cState.depthBiasSlopeScale = state.depthBiasSlopeScale
+        cState.depthBiasClamp = state.depthBiasClamp
+        return try withUnsafePointer(to: &cState, body)
+    }
+}
+
+private func withCMultisampleState<Result>(
+    _ state: MultisampleState,
+    body: (WGPUMultisampleState) throws -> Result
+) throws -> Result {
+    try withCChain(state.nextInChain) { nextInChain in
+        var cState = WGPUMultisampleState()
+        cState.nextInChain = nextInChain
+        cState.count = state.count
+        cState.mask = state.mask
+        cState.alphaToCoverageEnabled = state.alphaToCoverageEnabled ? 1 : 0
+        return try body(cState)
+    }
+}
+
+private func withOptionalCFragmentState<Result>(
+    _ state: FragmentState?,
+    body: (UnsafePointer<WGPUFragmentState>?) throws -> Result
+) throws -> Result {
+    guard let state else {
+        return try body(nil)
+    }
+
+    return try withCFragmentState(state) { state in
+        var state = state
+        return try withUnsafePointer(to: &state, body)
+    }
+}
+
 private func withCVertexState<Result>(
     _ state: VertexState,
     body: (WGPUVertexState) throws -> Result
@@ -2533,6 +2936,27 @@ private extension BlendComponent {
             operation: operation.cValue,
             srcFactor: srcFactor.cValue,
             dstFactor: dstFactor.cValue
+        )
+    }
+}
+
+private extension Optional where Wrapped == Bool {
+    var cValue: WGPUOptionalBool {
+        switch self {
+        case nil: WGPUOptionalBool_Undefined
+        case true: WGPUOptionalBool_True
+        case false: WGPUOptionalBool_False
+        }
+    }
+}
+
+private extension StencilFaceState {
+    var cValue: WGPUStencilFaceState {
+        WGPUStencilFaceState(
+            compare: compare.cValue,
+            failOp: failOp.cValue,
+            depthFailOp: depthFailOp.cValue,
+            passOp: passOp.cValue
         )
     }
 }
