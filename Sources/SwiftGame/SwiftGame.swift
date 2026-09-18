@@ -54,6 +54,26 @@ struct SwiftGame {
             device: device,
             format: surfaceFormat
         )
+        let vertexData: [Float] = [
+            0.0, 0.5, 1.0, 0.0, 0.0,
+            -0.5, -0.5, 0.0, 1.0, 0.0,
+            0.5, -0.5, 0.0, 0.0, 1.0,
+        ]
+        let vertexBufferSize = UInt64(vertexData.count * MemoryLayout<Float>.stride)
+        let vertexBuffer = try device.createBuffer(
+            descriptor: BufferDescriptor(
+                label: "triangle vertices",
+                usage: [.copyDst, .vertex],
+                size: vertexBufferSize
+            )
+        )
+        vertexData.withUnsafeBufferPointer { vertexData in
+            queue.writeBuffer(
+                vertexBuffer,
+                bufferOffset: 0,
+                data: UnsafeRawBufferPointer(vertexData)
+            )
+        }
 
         var isRunning = true
 
@@ -87,6 +107,8 @@ struct SwiftGame {
                     device: device,
                     queue: queue,
                     pipeline: pipeline,
+                    vertexBuffer: vertexBuffer,
+                    vertexBufferSize: vertexBufferSize,
                     color: Color(
                         r: Double(0x64) / 0xFF, g: Double(0x95) / 0xFF, b: Double(0xED) / 0xFF,
                         a: 1.0)
@@ -104,7 +126,7 @@ struct SwiftGame {
         }
 
         withExtendedLifetime(
-            (system, window, instance, adapter, device, surface, queue, pipeline)
+            (system, window, instance, adapter, device, surface, queue, pipeline, vertexBuffer)
         ) {}
     }
 
@@ -169,21 +191,13 @@ struct SwiftGame {
                         }
 
                         @vertex
-                        fn vertexMain(@builtin(vertex_index) index: u32) -> VertexOutput {
-                            var positions = array(
-                                vec2f(0.0, 0.5),
-                                vec2f(-0.5, -0.5),
-                                vec2f(0.5, -0.5)
-                            );
-                            var colors = array(
-                                vec3f(1.0, 0.0, 0.0),
-                                vec3f(0.0, 1.0, 0.0),
-                                vec3f(0.0, 0.0, 1.0)
-                            );
-
+                        fn vertexMain(
+                            @location(0) position: vec2f,
+                            @location(1) color: vec3f
+                        ) -> VertexOutput {
                             var output: VertexOutput;
-                            output.position = vec4f(positions[index], 0.0, 1.0);
-                            output.color = colors[index];
+                            output.position = vec4f(position, 0.0, 1.0);
+                            output.color = color;
                             return output;
                         }
 
@@ -205,7 +219,25 @@ struct SwiftGame {
                 layout: layout,
                 vertex: VertexState(
                     module: shaderModule,
-                    entryPoint: "vertexMain"
+                    entryPoint: "vertexMain",
+                    buffers: [
+                        VertexBufferLayout(
+                            stepMode: .vertex,
+                            arrayStride: 5 * UInt64(MemoryLayout<Float>.stride),
+                            attributes: [
+                                VertexAttribute(
+                                    format: .float32x2,
+                                    offset: 0,
+                                    shaderLocation: 0
+                                ),
+                                VertexAttribute(
+                                    format: .float32x3,
+                                    offset: 2 * UInt64(MemoryLayout<Float>.stride),
+                                    shaderLocation: 1
+                                ),
+                            ]
+                        )
+                    ]
                 ),
                 primitive: PrimitiveState(topology: .triangleList),
                 fragment: FragmentState(
@@ -222,6 +254,8 @@ struct SwiftGame {
         device: Device,
         queue: Queue,
         pipeline: RenderPipeline,
+        vertexBuffer: Buffer,
+        vertexBufferSize: UInt64,
         color: Color
     ) throws {
         let texture = try surface.getCurrentTexture()
@@ -240,6 +274,12 @@ struct SwiftGame {
             )
         )
         renderPass.setPipeline(pipeline)
+        renderPass.setVertexBuffer(
+            slot: 0,
+            buffer: vertexBuffer,
+            offset: 0,
+            size: vertexBufferSize
+        )
         renderPass.draw(
             vertexCount: 3,
             instanceCount: 1,

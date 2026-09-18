@@ -297,21 +297,13 @@ struct WebGPUTests {
                         }
 
                         @vertex
-                        fn vertexMain(@builtin(vertex_index) index: u32) -> VertexOutput {
-                            var positions = array(
-                                vec2f(0.0, 0.5),
-                                vec2f(-0.5, -0.5),
-                                vec2f(0.5, -0.5)
-                            );
-                            var colors = array(
-                                vec3f(1.0, 0.0, 0.0),
-                                vec3f(0.0, 1.0, 0.0),
-                                vec3f(0.0, 0.0, 1.0)
-                            );
-
+                        fn vertexMain(
+                            @location(0) position: vec2f,
+                            @location(1) color: vec3f
+                        ) -> VertexOutput {
                             var output: VertexOutput;
-                            output.position = vec4f(positions[index], 0.0, 1.0);
-                            output.color = colors[index];
+                            output.position = vec4f(position, 0.0, 1.0);
+                            output.color = color;
                             return output;
                         }
 
@@ -332,7 +324,25 @@ struct WebGPUTests {
                 layout: pipelineLayout,
                 vertex: VertexState(
                     module: shaderModule,
-                    entryPoint: "vertexMain"
+                    entryPoint: "vertexMain",
+                    buffers: [
+                        VertexBufferLayout(
+                            stepMode: .vertex,
+                            arrayStride: 20,
+                            attributes: [
+                                VertexAttribute(
+                                    format: .float32x2,
+                                    offset: 0,
+                                    shaderLocation: 0
+                                ),
+                                VertexAttribute(
+                                    format: .float32x3,
+                                    offset: 8,
+                                    shaderLocation: 1
+                                ),
+                            ]
+                        )
+                    ]
                 ),
                 primitive: PrimitiveState(topology: .triangleList),
                 fragment: FragmentState(
@@ -359,13 +369,8 @@ struct WebGPUTests {
                 nextInChain: ShaderSourceWGSL(
                     code: """
                         @vertex
-                        fn vertexMain(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
-                            var positions = array(
-                                vec2f(0.0, 0.5),
-                                vec2f(-0.5, -0.5),
-                                vec2f(0.5, -0.5)
-                            );
-                            return vec4f(positions[index], 0.0, 1.0);
+                        fn vertexMain(@location(0) position: vec2f) -> @builtin(position) vec4f {
+                            return vec4f(position, 0.0, 1.0);
                         }
                         """
                 )
@@ -375,16 +380,50 @@ struct WebGPUTests {
             descriptor: RenderPipelineDescriptor(
                 vertex: VertexState(
                     module: shaderModule,
-                    entryPoint: "vertexMain"
+                    entryPoint: "vertexMain",
+                    buffers: [
+                        VertexBufferLayout(
+                            stepMode: .vertex,
+                            arrayStride: 8,
+                            attributes: [
+                                VertexAttribute(
+                                    format: .float32x2,
+                                    offset: 0,
+                                    shaderLocation: 0
+                                )
+                            ]
+                        )
+                    ]
                 ),
                 primitive: PrimitiveState(topology: .triangleList)
             )
         )
+        let vertices: [Float] = [0, 0.5, -0.5, -0.5, 0.5, -0.5]
+        let bufferSize = UInt64(vertices.count * MemoryLayout<Float>.stride)
+        let vertexBuffer = try device.createBuffer(
+            descriptor: BufferDescriptor(
+                usage: [.copyDst, .vertex],
+                size: bufferSize
+            )
+        )
+        vertices.withUnsafeBufferPointer { vertices in
+            queue.writeBuffer(
+                vertexBuffer,
+                bufferOffset: 0,
+                data: UnsafeRawBufferPointer(vertices)
+            )
+        }
         let commandEncoder = try device.createCommandEncoder()
         let renderPass = try commandEncoder.beginRenderPass(
             descriptor: RenderPassDescriptor(colorAttachments: [])
         )
         renderPass.setPipeline(pipeline)
+        renderPass.setVertexBuffer(
+            slot: 0,
+            buffer: vertexBuffer,
+            offset: 0,
+            size: bufferSize
+        )
         renderPass.draw(
             vertexCount: 3,
             instanceCount: 1,
@@ -395,6 +434,8 @@ struct WebGPUTests {
         let commandBuffer = try commandEncoder.finish()
         queue.submit([commandBuffer])
 
-        withExtendedLifetime((instance, adapter, device, queue, pipeline, commandBuffer)) {}
+        withExtendedLifetime(
+            (instance, adapter, device, queue, pipeline, vertexBuffer, commandBuffer)
+        ) {}
     }
 }

@@ -1749,6 +1749,21 @@ public final class Queue {
         }
     }
 
+    // wgpuQueueWriteBuffer
+    public func writeBuffer(
+        _ buffer: Buffer,
+        bufferOffset: UInt64,
+        data: UnsafeRawBufferPointer
+    ) {
+        wgpuQueueWriteBuffer(
+            handle,
+            buffer.handle,
+            bufferOffset,
+            data.baseAddress,
+            data.count
+        )
+    }
+
     deinit {
         // wgpuQueueRelease
         wgpuQueueRelease(handle)
@@ -1834,6 +1849,22 @@ public final class RenderPassEncoder {
     // wgpuRenderPassEncoderSetPipeline
     public func setPipeline(_ pipeline: RenderPipeline) {
         wgpuRenderPassEncoderSetPipeline(handle, pipeline.handle)
+    }
+
+    // wgpuRenderPassEncoderSetVertexBuffer
+    public func setVertexBuffer(
+        slot: UInt32,
+        buffer: Buffer?,
+        offset: UInt64,
+        size: UInt64
+    ) {
+        wgpuRenderPassEncoderSetVertexBuffer(
+            handle,
+            slot,
+            buffer?.handle,
+            offset,
+            size
+        )
     }
 
     deinit {
