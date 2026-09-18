@@ -357,7 +357,7 @@ struct WebGPUTests {
     }
 
     @Test
-    func recordsTriangleDraw() async throws {
+    func recordsIndexedDraw() async throws {
         let instance = try createInstance()
         let adapter = try await instance.requestAdapter(
             options: RequestAdapterOptions(backendType: .null)
@@ -398,7 +398,8 @@ struct WebGPUTests {
                 primitive: PrimitiveState(topology: .triangleList)
             )
         )
-        let vertices: [Float] = [0, 0.5, -0.5, -0.5, 0.5, -0.5]
+        let vertices: [Float] = [-0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, -0.5]
+        let indices: [UInt16] = [0, 1, 2, 2, 1, 3]
         let bufferSize = UInt64(vertices.count * MemoryLayout<Float>.stride)
         let vertexBuffer = try device.createBuffer(
             descriptor: BufferDescriptor(
@@ -413,6 +414,20 @@ struct WebGPUTests {
                 data: UnsafeRawBufferPointer(vertices)
             )
         }
+        let indexBufferSize = UInt64(indices.count * MemoryLayout<UInt16>.stride)
+        let indexBuffer = try device.createBuffer(
+            descriptor: BufferDescriptor(
+                usage: [.copyDst, .index],
+                size: indexBufferSize
+            )
+        )
+        indices.withUnsafeBufferPointer { indices in
+            queue.writeBuffer(
+                indexBuffer,
+                bufferOffset: 0,
+                data: UnsafeRawBufferPointer(indices)
+            )
+        }
         let commandEncoder = try device.createCommandEncoder()
         let renderPass = try commandEncoder.beginRenderPass(
             descriptor: RenderPassDescriptor(colorAttachments: [])
@@ -424,10 +439,17 @@ struct WebGPUTests {
             offset: 0,
             size: bufferSize
         )
-        renderPass.draw(
-            vertexCount: 3,
+        renderPass.setIndexBuffer(
+            buffer: indexBuffer,
+            format: .uint16,
+            offset: 0,
+            size: indexBufferSize
+        )
+        renderPass.drawIndexed(
+            indexCount: 6,
             instanceCount: 1,
-            firstVertex: 0,
+            firstIndex: 0,
+            baseVertex: 0,
             firstInstance: 0
         )
         renderPass.end()
@@ -435,7 +457,10 @@ struct WebGPUTests {
         queue.submit([commandBuffer])
 
         withExtendedLifetime(
-            (instance, adapter, device, queue, pipeline, vertexBuffer, commandBuffer)
+            (
+                instance, adapter, device, queue, pipeline, vertexBuffer, indexBuffer,
+                commandBuffer
+            )
         ) {}
     }
 

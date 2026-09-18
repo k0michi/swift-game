@@ -2139,6 +2139,24 @@ public final class RenderPassEncoder {
         )
     }
 
+    // wgpuRenderPassEncoderDrawIndexed
+    public func drawIndexed(
+        indexCount: UInt32,
+        instanceCount: UInt32,
+        firstIndex: UInt32,
+        baseVertex: Int32,
+        firstInstance: UInt32
+    ) {
+        wgpuRenderPassEncoderDrawIndexed(
+            handle,
+            indexCount,
+            instanceCount,
+            firstIndex,
+            baseVertex,
+            firstInstance
+        )
+    }
+
     // wgpuRenderPassEncoderEnd
     public func end() {
         wgpuRenderPassEncoderEnd(handle)
@@ -2164,6 +2182,22 @@ public final class RenderPassEncoder {
                 dynamicOffsets.baseAddress
             )
         }
+    }
+
+    // wgpuRenderPassEncoderSetIndexBuffer
+    public func setIndexBuffer(
+        buffer: Buffer,
+        format: IndexFormat,
+        offset: UInt64,
+        size: UInt64
+    ) {
+        wgpuRenderPassEncoderSetIndexBuffer(
+            handle,
+            buffer.handle,
+            format.cValue,
+            offset,
+            size
+        )
     }
 
     // wgpuRenderPassEncoderSetVertexBuffer

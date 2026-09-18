@@ -139,16 +139,18 @@ struct SwiftGame {
                 ]
             )
         )
-        let pipeline = try createTexturedTrianglePipeline(
+        let pipeline = try createTexturedPipeline(
             device: device,
             format: surfaceFormat,
             bindGroupLayout: bindGroupLayout
         )
         let vertexData: [Float] = [
-            0.0, 0.5, 0.5, 0.0,
+            -0.5, 0.5, 0.0, 0.0,
             -0.5, -0.5, 0.0, 1.0,
+            0.5, 0.5, 1.0, 0.0,
             0.5, -0.5, 1.0, 1.0,
         ]
+        let indexData: [UInt16] = [0, 1, 2, 2, 1, 3]
         let vertexBufferSize = UInt64(vertexData.count * MemoryLayout<Float>.stride)
         let vertexBuffer = try device.createBuffer(
             descriptor: BufferDescriptor(
@@ -162,6 +164,21 @@ struct SwiftGame {
                 vertexBuffer,
                 bufferOffset: 0,
                 data: UnsafeRawBufferPointer(vertexData)
+            )
+        }
+        let indexBufferSize = UInt64(indexData.count * MemoryLayout<UInt16>.stride)
+        let indexBuffer = try device.createBuffer(
+            descriptor: BufferDescriptor(
+                label: "quad indices",
+                usage: [.copyDst, .index],
+                size: indexBufferSize
+            )
+        )
+        indexData.withUnsafeBufferPointer { indexData in
+            queue.writeBuffer(
+                indexBuffer,
+                bufferOffset: 0,
+                data: UnsafeRawBufferPointer(indexData)
             )
         }
 
@@ -192,7 +209,7 @@ struct SwiftGame {
             }
 
             do {
-                try drawTexturedTriangle(
+                try drawTexturedQuad(
                     surface: surface,
                     device: device,
                     queue: queue,
@@ -200,6 +217,8 @@ struct SwiftGame {
                     bindGroup: bindGroup,
                     vertexBuffer: vertexBuffer,
                     vertexBufferSize: vertexBufferSize,
+                    indexBuffer: indexBuffer,
+                    indexBufferSize: indexBufferSize,
                     color: Color(
                         r: Double(0x64) / 0xFF, g: Double(0x95) / 0xFF, b: Double(0xED) / 0xFF,
                         a: 1.0)
@@ -219,7 +238,7 @@ struct SwiftGame {
         withExtendedLifetime(
             (
                 system, window, instance, adapter, device, surface, queue, texture, textureView,
-                sampler, bindGroupLayout, bindGroup, pipeline, vertexBuffer
+                sampler, bindGroupLayout, bindGroup, pipeline, vertexBuffer, indexBuffer
             )
         ) {}
     }
@@ -271,7 +290,7 @@ struct SwiftGame {
         return format
     }
 
-    private static func createTexturedTrianglePipeline(
+    private static func createTexturedPipeline(
         device: Device,
         format: TextureFormat,
         bindGroupLayout: BindGroupLayout
@@ -347,7 +366,7 @@ struct SwiftGame {
         )
     }
 
-    private static func drawTexturedTriangle(
+    private static func drawTexturedQuad(
         surface: Surface,
         device: Device,
         queue: Queue,
@@ -355,6 +374,8 @@ struct SwiftGame {
         bindGroup: BindGroup,
         vertexBuffer: Buffer,
         vertexBufferSize: UInt64,
+        indexBuffer: Buffer,
+        indexBufferSize: UInt64,
         color: Color
     ) throws {
         let texture = try surface.getCurrentTexture()
@@ -380,10 +401,17 @@ struct SwiftGame {
             offset: 0,
             size: vertexBufferSize
         )
-        renderPass.draw(
-            vertexCount: 3,
+        renderPass.setIndexBuffer(
+            buffer: indexBuffer,
+            format: .uint16,
+            offset: 0,
+            size: indexBufferSize
+        )
+        renderPass.drawIndexed(
+            indexCount: 6,
             instanceCount: 1,
-            firstVertex: 0,
+            firstIndex: 0,
+            baseVertex: 0,
             firstInstance: 0
         )
         renderPass.end()
