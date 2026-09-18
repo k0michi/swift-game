@@ -13,6 +13,7 @@ public enum WebGPUError: Error, Equatable {
     case createTextureViewFailed
     case createBufferFailed
     case createBindGroupFailed
+    case createShaderModuleFailed
     case createCommandEncoderFailed
     case createBindGroupLayoutFailed
     case beginRenderPassFailed
@@ -45,6 +46,8 @@ public struct RequestAdapterOptions: Sendable {
 // WGPUSType
 // TODO: Migrate the remaining WGPUSType values.
 public enum SType: UInt32, Sendable {
+    case shaderSourceSPIRV = 0x0000_0001
+    case shaderSourceWGSL = 0x0000_0002
     case surfaceSourceMetalLayer = 0x0000_0004
     case surfaceSourceWindowsHWND = 0x0000_0005
     case surfaceSourceXlibWindow = 0x0000_0006
@@ -64,6 +67,43 @@ public struct ChainedStruct {
 
 public protocol ChainedStructNode {
     var chain: ChainedStruct { get set }
+}
+
+// WGPUShaderSourceSPIRV
+// TODO: Migrate WGPUShaderSourceSPIRV.
+
+// WGPUShaderSourceWGSL
+public struct ShaderSourceWGSL: ChainedStructNode {
+    public var chain: ChainedStruct
+    public var code: String
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        code: String
+    ) {
+        self.chain = ChainedStruct(
+            next: nextInChain,
+            sType: .shaderSourceWGSL
+        )
+        self.code = code
+    }
+}
+
+// TODO: Migrate WGPUDawnShaderModuleSPIRVOptionsDescriptor.
+// TODO: Migrate WGPUDawnShaderSourceSPIRV.
+// TODO: Migrate WGPUShaderModuleCompilationOptions.
+// WGPUShaderModuleDescriptor
+public struct ShaderModuleDescriptor {
+    public var nextInChain: (any ChainedStructNode)?
+    public var label: String?
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        label: String? = nil
+    ) {
+        self.nextInChain = nextInChain
+        self.label = label
+    }
 }
 
 // WGPUSurfaceDescriptor
@@ -942,6 +982,24 @@ public final class Device: @unchecked Sendable {
         return BindGroup(handle: handle, device: self, descriptor: descriptor)
     }
 
+    // wgpuDeviceCreateShaderModule
+    public func createShaderModule(
+        descriptor: ShaderModuleDescriptor
+    ) throws -> ShaderModule {
+        let handle = try withCChain(descriptor.nextInChain) { nextInChain in
+            try withWGPUStringView(descriptor.label) { label in
+                var cDescriptor = WGPUShaderModuleDescriptor()
+                cDescriptor.nextInChain = nextInChain
+                cDescriptor.label = label
+                guard let handle = wgpuDeviceCreateShaderModule(self.handle, &cDescriptor) else {
+                    throw WebGPUError.createShaderModuleFailed
+                }
+                return handle
+            }
+        }
+        return ShaderModule(handle: handle, device: self)
+    }
+
     // wgpuDeviceCreateBindGroupLayout
     public func createBindGroupLayout(
         descriptor: BindGroupLayoutDescriptor
@@ -1024,6 +1082,21 @@ public final class BindGroup {
     deinit {
         // wgpuBindGroupRelease
         wgpuBindGroupRelease(handle)
+    }
+}
+
+public final class ShaderModule {
+    let handle: WGPUShaderModule
+    private let device: Device
+
+    init(handle: WGPUShaderModule, device: Device) {
+        self.handle = handle
+        self.device = device
+    }
+
+    deinit {
+        // wgpuShaderModuleRelease
+        wgpuShaderModuleRelease(handle)
     }
 }
 
@@ -1347,6 +1420,8 @@ private func decode(_ view: WGPUStringView) -> String {
 private extension SType {
     var cValue: WGPUSType {
         switch self {
+        case .shaderSourceSPIRV: WGPUSType_ShaderSourceSPIRV
+        case .shaderSourceWGSL: WGPUSType_ShaderSourceWGSL
         case .surfaceSourceMetalLayer: WGPUSType_SurfaceSourceMetalLayer
         case .surfaceSourceWindowsHWND: WGPUSType_SurfaceSourceWindowsHWND
         case .surfaceSourceXlibWindow: WGPUSType_SurfaceSourceXlibWindow
@@ -1593,6 +1668,21 @@ private func withCChain<Result>(
     }
 
     switch node {
+    case let source as ShaderSourceWGSL:
+        return try withCChain(source.chain.next) { next in
+            try withWGPUStringView(source.code) { code in
+                var cSource = WGPUShaderSourceWGSL()
+                cSource.chain.next = next
+                cSource.chain.sType = source.chain.sType.cValue
+                cSource.code = code
+                return try withUnsafeMutablePointer(to: &cSource) { source in
+                    try body(
+                        UnsafeMutableRawPointer(source)
+                            .assumingMemoryBound(to: WGPUChainedStruct.self)
+                    )
+                }
+            }
+        }
     case let source as SurfaceSourceMetalLayer:
         return try withCChain(source.chain.next) { next in
             try source.layer.withUnsafeMutableRawPointer { layer in

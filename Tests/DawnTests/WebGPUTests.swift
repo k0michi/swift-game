@@ -138,4 +138,26 @@ struct WebGPUTests {
 
         withExtendedLifetime((instance, adapter, device, bindGroup)) {}
     }
+
+    @Test
+    func createsShaderModuleFromWGSL() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let shaderModule = try device.createShaderModule(
+            descriptor: ShaderModuleDescriptor(
+                nextInChain: ShaderSourceWGSL(
+                    code: """
+                        @compute @workgroup_size(1)
+                        fn main() {}
+                        """
+                ),
+                label: "compute"
+            )
+        )
+
+        withExtendedLifetime((instance, adapter, device, shaderModule)) {}
+    }
 }
