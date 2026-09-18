@@ -475,4 +475,65 @@ struct WebGPUTests {
 
         withExtendedLifetime((instance, adapter, device, texture, view)) {}
     }
+
+    @Test
+    func writesTexture() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let queue = device.getQueue()
+        let texture = try device.createTexture(
+            descriptor: TextureDescriptor(
+                label: "checkerboard",
+                usage: [.copyDst, .textureBinding],
+                dimension: .`2D`,
+                size: Extent3D(width: 2, height: 2, depthOrArrayLayers: 1),
+                format: .rgba8Unorm
+            )
+        )
+        let pixels: [UInt8] = [
+            255, 255, 255, 255,
+            0, 0, 0, 255,
+            0, 0, 0, 255,
+            255, 255, 255, 255,
+        ]
+
+        pixels.withUnsafeBytes { data in
+            queue.writeTexture(
+                destination: TexelCopyTextureInfo(texture: texture),
+                data: data,
+                dataLayout: TexelCopyBufferLayout(
+                    bytesPerRow: 2 * 4,
+                    rowsPerImage: 2
+                ),
+                writeSize: Extent3D(width: 2, height: 2, depthOrArrayLayers: 1)
+            )
+        }
+
+        withExtendedLifetime((instance, adapter, device, queue, texture)) {}
+    }
+
+    @Test
+    func createsSampler() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let sampler = try device.createSampler(
+            descriptor: SamplerDescriptor(
+                label: "linear sampler",
+                addressModeU: .repeat,
+                addressModeV: .mirrorRepeat,
+                addressModeW: .clampToEdge,
+                magFilter: .linear,
+                minFilter: .linear,
+                mipmapFilter: .linear
+            )
+        )
+
+        withExtendedLifetime((instance, adapter, device, sampler)) {}
+    }
 }

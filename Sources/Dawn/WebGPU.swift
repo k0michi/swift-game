@@ -12,6 +12,7 @@ public enum WebGPUError: Error, Equatable {
     case getCurrentTextureFailed(status: UInt32)
     case createTextureViewFailed
     case createTextureFailed
+    case createSamplerFailed
     case createBufferFailed
     case createBindGroupFailed
     case createShaderModuleFailed
@@ -303,6 +304,45 @@ public enum TextureAspect: UInt32, Sendable {
     case plane2Only = 0x0005_0002
 }
 
+// WGPUAddressMode
+public enum AddressMode: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case clampToEdge = 0x0000_0001
+    case `repeat` = 0x0000_0002
+    case mirrorRepeat = 0x0000_0003
+}
+
+// WGPUFilterMode
+public enum FilterMode: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case nearest = 0x0000_0001
+    case linear = 0x0000_0002
+}
+
+// WGPUMipmapFilterMode
+public enum MipmapFilterMode: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case nearest = 0x0000_0001
+    case linear = 0x0000_0002
+}
+
+// WGPUOrigin3D
+public struct Origin3D: Sendable {
+    public var x: UInt32
+    public var y: UInt32
+    public var z: UInt32
+
+    public init(
+        x: UInt32 = 0,
+        y: UInt32 = 0,
+        z: UInt32 = 0
+    ) {
+        self.x = x
+        self.y = y
+        self.z = z
+    }
+}
+
 // WGPUExtent3D
 public struct Extent3D: Sendable {
     public var width: UInt32
@@ -317,6 +357,46 @@ public struct Extent3D: Sendable {
         self.width = width
         self.height = height
         self.depthOrArrayLayers = depthOrArrayLayers
+    }
+}
+
+// WGPU_COPY_STRIDE_UNDEFINED
+public let copyStrideUndefined = UInt32.max
+
+// WGPUTexelCopyBufferLayout
+public struct TexelCopyBufferLayout: Sendable {
+    public var offset: UInt64
+    public var bytesPerRow: UInt32
+    public var rowsPerImage: UInt32
+
+    public init(
+        offset: UInt64 = 0,
+        bytesPerRow: UInt32 = copyStrideUndefined,
+        rowsPerImage: UInt32 = copyStrideUndefined
+    ) {
+        self.offset = offset
+        self.bytesPerRow = bytesPerRow
+        self.rowsPerImage = rowsPerImage
+    }
+}
+
+// WGPUTexelCopyTextureInfo
+public struct TexelCopyTextureInfo {
+    public var texture: Texture
+    public var mipLevel: UInt32
+    public var origin: Origin3D
+    public var aspect: TextureAspect
+
+    public init(
+        texture: Texture,
+        mipLevel: UInt32 = 0,
+        origin: Origin3D = Origin3D(),
+        aspect: TextureAspect = .undefined
+    ) {
+        self.texture = texture
+        self.mipLevel = mipLevel
+        self.origin = origin
+        self.aspect = aspect
     }
 }
 
@@ -400,6 +480,51 @@ public struct TextureViewDescriptor {
         self.arrayLayerCount = arrayLayerCount
         self.aspect = aspect
         self.usage = usage
+    }
+}
+
+// TODO: Migrate WGPUYCbCrVkDescriptor.
+// WGPUSamplerDescriptor
+public struct SamplerDescriptor {
+    public var nextInChain: (any ChainedStructNode)?
+    public var label: String?
+    public var addressModeU: AddressMode
+    public var addressModeV: AddressMode
+    public var addressModeW: AddressMode
+    public var magFilter: FilterMode
+    public var minFilter: FilterMode
+    public var mipmapFilter: MipmapFilterMode
+    public var lodMinClamp: Float
+    public var lodMaxClamp: Float
+    public var compare: CompareFunction
+    public var maxAnisotropy: UInt16
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        label: String? = nil,
+        addressModeU: AddressMode = .undefined,
+        addressModeV: AddressMode = .undefined,
+        addressModeW: AddressMode = .undefined,
+        magFilter: FilterMode = .undefined,
+        minFilter: FilterMode = .undefined,
+        mipmapFilter: MipmapFilterMode = .undefined,
+        lodMinClamp: Float = 0,
+        lodMaxClamp: Float = 32,
+        compare: CompareFunction = .undefined,
+        maxAnisotropy: UInt16 = 1
+    ) {
+        self.nextInChain = nextInChain
+        self.label = label
+        self.addressModeU = addressModeU
+        self.addressModeV = addressModeV
+        self.addressModeW = addressModeW
+        self.magFilter = magFilter
+        self.minFilter = minFilter
+        self.mipmapFilter = mipmapFilter
+        self.lodMinClamp = lodMinClamp
+        self.lodMaxClamp = lodMaxClamp
+        self.compare = compare
+        self.maxAnisotropy = maxAnisotropy
     }
 }
 
@@ -1729,6 +1854,27 @@ public final class Device: @unchecked Sendable {
         return RenderPipeline(handle: handle, device: self, descriptor: descriptor)
     }
 
+    // wgpuDeviceCreateSampler
+    public func createSampler(
+        descriptor: SamplerDescriptor? = nil
+    ) throws -> Sampler {
+        let samplerHandle: WGPUSampler
+        if let descriptor {
+            samplerHandle = try withCSamplerDescriptor(descriptor) { cDescriptor in
+                guard let handle = wgpuDeviceCreateSampler(self.handle, cDescriptor) else {
+                    throw WebGPUError.createSamplerFailed
+                }
+                return handle
+            }
+        } else {
+            guard let handle = wgpuDeviceCreateSampler(self.handle, nil) else {
+                throw WebGPUError.createSamplerFailed
+            }
+            samplerHandle = handle
+        }
+        return Sampler(handle: samplerHandle, device: self)
+    }
+
     // wgpuDeviceCreateCommandEncoder
     public func createCommandEncoder(
         descriptor: CommandEncoderDescriptor = CommandEncoderDescriptor()
@@ -1768,7 +1914,6 @@ public final class Buffer {
     }
 }
 
-// TODO: Implement WGPUSamplerDescriptor and wgpuDeviceCreateSampler.
 public final class Sampler {
     let handle: WGPUSampler
     private let device: Device
@@ -1894,6 +2039,26 @@ public final class Queue {
             bufferOffset,
             data.baseAddress,
             data.count
+        )
+    }
+
+    // wgpuQueueWriteTexture
+    public func writeTexture(
+        destination: TexelCopyTextureInfo,
+        data: UnsafeRawBufferPointer,
+        dataLayout: TexelCopyBufferLayout,
+        writeSize: Extent3D
+    ) {
+        var cDestination = destination.cValue
+        var cDataLayout = dataLayout.cValue
+        var cWriteSize = writeSize.cValue
+        wgpuQueueWriteTexture(
+            handle,
+            &cDestination,
+            data.baseAddress,
+            data.count,
+            &cDataLayout,
+            &cWriteSize
         )
     }
 
@@ -2569,6 +2734,74 @@ private extension TextureAspect {
     }
 }
 
+private extension Origin3D {
+    var cValue: WGPUOrigin3D {
+        WGPUOrigin3D(x: x, y: y, z: z)
+    }
+}
+
+private extension Extent3D {
+    var cValue: WGPUExtent3D {
+        WGPUExtent3D(
+            width: width,
+            height: height,
+            depthOrArrayLayers: depthOrArrayLayers
+        )
+    }
+}
+
+private extension TexelCopyBufferLayout {
+    var cValue: WGPUTexelCopyBufferLayout {
+        WGPUTexelCopyBufferLayout(
+            offset: offset,
+            bytesPerRow: bytesPerRow,
+            rowsPerImage: rowsPerImage
+        )
+    }
+}
+
+private extension TexelCopyTextureInfo {
+    var cValue: WGPUTexelCopyTextureInfo {
+        WGPUTexelCopyTextureInfo(
+            texture: texture.handle,
+            mipLevel: mipLevel,
+            origin: origin.cValue,
+            aspect: aspect.cValue
+        )
+    }
+}
+
+private extension AddressMode {
+    var cValue: WGPUAddressMode {
+        switch self {
+        case .undefined: WGPUAddressMode_Undefined
+        case .clampToEdge: WGPUAddressMode_ClampToEdge
+        case .repeat: WGPUAddressMode_Repeat
+        case .mirrorRepeat: WGPUAddressMode_MirrorRepeat
+        }
+    }
+}
+
+private extension FilterMode {
+    var cValue: WGPUFilterMode {
+        switch self {
+        case .undefined: WGPUFilterMode_Undefined
+        case .nearest: WGPUFilterMode_Nearest
+        case .linear: WGPUFilterMode_Linear
+        }
+    }
+}
+
+private extension MipmapFilterMode {
+    var cValue: WGPUMipmapFilterMode {
+        switch self {
+        case .undefined: WGPUMipmapFilterMode_Undefined
+        case .nearest: WGPUMipmapFilterMode_Nearest
+        case .linear: WGPUMipmapFilterMode_Linear
+        }
+    }
+}
+
 private extension BufferBindingType {
     var cValue: WGPUBufferBindingType {
         switch self {
@@ -2910,6 +3143,30 @@ private func withCTextureViewDescriptor<Result>(
             cDescriptor.arrayLayerCount = descriptor.arrayLayerCount
             cDescriptor.aspect = descriptor.aspect.cValue
             cDescriptor.usage = descriptor.usage.rawValue
+            return try withUnsafePointer(to: &cDescriptor, body)
+        }
+    }
+}
+
+private func withCSamplerDescriptor<Result>(
+    _ descriptor: SamplerDescriptor,
+    body: (UnsafePointer<WGPUSamplerDescriptor>) throws -> Result
+) throws -> Result {
+    try withCChain(descriptor.nextInChain) { nextInChain in
+        try withWGPUStringView(descriptor.label) { label in
+            var cDescriptor = WGPUSamplerDescriptor()
+            cDescriptor.nextInChain = nextInChain
+            cDescriptor.label = label
+            cDescriptor.addressModeU = descriptor.addressModeU.cValue
+            cDescriptor.addressModeV = descriptor.addressModeV.cValue
+            cDescriptor.addressModeW = descriptor.addressModeW.cValue
+            cDescriptor.magFilter = descriptor.magFilter.cValue
+            cDescriptor.minFilter = descriptor.minFilter.cValue
+            cDescriptor.mipmapFilter = descriptor.mipmapFilter.cValue
+            cDescriptor.lodMinClamp = descriptor.lodMinClamp
+            cDescriptor.lodMaxClamp = descriptor.lodMaxClamp
+            cDescriptor.compare = descriptor.compare.cValue
+            cDescriptor.maxAnisotropy = descriptor.maxAnisotropy
             return try withUnsafePointer(to: &cDescriptor, body)
         }
     }
