@@ -407,18 +407,17 @@ extension SDL3Tests {
             0x01, 0x00, 0x08, 0x00, 0x64, 0x61, 0x74, 0x61,
             0x02, 0x00, 0x00, 0x00, 0x80, 0xFF,
         ]
-        let path = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-game-audio-\(UUID().uuidString).wav")
-        try Data(wav).write(to: path)
-        defer { try? FileManager.default.removeItem(at: path) }
+        try withTemporaryFile { url in
+            try Data(wav).write(to: url)
 
-        let fromPath = try loadWAV(path: path.path)
-        #expect(fromPath.spec == AudioSpec(format: .u8, channels: 1, freq: 8_000))
-        #expect(fromPath.audio == [0x80, 0xFF])
+            let fromPath = try loadWAV(path: url.path)
+            #expect(fromPath.spec == AudioSpec(format: .u8, channels: 1, freq: 8_000))
+            #expect(fromPath.audio == [0x80, 0xFF])
 
-        let io = try ioFromFile(file: path.path, mode: "rb")
-        let fromIO = try loadWAVIO(src: io, closeIO: true)
-        #expect(fromIO.spec == fromPath.spec)
-        #expect(fromIO.audio == fromPath.audio)
+            let io = try ioFromFile(file: url.path, mode: "rb")
+            let fromIO = try loadWAVIO(src: io, closeIO: true)
+            #expect(fromIO.spec == fromPath.spec)
+            #expect(fromIO.audio == fromPath.audio)
+        }
     }
 }
