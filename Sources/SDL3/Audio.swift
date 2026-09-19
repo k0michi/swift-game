@@ -147,7 +147,7 @@ public final class AudioDeviceID: Hashable, @unchecked Sendable {
         audioDeviceIDRegistry.remove(self)
         guard let openedSystem else { return }
 
-        if isExecutingAudioCallback, let postmixCallbackBox {
+        if isExecutingAudioCallback {
             // Never close an SDL audio device from its audio callback thread.
             let cleanup = AudioDeviceCallbackCleanup(
                 rawValue: rawValue,
@@ -359,12 +359,12 @@ private final class AudioStreamCallbackCleanup: @unchecked Sendable {
 private final class AudioDeviceCallbackCleanup: @unchecked Sendable {
     private let rawValue: UInt32
     private let system: System
-    private let callbackBox: AudioPostmixCallbackBox
+    private let callbackBox: AudioPostmixCallbackBox?
 
     init(
         rawValue: UInt32,
         system: System,
-        callbackBox: AudioPostmixCallbackBox
+        callbackBox: AudioPostmixCallbackBox?
     ) {
         self.rawValue = rawValue
         self.system = system
@@ -372,7 +372,9 @@ private final class AudioDeviceCallbackCleanup: @unchecked Sendable {
     }
 
     func run() {
-        _ = SDL_SetAudioPostmixCallback(rawValue, nil, nil)
+        if callbackBox != nil {
+            _ = SDL_SetAudioPostmixCallback(rawValue, nil, nil)
+        }
         // SDL_CloseAudioDevice
         SDL_CloseAudioDevice(rawValue)
         withExtendedLifetime((callbackBox, system)) {}
@@ -719,7 +721,8 @@ public func putAudioStreamData(
     stream: AudioStream,
     buf: UnsafeRawBufferPointer
 ) throws {
-    guard SDL_PutAudioStreamData(stream.pointer, buf.baseAddress, Int32(buf.count)) else {
+    let length = try audioBufferLength(buf.count, operation: "SDL_PutAudioStreamData")
+    guard SDL_PutAudioStreamData(stream.pointer, buf.baseAddress, length) else {
         throw SDLError(operation: "SDL_PutAudioStreamData")
     }
 }
@@ -730,11 +733,15 @@ public func putAudioStreamDataNoCopy(
     buf: UnsafeRawBufferPointer,
     callback: AudioStreamDataCompleteCallback? = nil
 ) throws {
+    let length = try audioBufferLength(
+        buf.count,
+        operation: "SDL_PutAudioStreamDataNoCopy"
+    )
     guard let callback else {
         guard SDL_PutAudioStreamDataNoCopy(
             stream.pointer,
             buf.baseAddress,
-            Int32(buf.count),
+            length,
             nil,
             nil
         ) else {
@@ -748,7 +755,7 @@ public func putAudioStreamDataNoCopy(
     let succeeded = SDL_PutAudioStreamDataNoCopy(
         stream.pointer,
         buf.baseAddress,
-        Int32(buf.count),
+        length,
         { userdata, buf, buflen in
             guard let userdata, let buf else { return }
             let box = Unmanaged<AudioStreamDataCompleteCallbackBox>
@@ -774,12 +781,46 @@ public func putAudioStreamPlanarData(
     channelBuffers: [UnsafeRawBufferPointer?],
     numSamples: Int32
 ) throws {
+    guard SDL_LockAudioStream(stream.pointer) else {
+        throw SDLError(operation: "SDL_LockAudioStream")
+    }
+    defer { _ = SDL_UnlockAudioStream(stream.pointer) }
+
+    let (srcSpec, _) = try getAudioStreamFormat(stream: stream)
+    let sampleByteCount = Int(audioBytesize(srcSpec.format))
+    let (requiredByteCount, overflow) = Int(numSamples).multipliedReportingOverflow(
+        by: sampleByteCount
+    )
+    guard numSamples >= 0, !overflow else {
+        throw SDLError(
+            operation: "SDL_PutAudioStreamPlanarData",
+            message: "sample count exceeds the supported buffer length"
+        )
+    }
+    guard
+        srcSpec.channels >= 0,
+        let channelCount = Int32(exactly: channelBuffers.count)
+    else {
+        throw SDLError(
+            operation: "SDL_PutAudioStreamPlanarData",
+            message: "channel count exceeds the supported range"
+        )
+    }
+    let providedChannelCount = min(channelBuffers.count, Int(srcSpec.channels))
+    guard channelBuffers.prefix(providedChannelCount).allSatisfy({
+        $0.map { $0.count >= requiredByteCount } ?? true
+    }) else {
+        throw SDLError(
+            operation: "SDL_PutAudioStreamPlanarData",
+            message: "a channel buffer is shorter than the requested sample count"
+        )
+    }
     let pointers = channelBuffers.map { $0?.baseAddress }
     guard pointers.withUnsafeBufferPointer({
         SDL_PutAudioStreamPlanarData(
             stream.pointer,
             $0.baseAddress,
-            Int32($0.count),
+            channelCount,
             numSamples
         )
     }) else {
@@ -793,7 +834,8 @@ public func getAudioStreamData(
     stream: AudioStream,
     buf: UnsafeMutableRawBufferPointer
 ) throws -> Int32 {
-    let count = SDL_GetAudioStreamData(stream.pointer, buf.baseAddress, Int32(buf.count))
+    let length = try audioBufferLength(buf.count, operation: "SDL_GetAudioStreamData")
+    let count = SDL_GetAudioStreamData(stream.pointer, buf.baseAddress, length)
     guard count >= 0 else {
         throw SDLError(operation: "SDL_GetAudioStreamData")
     }
@@ -1092,6 +1134,16 @@ private func loadWAV(
         AudioSpec(spec),
         Array(UnsafeBufferPointer(start: audioBuffer, count: Int(audioLength)))
     )
+}
+
+private func audioBufferLength(_ count: Int, operation: String) throws -> Int32 {
+    guard let length = Int32(exactly: count) else {
+        throw SDLError(
+            operation: operation,
+            message: "buffer length exceeds Int32.max"
+        )
+    }
+    return length
 }
 
 private func getAudioStreamChannelMap(

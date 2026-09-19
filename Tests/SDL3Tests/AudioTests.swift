@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import SDL3
 
 private final class AudioCallbackProbe: @unchecked Sendable {
@@ -42,6 +43,23 @@ private final class AudioStreamOwner: @unchecked Sendable {
     }
 }
 
+private final class AudioDeviceOwner: @unchecked Sendable {
+    private let lock = NSLock()
+    private var device: AudioDeviceID?
+
+    func store(_ device: AudioDeviceID) {
+        lock.lock()
+        self.device = device
+        lock.unlock()
+    }
+
+    func release() {
+        lock.lock()
+        device = nil
+        lock.unlock()
+    }
+}
+
 @MainActor
 extension SDL3Tests {
     @Test
@@ -69,7 +87,8 @@ extension SDL3Tests {
         try samples.withUnsafeBytes {
             try putAudioStreamData(stream: stream, buf: $0)
         }
-        #expect(try getAudioStreamQueued(stream: stream) == samples.count * MemoryLayout<Float>.size)
+        #expect(
+            try getAudioStreamQueued(stream: stream) == samples.count * MemoryLayout<Float>.size)
 
         var output = [Float](repeating: 0, count: samples.count)
         let readCount = try output.withUnsafeMutableBytes {
@@ -258,6 +277,27 @@ extension SDL3Tests {
     }
 
     @Test
+    func streamCallbackCanReplaceItself() throws {
+        let system = try `init`(flags: [.audio])
+        let spec = AudioSpec(format: .f32, channels: 2, freq: 48_000)
+        let stream = try createAudioStream(srcSpec: spec, dstSpec: spec)
+        let callbackFinished = DispatchSemaphore(value: 0)
+
+        try setAudioStreamPutCallback(stream: stream) { stream, _, _ in
+            try! setAudioStreamPutCallback(stream: stream, callback: nil)
+            callbackFinished.signal()
+        }
+
+        let samples: [Float] = [0, 0]
+        try samples.withUnsafeBytes {
+            try putAudioStreamData(stream: stream, buf: $0)
+        }
+
+        callbackFinished.wait()
+        withExtendedLifetime((system, stream)) {}
+    }
+
+    @Test
     func putsPlanarAudioIntoStream() throws {
         let system = try `init`(flags: [.audio])
         let spec = AudioSpec(format: .f32, channels: 2, freq: 48_000)
@@ -280,6 +320,54 @@ extension SDL3Tests {
         }
 
         #expect(output == [0.25, -0.25, 0.5, -0.5])
+        withExtendedLifetime((system, stream)) {}
+    }
+
+    @Test
+    func rejectsPlanarAudioBufferShorterThanRequestedSampleCount() throws {
+        let system = try `init`(flags: [.audio])
+        let spec = AudioSpec(format: .f32, channels: 2, freq: 48_000)
+        let stream = try createAudioStream(srcSpec: spec, dstSpec: spec)
+        let left: [Float] = [0.25]
+        let right: [Float] = [-0.25]
+
+        #expect(throws: SDLError.self) {
+            try left.withUnsafeBytes { left in
+                try right.withUnsafeBytes { right in
+                    try putAudioStreamPlanarData(
+                        stream: stream,
+                        channelBuffers: [left, right],
+                        numSamples: 2
+                    )
+                }
+            }
+        }
+        withExtendedLifetime((system, stream)) {}
+    }
+
+    @Test
+    func rejectsAudioBufferLengthsExceedingInt32() throws {
+        let system = try `init`(flags: [.audio])
+        let spec = AudioSpec(format: .u8, channels: 1, freq: 8_000)
+        let stream = try createAudioStream(srcSpec: spec, dstSpec: spec)
+        let pointer = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
+        defer { pointer.deallocate() }
+        let oversizedCount = Int(Int32.max) + 1
+        let source = UnsafeRawBufferPointer(start: pointer, count: oversizedCount)
+        let destination = UnsafeMutableRawBufferPointer(
+            start: pointer,
+            count: oversizedCount
+        )
+
+        #expect(throws: SDLError.self) {
+            try putAudioStreamData(stream: stream, buf: source)
+        }
+        #expect(throws: SDLError.self) {
+            try putAudioStreamDataNoCopy(stream: stream, buf: source)
+        }
+        #expect(throws: SDLError.self) {
+            try getAudioStreamData(stream: stream, buf: destination)
+        }
         withExtendedLifetime((system, stream)) {}
     }
 
