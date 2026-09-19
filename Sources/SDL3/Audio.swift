@@ -378,69 +378,14 @@ fileprivate final class AudioPostmixCallbackBox: @unchecked Sendable {
 }
 
 // SDL_AudioStreamDataCompleteCallback
-public typealias AudioStreamDataCompleteCallback = @Sendable (_ data: AudioStreamData) -> Void
-
-public final class AudioStreamData: @unchecked Sendable {
-    public let count: Int
-    private let lock = NSLock()
-    private let pointer: UnsafeMutableRawPointer
-    private var submitted = false
-
-    public init(copying data: UnsafeRawBufferPointer) {
-        self.count = data.count
-        self.pointer = .allocate(
-            byteCount: max(data.count, 1),
-            alignment: MemoryLayout<UInt8>.alignment
-        )
-        if let baseAddress = data.baseAddress, data.count > 0 {
-            pointer.copyMemory(from: baseAddress, byteCount: data.count)
-        }
-    }
-
-    public func withUnsafeMutableBytes<Result>(
-        _ body: (UnsafeMutableRawBufferPointer) throws -> Result
-    ) throws -> Result {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !submitted else {
-            throw SDLError(
-                operation: "AudioStreamData.withUnsafeMutableBytes",
-                message: "audio stream data has already been submitted"
-            )
-        }
-        return try body(UnsafeMutableRawBufferPointer(start: pointer, count: count))
-    }
-
-    fileprivate func beginSubmission() throws -> UnsafeRawBufferPointer {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !submitted else {
-            throw SDLError(
-                operation: "SDL_PutAudioStreamDataNoCopy",
-                message: "audio stream data has already been submitted"
-            )
-        }
-        submitted = true
-        return UnsafeRawBufferPointer(start: pointer, count: count)
-    }
-
-    fileprivate func submissionFailed() {
-        lock.lock()
-        submitted = false
-        lock.unlock()
-    }
-
-    deinit {
-        pointer.deallocate()
-    }
-}
+public typealias AudioStreamDataCompleteCallback = @Sendable (
+    _ buf: UnsafeRawBufferPointer
+) -> Void
 
 private final class AudioStreamDataCompleteCallbackBox: @unchecked Sendable {
-    let data: AudioStreamData
-    let callback: AudioStreamDataCompleteCallback?
+    let callback: AudioStreamDataCompleteCallback
 
-    init(data: AudioStreamData, callback: AudioStreamDataCompleteCallback?) {
-        self.data = data
+    init(callback: @escaping AudioStreamDataCompleteCallback) {
         self.callback = callback
     }
 }
@@ -739,30 +684,43 @@ public func putAudioStreamData(
 // SDL_PutAudioStreamDataNoCopy
 public func putAudioStreamDataNoCopy(
     stream: AudioStream,
-    data: AudioStreamData,
+    buf: UnsafeRawBufferPointer,
     callback: AudioStreamDataCompleteCallback? = nil
 ) throws {
-    let buffer = try data.beginSubmission()
-    let box = AudioStreamDataCompleteCallbackBox(data: data, callback: callback)
+    guard let callback else {
+        guard SDL_PutAudioStreamDataNoCopy(
+            stream.pointer,
+            buf.baseAddress,
+            Int32(buf.count),
+            nil,
+            nil
+        ) else {
+            throw SDLError(operation: "SDL_PutAudioStreamDataNoCopy")
+        }
+        return
+    }
+
+    let box = AudioStreamDataCompleteCallbackBox(callback: callback)
     let userdata = Unmanaged.passRetained(box).toOpaque()
     let succeeded = SDL_PutAudioStreamDataNoCopy(
         stream.pointer,
-        buffer.baseAddress,
-        Int32(buffer.count),
-        { userdata, _, _ in
-            guard let userdata else { return }
+        buf.baseAddress,
+        Int32(buf.count),
+        { userdata, buf, buflen in
+            guard let userdata, let buf else { return }
             let box = Unmanaged<AudioStreamDataCompleteCallbackBox>
                 .fromOpaque(userdata)
                 .takeRetainedValue()
             withAudioCallback {
-                box.callback?(box.data)
+                box.callback(
+                    UnsafeRawBufferPointer(start: buf, count: Int(buflen))
+                )
             }
         },
         userdata
     )
     guard succeeded else {
         Unmanaged<AudioStreamDataCompleteCallbackBox>.fromOpaque(userdata).release()
-        data.submissionFailed()
         throw SDLError(operation: "SDL_PutAudioStreamDataNoCopy")
     }
 }

@@ -140,26 +140,31 @@ extension SDL3Tests {
     }
 
     @Test
-    func noCopyCallbackReleasesLambdaAndDataWhenCleared() throws {
+    func noCopyCallbackReturnsUserManagedPointerWhenCleared() throws {
         let system = try `init`(flags: [.audio])
         let spec = AudioSpec(format: .f32, channels: 2, freq: 48_000)
         let stream = try createAudioStream(srcSpec: spec, dstSpec: spec)
         let samples: [Float] = [0, 0]
-        var data: AudioStreamData? = samples.withUnsafeBytes {
-            AudioStreamData(copying: $0)
+        let byteCount = samples.count * MemoryLayout<Float>.stride
+        let pointer = UnsafeMutableRawPointer.allocate(
+            byteCount: byteCount,
+            alignment: MemoryLayout<Float>.alignment
+        )
+        samples.withUnsafeBytes {
+            pointer.copyMemory(from: $0.baseAddress!, byteCount: byteCount)
         }
-        weak let weakData = data
         let probe = AudioCallbackProbe()
 
-        try putAudioStreamDataNoCopy(stream: stream, data: data!) { _ in
+        try putAudioStreamDataNoCopy(
+            stream: stream,
+            buf: UnsafeRawBufferPointer(start: pointer, count: byteCount)
+        ) { buf in
+            UnsafeMutableRawPointer(mutating: buf.baseAddress!).deallocate()
             probe.record()
         }
-        data = nil
-        #expect(weakData != nil)
 
         try clearAudioStream(stream: stream)
         #expect(probe.callCount == 1)
-        #expect(weakData == nil)
         withExtendedLifetime((system, stream)) {}
     }
 
