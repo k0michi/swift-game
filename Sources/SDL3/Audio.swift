@@ -945,12 +945,18 @@ public func setAudioPostmixCallback(
 
 // SDL_GetAudioFormatName
 public func getAudioFormatName(format: AudioFormat) -> String {
-    String(cString: SDL_GetAudioFormatName(SDL_AudioFormat(format.rawValue)))
+    String(
+        cString: SDL_GetAudioFormatName(
+            SDL_AudioFormat(.init(truncatingIfNeeded: format.rawValue))
+        )
+    )
 }
 
 // SDL_GetSilenceValueForFormat
 public func getSilenceValueForFormat(format: AudioFormat) -> Int32 {
-    SDL_GetSilenceValueForFormat(SDL_AudioFormat(format.rawValue))
+    SDL_GetSilenceValueForFormat(
+        SDL_AudioFormat(.init(truncatingIfNeeded: format.rawValue))
+    )
 }
 
 @MainActor
@@ -1038,7 +1044,9 @@ private func withCAudioSpec<Result>(
 private extension AudioSpec {
     init(_ value: SDL_AudioSpec) {
         self.init(
-            format: AudioFormat(rawValue: value.format.rawValue),
+            format: AudioFormat(
+                rawValue: UInt32(truncatingIfNeeded: value.format.rawValue)
+            ),
             channels: value.channels,
             freq: value.freq
         )
@@ -1046,7 +1054,7 @@ private extension AudioSpec {
 
     var cValue: SDL_AudioSpec {
         SDL_AudioSpec(
-            format: SDL_AudioFormat(format.rawValue),
+            format: SDL_AudioFormat(.init(truncatingIfNeeded: format.rawValue)),
             channels: channels,
             freq: freq
         )
