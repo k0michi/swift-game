@@ -124,19 +124,101 @@ public func audioIsUnsigned(_ format: AudioFormat) -> Bool {
 }
 
 // SDL_AudioDeviceID
-public struct AudioDeviceID: RawRepresentable, Equatable, Hashable, Sendable {
+public final class AudioDeviceID: Hashable, @unchecked Sendable {
     public let rawValue: UInt32
+    fileprivate let callbackLock = NSLock()
+    fileprivate var postmixCallbackBox: AudioPostmixCallbackBox?
+    fileprivate var openedSystem: System?
 
-    public init(rawValue: UInt32) {
+    fileprivate init(rawValue: UInt32, openedSystem: System?) {
         self.rawValue = rawValue
+        self.openedSystem = openedSystem
+    }
+
+    public static func == (lhs: AudioDeviceID, rhs: AudioDeviceID) -> Bool {
+        lhs === rhs
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(rawValue)
+    }
+
+    deinit {
+        audioDeviceIDRegistry.remove(self)
+        guard let openedSystem else { return }
+
+        if isExecutingAudioCallback, let postmixCallbackBox {
+            // Never close an SDL audio device from its audio callback thread.
+            let cleanup = AudioDeviceCallbackCleanup(
+                rawValue: rawValue,
+                system: openedSystem,
+                callbackBox: postmixCallbackBox
+            )
+            self.postmixCallbackBox = nil
+            audioCallbackCleanupQueue.async {
+                cleanup.run()
+            }
+            return
+        }
+
+        callbackLock.lock()
+        if postmixCallbackBox != nil {
+            _ = SDL_SetAudioPostmixCallback(rawValue, nil, nil)
+            postmixCallbackBox = nil
+        }
+        callbackLock.unlock()
+
+        // SDL_CloseAudioDevice
+        SDL_CloseAudioDevice(rawValue)
     }
 }
 
+private final class WeakAudioDeviceID {
+    weak var value: AudioDeviceID?
+
+    init(_ value: AudioDeviceID) {
+        self.value = value
+    }
+}
+
+private final class AudioDeviceIDRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [UInt32: WeakAudioDeviceID] = [:]
+
+    func get(rawValue: UInt32, openedSystem: System? = nil) -> AudioDeviceID {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let value = values[rawValue]?.value {
+            if let openedSystem {
+                value.openedSystem = openedSystem
+            }
+            return value
+        }
+
+        let value = AudioDeviceID(rawValue: rawValue, openedSystem: openedSystem)
+        values[rawValue] = WeakAudioDeviceID(value)
+        return value
+    }
+
+    func remove(_ value: AudioDeviceID) {
+        lock.lock()
+        if values[value.rawValue]?.value == nil
+            || values[value.rawValue]?.value === value
+        {
+            values[value.rawValue] = nil
+        }
+        lock.unlock()
+    }
+}
+
+private let audioDeviceIDRegistry = AudioDeviceIDRegistry()
+
 // SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK
-public let audioDeviceDefaultPlayback = AudioDeviceID(rawValue: UInt32.max)
+public let audioDeviceDefaultPlayback = audioDeviceIDRegistry.get(rawValue: UInt32.max)
 
 // SDL_AUDIO_DEVICE_DEFAULT_RECORDING
-public let audioDeviceDefaultRecording = AudioDeviceID(rawValue: UInt32.max - 1)
+public let audioDeviceDefaultRecording = audioDeviceIDRegistry.get(rawValue: UInt32.max - 1)
 
 // SDL_AudioSpec
 public struct AudioSpec: Equatable, Hashable, Sendable {
@@ -154,45 +236,6 @@ public struct AudioSpec: Equatable, Hashable, Sendable {
 // SDL_AUDIO_FRAMESIZE
 public func audioFramesize(_ spec: AudioSpec) -> UInt32 {
     audioBytesize(spec.format) * UInt32(spec.channels)
-}
-
-// SDL_AudioDeviceID
-public final class AudioDevice: @unchecked Sendable {
-    public let id: AudioDeviceID
-    private let system: System
-    fileprivate let callbackLock = NSLock()
-    fileprivate var postmixCallbackBox: AudioPostmixCallbackBox?
-
-    fileprivate init(id: AudioDeviceID, system: System) {
-        self.id = id
-        self.system = system
-    }
-
-    deinit {
-        if isExecutingAudioCallback, let postmixCallbackBox {
-            // Never close an SDL audio device from its audio callback thread.
-            let cleanup = AudioDeviceCallbackCleanup(
-                id: id,
-                system: system,
-                callbackBox: postmixCallbackBox
-            )
-            self.postmixCallbackBox = nil
-            audioCallbackCleanupQueue.async {
-                cleanup.run()
-            }
-            return
-        }
-
-        callbackLock.lock()
-        if postmixCallbackBox != nil {
-            _ = SDL_SetAudioPostmixCallback(id.rawValue, nil, nil)
-            postmixCallbackBox = nil
-        }
-        callbackLock.unlock()
-
-        // SDL_CloseAudioDevice
-        SDL_CloseAudioDevice(id.rawValue)
-    }
 }
 
 // SDL_AudioStream
@@ -314,24 +357,24 @@ private final class AudioStreamCallbackCleanup: @unchecked Sendable {
 }
 
 private final class AudioDeviceCallbackCleanup: @unchecked Sendable {
-    private let id: AudioDeviceID
+    private let rawValue: UInt32
     private let system: System
     private let callbackBox: AudioPostmixCallbackBox
 
     init(
-        id: AudioDeviceID,
+        rawValue: UInt32,
         system: System,
         callbackBox: AudioPostmixCallbackBox
     ) {
-        self.id = id
+        self.rawValue = rawValue
         self.system = system
         self.callbackBox = callbackBox
     }
 
     func run() {
-        _ = SDL_SetAudioPostmixCallback(id.rawValue, nil, nil)
+        _ = SDL_SetAudioPostmixCallback(rawValue, nil, nil)
         // SDL_CloseAudioDevice
-        SDL_CloseAudioDevice(id.rawValue)
+        SDL_CloseAudioDevice(rawValue)
         withExtendedLifetime((callbackBox, system)) {}
     }
 }
@@ -450,7 +493,7 @@ public func getAudioDeviceChannelMap(devid: AudioDeviceID) throws -> [Int32] {
 public func openAudioDevice(
     devid: AudioDeviceID,
     spec: AudioSpec? = nil
-) throws -> AudioDevice {
+) throws -> AudioDeviceID {
     let system = try activeSystem(operation: "SDL_OpenAudioDevice")
     let rawValue = withCAudioSpec(spec) {
         SDL_OpenAudioDevice(devid.rawValue, $0)
@@ -458,7 +501,7 @@ public func openAudioDevice(
     guard rawValue != 0 else {
         throw SDLError(operation: "SDL_OpenAudioDevice")
     }
-    return AudioDevice(id: AudioDeviceID(rawValue: rawValue), system: system)
+    return audioDeviceIDRegistry.get(rawValue: rawValue, openedSystem: system)
 }
 
 // SDL_IsAudioDevicePhysical
@@ -472,27 +515,27 @@ public func isAudioDevicePlayback(devid: AudioDeviceID) -> Bool {
 }
 
 // SDL_PauseAudioDevice
-public func pauseAudioDevice(devid: AudioDevice) throws {
-    guard SDL_PauseAudioDevice(devid.id.rawValue) else {
+public func pauseAudioDevice(devid: AudioDeviceID) throws {
+    guard SDL_PauseAudioDevice(devid.rawValue) else {
         throw SDLError(operation: "SDL_PauseAudioDevice")
     }
 }
 
 // SDL_ResumeAudioDevice
-public func resumeAudioDevice(devid: AudioDevice) throws {
-    guard SDL_ResumeAudioDevice(devid.id.rawValue) else {
+public func resumeAudioDevice(devid: AudioDeviceID) throws {
+    guard SDL_ResumeAudioDevice(devid.rawValue) else {
         throw SDLError(operation: "SDL_ResumeAudioDevice")
     }
 }
 
 // SDL_AudioDevicePaused
-public func audioDevicePaused(devid: AudioDevice) -> Bool {
-    SDL_AudioDevicePaused(devid.id.rawValue)
+public func audioDevicePaused(devid: AudioDeviceID) -> Bool {
+    SDL_AudioDevicePaused(devid.rawValue)
 }
 
 // SDL_GetAudioDeviceGain
-public func getAudioDeviceGain(devid: AudioDevice) throws -> Float {
-    let gain = SDL_GetAudioDeviceGain(devid.id.rawValue)
+public func getAudioDeviceGain(devid: AudioDeviceID) throws -> Float {
+    let gain = SDL_GetAudioDeviceGain(devid.rawValue)
     guard gain >= 0 else {
         throw SDLError(operation: "SDL_GetAudioDeviceGain")
     }
@@ -500,25 +543,25 @@ public func getAudioDeviceGain(devid: AudioDevice) throws -> Float {
 }
 
 // SDL_SetAudioDeviceGain
-public func setAudioDeviceGain(devid: AudioDevice, gain: Float) throws {
-    guard SDL_SetAudioDeviceGain(devid.id.rawValue, gain) else {
+public func setAudioDeviceGain(devid: AudioDeviceID, gain: Float) throws {
+    guard SDL_SetAudioDeviceGain(devid.rawValue, gain) else {
         throw SDLError(operation: "SDL_SetAudioDeviceGain")
     }
 }
 
 // SDL_BindAudioStreams
-public func bindAudioStreams(devid: AudioDevice, streams: [AudioStream]) throws {
+public func bindAudioStreams(devid: AudioDeviceID, streams: [AudioStream]) throws {
     let pointers: [OpaquePointer?] = streams.map(\.pointer)
     guard pointers.withUnsafeBufferPointer({
-        SDL_BindAudioStreams(devid.id.rawValue, $0.baseAddress, Int32($0.count))
+        SDL_BindAudioStreams(devid.rawValue, $0.baseAddress, Int32($0.count))
     }) else {
         throw SDLError(operation: "SDL_BindAudioStreams")
     }
 }
 
 // SDL_BindAudioStream
-public func bindAudioStream(devid: AudioDevice, stream: AudioStream) throws {
-    guard SDL_BindAudioStream(devid.id.rawValue, stream.pointer) else {
+public func bindAudioStream(devid: AudioDeviceID, stream: AudioStream) throws {
+    guard SDL_BindAudioStream(devid.rawValue, stream.pointer) else {
         throw SDLError(operation: "SDL_BindAudioStream")
     }
 }
@@ -539,7 +582,7 @@ public func unbindAudioStream(stream: AudioStream) {
 // SDL_GetAudioStreamDevice
 public func getAudioStreamDevice(stream: AudioStream) -> AudioDeviceID? {
     let rawValue = SDL_GetAudioStreamDevice(stream.pointer)
-    return rawValue == 0 ? nil : AudioDeviceID(rawValue: rawValue)
+    return rawValue == 0 ? nil : audioDeviceIDRegistry.get(rawValue: rawValue)
 }
 
 // SDL_CreateAudioStream
@@ -860,7 +903,7 @@ public func openAudioDeviceStream(
 
 // SDL_SetAudioPostmixCallback
 public func setAudioPostmixCallback(
-    devid: AudioDevice,
+    devid: AudioDeviceID,
     callback: AudioPostmixCallback?
 ) throws {
     devid.callbackLock.lock()
@@ -869,7 +912,7 @@ public func setAudioPostmixCallback(
     let box = callback.map(AudioPostmixCallbackBox.init(callback:))
     let userdata = box.map { Unmanaged.passUnretained($0).toOpaque() }
     let succeeded = SDL_SetAudioPostmixCallback(
-        devid.id.rawValue,
+        devid.rawValue,
         box == nil ? nil : { userdata, spec, buffer, buflen in
             guard
                 let userdata,
@@ -934,7 +977,9 @@ private func getAudioDevices(
         throw SDLError(operation: operation)
     }
     defer { SDL_free(pointer) }
-    return UnsafeBufferPointer(start: pointer, count: Int(count)).map(AudioDeviceID.init(rawValue:))
+    return UnsafeBufferPointer(start: pointer, count: Int(count)).map {
+        audioDeviceIDRegistry.get(rawValue: $0)
+    }
 }
 
 private func getAudioStreamChannelMap(

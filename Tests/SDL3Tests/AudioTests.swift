@@ -190,6 +190,34 @@ extension SDL3Tests {
     }
 
     @Test
+    func audioDeviceIDIsCanonicalAndOwnsOpenedDevice() throws {
+        weak var weakSystem: System?
+        var device: AudioDeviceID?
+        var stream: AudioStream?
+
+        do {
+            let system = try `init`(flags: [.audio])
+            weakSystem = system
+            device = try openAudioDevice(
+                devid: audioDeviceDefaultPlayback,
+                spec: AudioSpec(format: .f32, channels: 2, freq: 48_000)
+            )
+            stream = try createAudioStream(
+                srcSpec: AudioSpec(format: .f32, channels: 2, freq: 48_000),
+                dstSpec: AudioSpec(format: .f32, channels: 2, freq: 48_000)
+            )
+            try bindAudioStream(devid: device!, stream: stream!)
+
+            #expect(getAudioStreamDevice(stream: stream!) === device)
+        }
+
+        #expect(weakSystem != nil)
+        stream = nil
+        device = nil
+        #expect(weakSystem == nil)
+    }
+
+    @Test
     func streamDestructionReleasesCallbackLambda() throws {
         let system = try `init`(flags: [.audio])
         let spec = AudioSpec(format: .f32, channels: 2, freq: 48_000)
