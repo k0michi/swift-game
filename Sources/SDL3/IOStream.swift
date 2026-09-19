@@ -12,7 +12,38 @@ public enum IOWhence: UInt32, Sendable {
 }
 
 // SDL_IOStreamInterface
-// TODO: Migrate the custom IOStream interface together with SDL_OpenIO.
+public struct IOStreamInterface: Sendable {
+    public var size: (@Sendable () -> Int64)?
+    public var seek: (@Sendable (_ offset: Int64, _ whence: IOWhence) -> Int64)?
+    public var read: (@Sendable (_ ptr: UnsafeMutableRawBufferPointer, _ status: inout IOStatus) -> Int)?
+    public var write: (@Sendable (_ ptr: UnsafeRawBufferPointer, _ status: inout IOStatus) -> Int)?
+    public var flush: (@Sendable (_ status: inout IOStatus) -> Bool)?
+    public var close: (@Sendable () -> Bool)?
+
+    public init(
+        size: (@Sendable () -> Int64)? = nil,
+        seek: (@Sendable (_ offset: Int64, _ whence: IOWhence) -> Int64)? = nil,
+        read: (@Sendable (_ ptr: UnsafeMutableRawBufferPointer, _ status: inout IOStatus) -> Int)? = nil,
+        write: (@Sendable (_ ptr: UnsafeRawBufferPointer, _ status: inout IOStatus) -> Int)? = nil,
+        flush: (@Sendable (_ status: inout IOStatus) -> Bool)? = nil,
+        close: (@Sendable () -> Bool)? = nil
+    ) {
+        self.size = size
+        self.seek = seek
+        self.read = read
+        self.write = write
+        self.flush = flush
+        self.close = close
+    }
+}
+
+private final class IOStreamInterfaceBox: @unchecked Sendable {
+    let interface: IOStreamInterface
+
+    init(interface: IOStreamInterface) {
+        self.interface = interface
+    }
+}
 
 // SDL_IOStream
 public final class IOStream: @unchecked Sendable {
@@ -99,6 +130,99 @@ public let propIOStreamDynamicMemoryPointer = "SDL.iostream.dynamic.memory"
 // SDL_PROP_IOSTREAM_DYNAMIC_CHUNKSIZE_NUMBER
 public let propIOStreamDynamicChunkSizeNumber = "SDL.iostream.dynamic.chunksize"
 
+// SDL_OpenIO
+public func openIO(iface: IOStreamInterface) throws -> IOStream {
+    let box = IOStreamInterfaceBox(interface: iface)
+    let userdata = Unmanaged.passRetained(box).toOpaque()
+    var cInterface = SDL_IOStreamInterface()
+    cInterface.version = UInt32(MemoryLayout<SDL_IOStreamInterface>.size)
+    cInterface.size = iface.size.map { _ in ioStreamSizeCallback }
+    cInterface.seek = iface.seek.map { _ in ioStreamSeekCallback }
+    cInterface.read = iface.read.map { _ in ioStreamReadCallback }
+    cInterface.write = iface.write.map { _ in ioStreamWriteCallback }
+    cInterface.flush = iface.flush.map { _ in ioStreamFlushCallback }
+    cInterface.close = ioStreamCloseCallback
+
+    guard let pointer = SDL_OpenIO(&cInterface, userdata) else {
+        Unmanaged<IOStreamInterfaceBox>.fromOpaque(userdata).release()
+        throw SDLError(operation: "SDL_OpenIO")
+    }
+    return IOStream(pointer: pointer)
+}
+
+private let ioStreamSizeCallback: @convention(c) (UnsafeMutableRawPointer?) -> Int64 = { userdata in
+    guard let userdata else { return -1 }
+    return Unmanaged<IOStreamInterfaceBox>.fromOpaque(userdata)
+        .takeUnretainedValue().interface.size?() ?? -1
+}
+
+private let ioStreamSeekCallback: @convention(c) (UnsafeMutableRawPointer?, Int64, SDL_IOWhence) -> Int64 = {
+    userdata, offset, whence in
+    guard
+        let userdata,
+        let whence = IOWhence(rawValue: UInt32(truncatingIfNeeded: whence.rawValue)),
+        let seek = Unmanaged<IOStreamInterfaceBox>.fromOpaque(userdata)
+            .takeUnretainedValue().interface.seek
+    else { return -1 }
+    return seek(offset, whence)
+}
+
+private let ioStreamReadCallback: @convention(c) (
+    UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, Int,
+    UnsafeMutablePointer<SDL_IOStatus>?
+) -> Int = { userdata, ptr, count, status in
+    guard
+        let userdata,
+        let read = Unmanaged<IOStreamInterfaceBox>.fromOpaque(userdata)
+            .takeUnretainedValue().interface.read
+    else { return 0 }
+    var swiftStatus = status.flatMap {
+        IOStatus(rawValue: UInt32(truncatingIfNeeded: $0.pointee.rawValue))
+    } ?? .ready
+    let result = read(UnsafeMutableRawBufferPointer(start: ptr, count: count), &swiftStatus)
+    status?.pointee = SDL_IOStatus(.init(truncatingIfNeeded: swiftStatus.rawValue))
+    return min(max(result, 0), count)
+}
+
+private let ioStreamWriteCallback: @convention(c) (
+    UnsafeMutableRawPointer?, UnsafeRawPointer?, Int,
+    UnsafeMutablePointer<SDL_IOStatus>?
+) -> Int = { userdata, ptr, count, status in
+    guard
+        let userdata,
+        let write = Unmanaged<IOStreamInterfaceBox>.fromOpaque(userdata)
+            .takeUnretainedValue().interface.write
+    else { return 0 }
+    var swiftStatus = status.flatMap {
+        IOStatus(rawValue: UInt32(truncatingIfNeeded: $0.pointee.rawValue))
+    } ?? .ready
+    let result = write(UnsafeRawBufferPointer(start: ptr, count: count), &swiftStatus)
+    status?.pointee = SDL_IOStatus(.init(truncatingIfNeeded: swiftStatus.rawValue))
+    return min(max(result, 0), count)
+}
+
+private let ioStreamFlushCallback: @convention(c) (
+    UnsafeMutableRawPointer?, UnsafeMutablePointer<SDL_IOStatus>?
+) -> Bool = { userdata, status in
+    guard
+        let userdata,
+        let flush = Unmanaged<IOStreamInterfaceBox>.fromOpaque(userdata)
+            .takeUnretainedValue().interface.flush
+    else { return true }
+    var swiftStatus = status.flatMap {
+        IOStatus(rawValue: UInt32(truncatingIfNeeded: $0.pointee.rawValue))
+    } ?? .ready
+    let result = flush(&swiftStatus)
+    status?.pointee = SDL_IOStatus(.init(truncatingIfNeeded: swiftStatus.rawValue))
+    return result
+}
+
+private let ioStreamCloseCallback: @convention(c) (UnsafeMutableRawPointer?) -> Bool = { userdata in
+    guard let userdata else { return true }
+    let box = Unmanaged<IOStreamInterfaceBox>.fromOpaque(userdata).takeRetainedValue()
+    return box.interface.close?() ?? true
+}
+
 // SDL_CloseIO
 public func closeIO(context: IOStream) throws {
     guard SDL_CloseIO(try context.takePointer()) else { throw SDLError(operation: "SDL_CloseIO") }
@@ -157,7 +281,20 @@ public func writeIO(context: IOStream, ptr: UnsafeRawBufferPointer) throws -> In
 }
 
 // SDL_IOprintf
-// TODO: Provide a non-leaky Swift representation for SDL's variadic formatting API.
+@discardableResult
+public func ioPrintf(context: IOStream, format: String, _ arguments: CVarArg...) throws -> Int {
+    try ioVPrintf(context: context, format: format, arguments: arguments)
+}
+
+// SDL_IOvprintf
+@discardableResult
+public func ioVPrintf(context: IOStream, format: String, arguments: [CVarArg]) throws -> Int {
+    let count = try context.withPointer { pointer in
+        withVaList(arguments) { SDL_IOvprintf(pointer, format, $0) }
+    }
+    guard count > 0 || format.isEmpty else { throw SDLError(operation: "SDL_IOvprintf") }
+    return count
+}
 
 // SDL_FlushIO
 public func flushIO(context: IOStream) throws {
