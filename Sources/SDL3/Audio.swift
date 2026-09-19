@@ -768,7 +768,24 @@ public func putAudioStreamDataNoCopy(
     }
 }
 
-// TODO: Migrate SDL_PutAudioStreamPlanarData.
+// SDL_PutAudioStreamPlanarData
+public func putAudioStreamPlanarData(
+    stream: AudioStream,
+    channelBuffers: [UnsafeRawBufferPointer?],
+    numSamples: Int32
+) throws {
+    let pointers = channelBuffers.map { $0?.baseAddress }
+    guard pointers.withUnsafeBufferPointer({
+        SDL_PutAudioStreamPlanarData(
+            stream.pointer,
+            $0.baseAddress,
+            Int32($0.count),
+            numSamples
+        )
+    }) else {
+        throw SDLError(operation: "SDL_PutAudioStreamPlanarData")
+    }
+}
 
 // SDL_GetAudioStreamData
 @discardableResult
@@ -940,9 +957,84 @@ public func setAudioPostmixCallback(
     devid.postmixCallbackBox = box
 }
 
-// TODO: Migrate SDL_LoadWAV_IO after SDL_IOStream.
-// TODO: Migrate SDL_LoadWAV after an SDL-owned buffer type.
-// TODO: Migrate SDL_MixAudio and SDL_ConvertAudioSamples.
+// SDL_LoadWAV_IO
+public func loadWAVIO(
+    src: IOStream,
+    closeIO: Bool
+) throws -> (spec: AudioSpec, audio: [UInt8]) {
+    if closeIO {
+        let pointer = try src.takePointer()
+        return try loadWAV { spec, audioBuffer, audioLength in
+            SDL_LoadWAV_IO(pointer, true, spec, audioBuffer, audioLength)
+        }
+    }
+    return try src.withPointer { pointer in
+        try loadWAV { spec, audioBuffer, audioLength in
+            SDL_LoadWAV_IO(pointer, false, spec, audioBuffer, audioLength)
+        }
+    }
+}
+
+// SDL_LoadWAV
+public func loadWAV(path: String) throws -> (spec: AudioSpec, audio: [UInt8]) {
+    try loadWAV { spec, audioBuffer, audioLength in
+        SDL_LoadWAV(path, spec, audioBuffer, audioLength)
+    }
+}
+
+// SDL_MixAudio
+public func mixAudio(
+    dst: UnsafeMutableRawBufferPointer,
+    src: UnsafeRawBufferPointer,
+    format: AudioFormat,
+    volume: Float
+) throws {
+    guard dst.count == src.count, let length = UInt32(exactly: src.count) else {
+        throw SDLError(
+            operation: "SDL_MixAudio",
+            message: "source and destination buffers must have the same UInt32-sized length"
+        )
+    }
+    guard SDL_MixAudio(
+        dst.baseAddress?.assumingMemoryBound(to: UInt8.self),
+        src.baseAddress?.assumingMemoryBound(to: UInt8.self),
+        SDL_AudioFormat(.init(truncatingIfNeeded: format.rawValue)),
+        length,
+        volume
+    ) else {
+        throw SDLError(operation: "SDL_MixAudio")
+    }
+}
+
+// SDL_ConvertAudioSamples
+public func convertAudioSamples(
+    srcSpec: AudioSpec,
+    srcData: UnsafeRawBufferPointer,
+    dstSpec: AudioSpec
+) throws -> [UInt8] {
+    guard let srcLength = Int32(exactly: srcData.count) else {
+        throw SDLError(
+            operation: "SDL_ConvertAudioSamples",
+            message: "source buffer length exceeds Int32.max"
+        )
+    }
+    var cSrcSpec = srcSpec.cValue
+    var cDstSpec = dstSpec.cValue
+    var dstData: UnsafeMutablePointer<UInt8>?
+    var dstLength: Int32 = 0
+    guard SDL_ConvertAudioSamples(
+        &cSrcSpec,
+        srcData.baseAddress?.assumingMemoryBound(to: UInt8.self),
+        srcLength,
+        &cDstSpec,
+        &dstData,
+        &dstLength
+    ), let dstData else {
+        throw SDLError(operation: "SDL_ConvertAudioSamples")
+    }
+    defer { SDL_free(dstData) }
+    return Array(UnsafeBufferPointer(start: dstData, count: Int(dstLength)))
+}
 
 // SDL_GetAudioFormatName
 public func getAudioFormatName(format: AudioFormat) -> String {
@@ -980,6 +1072,26 @@ private func getAudioDevices(
     return UnsafeBufferPointer(start: pointer, count: Int(count)).map {
         audioDeviceIDRegistry.get(rawValue: $0)
     }
+}
+
+private func loadWAV(
+    _ body: (
+        UnsafeMutablePointer<SDL_AudioSpec>,
+        UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>,
+        UnsafeMutablePointer<UInt32>
+    ) -> Bool
+) throws -> (spec: AudioSpec, audio: [UInt8]) {
+    var spec = SDL_AudioSpec()
+    var audioBuffer: UnsafeMutablePointer<UInt8>?
+    var audioLength: UInt32 = 0
+    guard body(&spec, &audioBuffer, &audioLength), let audioBuffer else {
+        throw SDLError(operation: "SDL_LoadWAV")
+    }
+    defer { SDL_free(audioBuffer) }
+    return (
+        AudioSpec(spec),
+        Array(UnsafeBufferPointer(start: audioBuffer, count: Int(audioLength)))
+    )
 }
 
 private func getAudioStreamChannelMap(

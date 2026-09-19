@@ -256,4 +256,81 @@ extension SDL3Tests {
         waitForAudioCallbackCleanup()
         withExtendedLifetime((system, owner)) {}
     }
+
+    @Test
+    func putsPlanarAudioIntoStream() throws {
+        let system = try `init`(flags: [.audio])
+        let spec = AudioSpec(format: .f32, channels: 2, freq: 48_000)
+        let stream = try createAudioStream(srcSpec: spec, dstSpec: spec)
+        let left: [Float] = [0.25, 0.5]
+        let right: [Float] = [-0.25, -0.5]
+
+        try left.withUnsafeBytes { left in
+            try right.withUnsafeBytes { right in
+                try putAudioStreamPlanarData(
+                    stream: stream,
+                    channelBuffers: [left, right],
+                    numSamples: 2
+                )
+            }
+        }
+        var output = [Float](repeating: 0, count: 4)
+        _ = try output.withUnsafeMutableBytes {
+            try getAudioStreamData(stream: stream, buf: $0)
+        }
+
+        #expect(output == [0.25, -0.25, 0.5, -0.5])
+        withExtendedLifetime((system, stream)) {}
+    }
+
+    @Test
+    func mixesAndConvertsAudioSamples() throws {
+        var destination: [Float] = [0, 0]
+        let source: [Float] = [0.25, -0.5]
+        try destination.withUnsafeMutableBytes { destination in
+            try source.withUnsafeBytes { source in
+                try mixAudio(
+                    dst: destination,
+                    src: source,
+                    format: .f32,
+                    volume: 1
+                )
+            }
+        }
+        #expect(destination == source)
+
+        let converted = try source.withUnsafeBytes {
+            try convertAudioSamples(
+                srcSpec: AudioSpec(format: .f32, channels: 1, freq: 8_000),
+                srcData: $0,
+                dstSpec: AudioSpec(format: .s16, channels: 1, freq: 8_000)
+            )
+        }
+        #expect(converted.count == 2 * MemoryLayout<Int16>.stride)
+    }
+
+    @Test
+    func loadsWAVFromPathAndIOStream() throws {
+        let wav: [UInt8] = [
+            0x52, 0x49, 0x46, 0x46, 0x26, 0x00, 0x00, 0x00,
+            0x57, 0x41, 0x56, 0x45, 0x66, 0x6D, 0x74, 0x20,
+            0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+            0x40, 0x1F, 0x00, 0x00, 0x40, 0x1F, 0x00, 0x00,
+            0x01, 0x00, 0x08, 0x00, 0x64, 0x61, 0x74, 0x61,
+            0x02, 0x00, 0x00, 0x00, 0x80, 0xFF,
+        ]
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-game-audio-\(UUID().uuidString).wav")
+        try Data(wav).write(to: path)
+        defer { try? FileManager.default.removeItem(at: path) }
+
+        let fromPath = try loadWAV(path: path.path)
+        #expect(fromPath.spec == AudioSpec(format: .u8, channels: 1, freq: 8_000))
+        #expect(fromPath.audio == [0x80, 0xFF])
+
+        let io = try ioFromFile(file: path.path, mode: "rb")
+        let fromIO = try loadWAVIO(src: io, closeIO: true)
+        #expect(fromIO.spec == fromPath.spec)
+        #expect(fromIO.audio == fromPath.audio)
+    }
 }
