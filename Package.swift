@@ -70,9 +70,11 @@ let package = Package(
         .library(name: "Dawn", targets: ["Dawn"]),
         .library(name: "SDL3Dawn", targets: ["SDL3Dawn"]),
         .library(name: "Interop", targets: ["Interop"]),
+        .library(name: "Echo", targets: ["Echo"]),
     ],
     targets: [
         .target(name: "Interop"),
+        .target(name: "Echo"),
         .target(
             name: "CSDL3",
             cSettings: [
@@ -127,6 +129,10 @@ let package = Package(
         .testTarget(
             name: "InteropTests",
             dependencies: ["Interop"]
+        ),
+        .testTarget(
+            name: "EchoTests",
+            dependencies: ["Echo"]
         ),
     ]
 )
