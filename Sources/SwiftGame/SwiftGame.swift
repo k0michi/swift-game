@@ -28,11 +28,67 @@ private func makeDummyImage(width: UInt32, height: UInt32) -> DummyImage {
     return DummyImage(width: width, height: height, pixels: pixels)
 }
 
+private final class SquareWaveGenerator: @unchecked Sendable {
+    private let frequency: Float
+    private let sampleRate: Float
+    private let channels: Int
+    private let amplitude: Float
+    private var phase: Float = 0
+
+    init(
+        frequency: Float,
+        sampleRate: Int,
+        channels: Int,
+        amplitude: Float
+    ) {
+        self.frequency = frequency
+        self.sampleRate = Float(sampleRate)
+        self.channels = channels
+        self.amplitude = amplitude
+    }
+
+    func render(byteCount: Int) -> [Float] {
+        let frameSize = channels * MemoryLayout<Float>.stride
+        let frameCount = (byteCount + frameSize - 1) / frameSize
+        var samples = [Float]()
+        samples.reserveCapacity(frameCount * channels)
+
+        for _ in 0..<frameCount {
+            let sample = phase < 0.5 ? amplitude : -amplitude
+            samples.append(contentsOf: repeatElement(sample, count: channels))
+            phase += frequency / sampleRate
+            if phase >= 1 {
+                phase -= 1
+            }
+        }
+        return samples
+    }
+}
+
 @main
 @MainActor
 struct SwiftGame {
     static func main() async throws {
-        let system = try `init`(flags: [.video])
+        let system = try `init`(flags: [.audio, .video])
+
+        let audioSpec = AudioSpec(format: .f32, channels: 2, freq: 48_000)
+        let squareWave = SquareWaveGenerator(
+            frequency: 440,
+            sampleRate: Int(audioSpec.freq),
+            channels: Int(audioSpec.channels),
+            amplitude: 0.1
+        )
+        let audioStream = try openAudioDeviceStream(
+            devid: audioDeviceDefaultPlayback,
+            spec: audioSpec
+        ) { stream, additionalAmount, _ in
+            guard additionalAmount > 0 else { return }
+            let samples = squareWave.render(byteCount: Int(additionalAmount))
+            try? samples.withUnsafeBytes {
+                try putAudioStreamData(stream: stream, buf: $0)
+            }
+        }
+        try resumeAudioStreamDevice(stream: audioStream)
 
         var windowFlags: WindowFlags = [.resizable, .highPixelDensity]
         #if os(macOS)
@@ -238,7 +294,8 @@ struct SwiftGame {
         withExtendedLifetime(
             (
                 system, window, instance, adapter, device, surface, queue, texture, textureView,
-                sampler, bindGroupLayout, bindGroup, pipeline, vertexBuffer, indexBuffer
+                sampler, bindGroupLayout, bindGroup, pipeline, vertexBuffer, indexBuffer,
+                squareWave, audioStream
             )
         ) {}
     }
