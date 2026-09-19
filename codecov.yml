@@ -3,3 +3,6 @@ coverage:
     project: off
     patch: off
     changes: off
+
+ignore:
+  - "Tests/**"
