@@ -12,7 +12,8 @@ public final class GainNode: AudioNode {
             context: context,
             numberOfInputs: 1,
             numberOfOutputs: 1,
-            options: options.audioNodeOptions
+            options: options.audioNodeOptions,
+            kind: .gain(gain.id)
         )
     }
 }

@@ -1,17 +1,23 @@
 open class BaseAudioContext {
-    let graph = AudioGraph()
+    let graph: AudioGraph
     let backend: any AudioBackend
 
     public private(set) lazy var destination = AudioDestinationNode(context: self)
     public private(set) lazy var listener = AudioListener(context: self)
 
     public var sampleRate: Float { backend.sampleRate }
-    public var currentTime: Double { backend.currentTime }
+    public var currentTime: Double {
+        Double(graph.renderGraph.clock.renderedFrames) / Double(sampleRate)
+    }
     public var state: AudioContextState { backend.state }
     public var renderQuantumSize: UInt32 { backend.renderQuantumSize }
 
     init(backend: any AudioBackend) {
         self.backend = backend
+        graph = AudioGraph(
+            sampleRate: backend.sampleRate,
+            renderQuantumSize: backend.renderQuantumSize
+        )
     }
 
     public func createBuffer(numberOfChannels: UInt32, length: UInt32, sampleRate: Float) throws -> AudioBuffer {
@@ -24,5 +30,10 @@ open class BaseAudioContext {
 
     public func createGain() -> GainNode {
         GainNode(context: self)
+    }
+
+    public func render(into output: inout AudioBus, frameCount: Int) throws {
+        _ = destination
+        try graph.render(into: &output, frameCount: frameCount)
     }
 }

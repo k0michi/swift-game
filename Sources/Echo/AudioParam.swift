@@ -1,11 +1,16 @@
 public final class AudioParam {
-    public var value: Float
-    public var automationRate: AutomationRate
+    public var value: Float {
+        didSet { graph.setParamValue(id: id, value: value) }
+    }
+    public var automationRate: AutomationRate {
+        didSet { graph.setAutomationRate(id: id, value: automationRate) }
+    }
     public let defaultValue: Float
     public let minValue: Float
     public let maxValue: Float
 
     let graph: AudioGraph
+    let id: AudioParamID
 
     init(
         graph: AudioGraph,
@@ -20,6 +25,12 @@ public final class AudioParam {
         self.maxValue = maxValue
         self.automationRate = automationRate
         value = defaultValue
+        id = graph.registerParam(
+            defaultValue: defaultValue,
+            minValue: minValue,
+            maxValue: maxValue,
+            automationRate: automationRate
+        )
     }
 
     @discardableResult

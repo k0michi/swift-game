@@ -1,67 +1,103 @@
-import Foundation
-
-private enum AudioConnectionDestination {
-    case node(AudioNode, input: UInt32)
-    case parameter(AudioParam)
-}
-
-private struct AudioConnection {
-    let source: ObjectIdentifier
-    let output: UInt32
-    let destination: AudioConnectionDestination
-}
-
 final class AudioGraph {
-    private let lock = NSLock()
-    private var connections: [AudioConnection] = []
+    let messages = ControlMessageQueue()
+    let renderGraph: RenderGraph
+
+    init(sampleRate: Float, renderQuantumSize: UInt32) {
+        renderGraph = RenderGraph(sampleRate: sampleRate, renderQuantumSize: renderQuantumSize)
+    }
+
+    func registerNode(
+        numberOfInputs: UInt32,
+        numberOfOutputs: UInt32,
+        options: AudioNodeOptions,
+        kind: RenderNodeKind
+    ) -> AudioNodeID {
+        let id = AudioNodeID()
+        messages.enqueue(.registerNode(RenderNodeState(
+            id: id,
+            numberOfInputs: numberOfInputs,
+            numberOfOutputs: numberOfOutputs,
+            channelCount: options.channelCount,
+            channelCountMode: options.channelCountMode,
+            channelInterpretation: options.channelInterpretation,
+            kind: kind
+        )))
+        return id
+    }
+
+    func registerParam(
+        defaultValue: Float,
+        minValue: Float,
+        maxValue: Float,
+        automationRate: AutomationRate
+    ) -> AudioParamID {
+        let id = AudioParamID()
+        messages.enqueue(.registerParam(RenderParamState(
+            id: id,
+            value: defaultValue,
+            defaultValue: defaultValue,
+            minValue: minValue,
+            maxValue: maxValue,
+            automationRate: automationRate
+        )))
+        return id
+    }
 
     func connect(source: AudioNode, output: UInt32, destination: AudioNode, input: UInt32) {
-        lock.withLock {
-            connections.append(AudioConnection(
-                source: ObjectIdentifier(source),
-                output: output,
-                destination: .node(destination, input: input)
-            ))
-        }
+        messages.enqueue(.connectNodes(RenderNodeConnection(
+            source: source.id, output: output,
+            destination: destination.id, input: input
+        )))
     }
 
     func connect(source: AudioNode, output: UInt32, destination: AudioParam) {
-        lock.withLock {
-            connections.append(AudioConnection(
-                source: ObjectIdentifier(source),
-                output: output,
-                destination: .parameter(destination)
-            ))
-        }
+        messages.enqueue(.connectParam(RenderParamConnection(
+            source: source.id, output: output, destination: destination.id
+        )))
     }
 
     func disconnect(source: AudioNode) {
-        remove { $0.source == ObjectIdentifier(source) }
+        messages.enqueue(.disconnectAll(source: source.id))
     }
 
     func disconnect(source: AudioNode, output: UInt32) {
-        remove { $0.source == ObjectIdentifier(source) && $0.output == output }
+        messages.enqueue(.disconnectOutput(source: source.id, output: output))
     }
 
     func disconnect(source: AudioNode, destination: AudioNode, output: UInt32?, input: UInt32?) {
-        remove { connection in
-            guard connection.source == ObjectIdentifier(source) else { return false }
-            guard output.map({ connection.output == $0 }) ?? true else { return false }
-            guard case .node(let node, let destinationInput) = connection.destination else { return false }
-            return node === destination && (input.map { destinationInput == $0 } ?? true)
-        }
+        messages.enqueue(.disconnectNodes(
+            source: source.id, destination: destination.id, output: output, input: input
+        ))
     }
 
     func disconnect(source: AudioNode, destination: AudioParam, output: UInt32?) {
-        remove { connection in
-            guard connection.source == ObjectIdentifier(source) else { return false }
-            guard output.map({ connection.output == $0 }) ?? true else { return false }
-            guard case .parameter(let parameter) = connection.destination else { return false }
-            return parameter === destination
-        }
+        messages.enqueue(.disconnectParam(
+            source: source.id, destination: destination.id, output: output
+        ))
     }
 
-    private func remove(where predicate: (AudioConnection) -> Bool) {
-        lock.withLock { connections.removeAll(where: predicate) }
+    func setChannelCount(id: AudioNodeID, value: UInt32) {
+        messages.enqueue(.setChannelCount(id: id, value: value))
+    }
+
+    func setChannelCountMode(id: AudioNodeID, value: ChannelCountMode) {
+        messages.enqueue(.setChannelCountMode(id: id, value: value))
+    }
+
+    func setChannelInterpretation(id: AudioNodeID, value: ChannelInterpretation) {
+        messages.enqueue(.setChannelInterpretation(id: id, value: value))
+    }
+
+    func setParamValue(id: AudioParamID, value: Float) {
+        messages.enqueue(.setParamValue(id: id, value: value))
+    }
+
+    func setAutomationRate(id: AudioParamID, value: AutomationRate) {
+        messages.enqueue(.setAutomationRate(id: id, value: value))
+    }
+
+    func render(into output: inout AudioBus, frameCount: Int) throws {
+        messages.consume { renderGraph.apply($0) }
+        try renderGraph.render(into: &output, frameCount: frameCount)
     }
 }
