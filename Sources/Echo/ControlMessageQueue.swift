@@ -1,25 +1,40 @@
-import Foundation
+import Atomics
 
-final class ControlMessageQueue {
-    // TODO: Replace the render-side lock with an atomic, lock-free queue handoff before
-    // consuming this queue from the SDL audio callback. Producers may coordinate, but
-    // consume(_:) must never wait for the control thread.
-    private let lock = NSLock()
-    private var pending: [ControlMessage] = []
-    private var rendering: [ControlMessage] = []
+/// A lock-free multi-producer, single-consumer FIFO queue.
+/// `consume(_:)` must only be called by the render thread.
+final class ControlMessageQueue: @unchecked Sendable {
+    private var head: UnsafeMutableRawPointer
+    private let tail: ManagedAtomic<UnsafeMutableRawPointer>
 
-    init(capacity: Int = 64) {
-        pending.reserveCapacity(capacity)
-        rendering.reserveCapacity(capacity)
+    init() {
+        let stub = Unmanaged.passRetained(ControlMessageNode(message: nil)).toOpaque()
+        head = stub
+        tail = ManagedAtomic(stub)
     }
 
     func enqueue(_ message: ControlMessage) {
-        lock.withLock { pending.append(message) }
+        let pointer = Unmanaged.passRetained(ControlMessageNode(message: message)).toOpaque()
+        let previous = tail.exchange(pointer, ordering: .acquiringAndReleasing)
+        Unmanaged<ControlMessageNode>.fromOpaque(previous)
+            .takeUnretainedValue().next.store(pointer, ordering: .releasing)
     }
 
     func consume(_ body: (ControlMessage) -> Void) {
-        lock.withLock { swap(&pending, &rendering) }
-        for message in rendering { body(message) }
-        rendering.removeAll(keepingCapacity: true)
+        while let next = Unmanaged<ControlMessageNode>.fromOpaque(head)
+            .takeUnretainedValue().next.load(ordering: .acquiring)
+        {
+            let previous = head
+            head = next
+            let node = Unmanaged<ControlMessageNode>.fromOpaque(next).takeUnretainedValue()
+            if let message = node.message {
+                body(message)
+            }
+            Unmanaged<ControlMessageNode>.fromOpaque(previous).release()
+        }
+    }
+
+    deinit {
+        consume { _ in }
+        Unmanaged<ControlMessageNode>.fromOpaque(head).release()
     }
 }

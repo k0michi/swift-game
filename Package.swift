@@ -72,9 +72,20 @@ let package = Package(
         .library(name: "Interop", targets: ["Interop"]),
         .library(name: "Echo", targets: ["Echo"]),
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/apple/swift-atomics.git",
+            from: "1.3.1"
+        ),
+    ],
     targets: [
         .target(name: "Interop"),
-        .target(name: "Echo"),
+        .target(
+            name: "Echo",
+            dependencies: [
+                .product(name: "Atomics", package: "swift-atomics"),
+            ]
+        ),
         .target(
             name: "CSDL3",
             cSettings: [

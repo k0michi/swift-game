@@ -1,4 +1,4 @@
-enum ControlMessage {
+enum ControlMessage: Sendable {
     case registerNode(RenderNodeState)
     case registerParam(RenderParamState)
     case connectNodes(RenderNodeConnection)

@@ -1,3 +1,4 @@
+import Dispatch
 import Testing
 @testable import Echo
 
@@ -99,5 +100,22 @@ struct EchoTests {
         #expect(throws: AudioRenderError.insufficientOutputChannels(required: 2, actual: 1)) {
             try context.render(into: &mono, frameCount: 128)
         }
+    }
+
+    @Test
+    func controlMessageQueueAcceptsConcurrentProducers() {
+        let queue = ControlMessageQueue()
+        let id = AudioNodeID()
+
+        DispatchQueue.concurrentPerform(iterations: 1_000) { index in
+            queue.enqueue(.setChannelCount(id: id, value: UInt32(index)))
+        }
+
+        var values: Set<UInt32> = []
+        queue.consume { message in
+            guard case .setChannelCount(_, let value) = message else { return }
+            values.insert(value)
+        }
+        #expect(values == Set((0..<1_000).map(UInt32.init)))
     }
 }
