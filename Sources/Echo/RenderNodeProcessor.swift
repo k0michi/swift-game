@@ -1,11 +1,15 @@
 protocol RenderNodeProcessor: AnyObject, Sendable {
     var parameterIDs: [AudioParamID] { get }
-    func outputChannelCount(inputChannelCount: Int, node: RenderNodeState) -> Int
+    func outputChannelCount(
+        output: Int,
+        inputChannelCounts: [Int],
+        node: RenderNodeState
+    ) -> Int
     func apply(_ command: RenderNodeCommand)
     func process(
         context: RenderProcessContext,
-        input: AudioBus,
-        output: inout AudioBus
+        inputs: [AudioBus],
+        outputs: inout [AudioBus]
     )
 }
 

@@ -93,48 +93,67 @@ final class RenderGraph {
         guard frameCount > 0, let destinationID else { return }
         let plan = currentRenderPlan()
 
-        let context = RenderProcessContext(
-            sampleRate: sampleRate,
-            frameCount: frameCount,
-            currentFrame: clock.renderedFrames,
-            params: params
-        )
-        var outputs: [AudioNodeID: AudioBus] = [:]
+        var parameterValues: [AudioParamID: [Float]] = [:]
+        var outputs: [AudioNodeID: [AudioBus]] = [:]
         for id in plan.mutedNodeIDs {
             guard let node = nodes[id] else { continue }
-            outputs[id] = AudioBus(
-                numberOfChannels: max(1, Int(node.channelCount)),
-                frameCapacity: frameCount
-            )
+            outputs[id] = (0..<max(1, Int(node.numberOfOutputs))).map { output in
+                AudioBus(
+                    numberOfChannels: max(
+                        1,
+                        node.processor.outputChannelCount(
+                            output: output,
+                            inputChannelCounts: [],
+                            node: node
+                        )
+                    ),
+                    frameCapacity: frameCount
+                )
+            }
         }
         for id in plan.order {
             guard let node = nodes[id] else { continue }
-            let sources = nodeConnections.lazy
-                .filter { $0.destination == id && $0.input == 0 }
-                .compactMap { outputs[$0.source] }
-            let inputChannelCount = node.processor is RenderDestinationProcessor
-                ? Int(node.channelCount)
-                : max(1, sources.map(\.numberOfChannels).max() ?? 1)
-            var input = AudioBus(numberOfChannels: inputChannelCount, frameCapacity: frameCount)
-            for source in sources {
-                mix(source, into: &input, frameCount: frameCount)
-            }
-            let outputChannelCount = max(
-                1,
-                node.processor.outputChannelCount(
-                    inputChannelCount: inputChannelCount,
-                    node: node
+            for parameterID in node.processor.parameterIDs {
+                parameterValues[parameterID] = computeParameterValues(
+                    id: parameterID,
+                    outputs: outputs,
+                    frameCount: frameCount
                 )
+            }
+            let inputs = (0..<Int(node.numberOfInputs)).map { input in
+                makeInput(
+                    node: node,
+                    input: input,
+                    outputs: outputs,
+                    frameCount: frameCount
+                )
+            }
+            let inputChannelCounts = inputs.map(\.numberOfChannels)
+            let outputCount = max(1, Int(node.numberOfOutputs))
+            var nodeOutputs = (0..<outputCount).map { output in
+                AudioBus(
+                    numberOfChannels: max(
+                        1,
+                        node.processor.outputChannelCount(
+                            output: output,
+                            inputChannelCounts: inputChannelCounts,
+                            node: node
+                        )
+                    ),
+                    frameCapacity: frameCount
+                )
+            }
+            let context = RenderProcessContext(
+                sampleRate: sampleRate,
+                frameCount: frameCount,
+                currentFrame: clock.renderedFrames,
+                parameterValues: parameterValues
             )
-            var nodeOutput = AudioBus(
-                numberOfChannels: outputChannelCount,
-                frameCapacity: frameCount
-            )
-            node.processor.process(context: context, input: input, output: &nodeOutput)
-            outputs[id] = nodeOutput
+            node.processor.process(context: context, inputs: inputs, outputs: &nodeOutputs)
+            outputs[id] = nodeOutputs
         }
 
-        if let destinationOutput = outputs[destinationID] {
+        if let destinationOutput = outputs[destinationID]?.first {
             copy(destinationOutput, into: &output, frameCount: frameCount)
         }
         clock.advance(by: frameCount)
@@ -159,27 +178,70 @@ final class RenderGraph {
         return plan
     }
 
-    private func mix(_ source: AudioBus, into destination: inout AudioBus, frameCount: Int) {
-        for frame in 0..<frameCount {
-            if source.numberOfChannels == destination.numberOfChannels {
-                for channel in 0..<destination.numberOfChannels {
-                    destination[channel, frame] += source[channel, frame]
-                }
-            } else if source.numberOfChannels == 1 {
-                for channel in 0..<destination.numberOfChannels {
-                    destination[channel, frame] += source[0, frame]
-                }
-            } else if destination.numberOfChannels == 1 {
-                let sum = (0..<source.numberOfChannels).reduce(Float.zero) {
-                    $0 + source[$1, frame]
-                }
-                destination[0, frame] += sum / Float(source.numberOfChannels)
-            } else {
-                for channel in 0..<min(source.numberOfChannels, destination.numberOfChannels) {
-                    destination[channel, frame] += source[channel, frame]
-                }
+    private func makeInput(
+        node: RenderNodeState,
+        input: Int,
+        outputs: [AudioNodeID: [AudioBus]],
+        frameCount: Int
+    ) -> AudioBus {
+        let sources = nodeConnections.lazy
+            .filter { $0.destination == node.id && $0.input == UInt32(input) }
+            .compactMap { connection -> AudioBus? in
+                guard let sourceOutputs = outputs[connection.source],
+                      Int(connection.output) < sourceOutputs.count
+                else { return nil }
+                return sourceOutputs[Int(connection.output)]
+            }
+        let maximumChannelCount = sources.map(\.numberOfChannels).max() ?? 1
+        let channelCount = switch node.channelCountMode {
+        case .max:
+            maximumChannelCount
+        case .clampedMax:
+            min(maximumChannelCount, Int(node.channelCount))
+        case .explicit:
+            Int(node.channelCount)
+        }
+        var result = AudioBus(numberOfChannels: max(1, channelCount), frameCapacity: frameCount)
+        for source in sources {
+            AudioBusMixer.mix(
+                source,
+                into: &result,
+                interpretation: node.channelInterpretation,
+                frameCount: frameCount
+            )
+        }
+        return result
+    }
+
+    private func computeParameterValues(
+        id: AudioParamID,
+        outputs: [AudioNodeID: [AudioBus]],
+        frameCount: Int
+    ) -> [Float] {
+        guard let param = params[id] else { return Array(repeating: 0, count: frameCount) }
+        let connections = paramConnections.filter { $0.destination == id }
+        var values = Array(repeating: param.value, count: frameCount)
+        for connection in connections {
+            guard let sourceOutputs = outputs[connection.source],
+                  Int(connection.output) < sourceOutputs.count
+            else { continue }
+            let source = sourceOutputs[Int(connection.output)]
+            for frame in 0..<frameCount {
+                values[frame] += downMixToMono(source, frame: frame)
             }
         }
+        for frame in values.indices {
+            if values[frame].isNaN { values[frame] = param.defaultValue }
+            values[frame] = min(param.maxValue, max(param.minValue, values[frame]))
+        }
+        if param.automationRate == .kRate, let first = values.first {
+            values = Array(repeating: first, count: frameCount)
+        }
+        return values
+    }
+
+    private func downMixToMono(_ source: AudioBus, frame: Int) -> Float {
+        AudioBusMixer.downMixToMono(source, frame: frame)
     }
 
     private func copy(_ source: AudioBus, into destination: inout AudioBus, frameCount: Int) {

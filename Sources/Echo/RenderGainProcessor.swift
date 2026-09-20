@@ -7,19 +7,24 @@ final class RenderGainProcessor: RenderNodeProcessor {
 
     var parameterIDs: [AudioParamID] { [gain] }
 
-    func outputChannelCount(inputChannelCount: Int, node _: RenderNodeState) -> Int {
-        inputChannelCount
+    func outputChannelCount(
+        output _: Int,
+        inputChannelCounts: [Int],
+        node _: RenderNodeState
+    ) -> Int {
+        inputChannelCounts.first ?? 1
     }
 
     func process(
         context: RenderProcessContext,
-        input: AudioBus,
-        output: inout AudioBus
+        inputs: [AudioBus],
+        outputs: inout [AudioBus]
     ) {
-        let gain = context.params[gain]?.value ?? 1
-        for channel in 0..<output.numberOfChannels {
+        guard let input = inputs.first, !outputs.isEmpty else { return }
+        let values = context.parameterValues[gain] ?? Array(repeating: 1, count: context.frameCount)
+        for channel in 0..<outputs[0].numberOfChannels {
             for frame in 0..<context.frameCount {
-                output[channel, frame] = input[channel, frame] * gain
+                outputs[0][channel, frame] = input[channel, frame] * values[frame]
             }
         }
     }

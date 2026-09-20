@@ -262,4 +262,163 @@ struct EchoTests {
         let order = context.graph.renderGraph.renderOrder
         #expect(order.firstIndex(of: modulationSource.id)! < order.firstIndex(of: gain.id)!)
     }
+
+    @Test
+    func appliesAudioRateInputToAudioParamPerSample() throws {
+        let context = AudioContext(contextOptions: AudioContextOptions(sampleRate: 8))
+        let carrier = OscillatorNode(
+            context: context,
+            options: OscillatorOptions(type: .square, frequency: 1)
+        )
+        let modulation = OscillatorNode(
+            context: context,
+            options: OscillatorOptions(type: .square, frequency: 2)
+        )
+        let gain = context.createGain()
+        try carrier.connect(gain)
+        try modulation.connect(gain.gain)
+        try gain.connect(context.destination)
+        carrier.start()
+        modulation.start()
+
+        var output = AudioBus(numberOfChannels: 2, frameCapacity: 4)
+        try context.render(into: &output, frameCount: 4)
+
+        #expect(Array(output.channelData(0, frameCount: 4)) == [2, 2, 0, 0])
+    }
+
+    @Test
+    func samplesControlRateAudioParamAtStartOfQuantum() throws {
+        let context = AudioContext(contextOptions: AudioContextOptions(sampleRate: 8))
+        let carrier = OscillatorNode(
+            context: context,
+            options: OscillatorOptions(type: .square, frequency: 1)
+        )
+        let modulation = OscillatorNode(
+            context: context,
+            options: OscillatorOptions(type: .square, frequency: 2)
+        )
+        let gain = context.createGain()
+        gain.gain.automationRate = .kRate
+        try carrier.connect(gain)
+        try modulation.connect(gain.gain)
+        try gain.connect(context.destination)
+        carrier.start()
+        modulation.start()
+
+        var output = AudioBus(numberOfChannels: 2, frameCapacity: 4)
+        try context.render(into: &output, frameCount: 4)
+
+        #expect(Array(output.channelData(0, frameCount: 4)) == [2, 2, 2, 2])
+    }
+
+    @Test
+    func routesDistinctInputAndOutputPorts() throws {
+        let context = AudioContext()
+        let source = MultiOutputTestNode(context: context)
+        let merger = MultiInputTestNode(context: context)
+        try source.connect(merger, output: 0, input: 0)
+        try source.connect(merger, output: 1, input: 1)
+        try merger.connect(context.destination)
+
+        var output = AudioBus(numberOfChannels: 2, frameCapacity: 4)
+        try context.render(into: &output, frameCount: 4)
+
+        #expect(Array(output.channelData(0, frameCount: 4)) == [3, 3, 3, 3])
+    }
+
+    @Test
+    func mixesRequiredSpeakerLayoutsAccordingToSpecification() {
+        var surround = AudioBus(numberOfChannels: 6, frameCapacity: 1)
+        for channel in 0..<6 {
+            surround[channel, 0] = Float(channel + 1)
+        }
+        var stereo = AudioBus(numberOfChannels: 2, frameCapacity: 1)
+        AudioBusMixer.mix(
+            surround,
+            into: &stereo,
+            interpretation: .speakers,
+            frameCount: 1
+        )
+        let rootHalf = Float(sqrt(0.5))
+        #expect(abs(stereo[0, 0] - (1 + rootHalf * (3 + 5))) < 0.000_001)
+        #expect(abs(stereo[1, 0] - (2 + rootHalf * (3 + 6))) < 0.000_001)
+
+        var mono = AudioBus(numberOfChannels: 1, frameCapacity: 1)
+        mono[0, 0] = 4
+        var discreteStereo = AudioBus(numberOfChannels: 2, frameCapacity: 1)
+        AudioBusMixer.mix(
+            mono,
+            into: &discreteStereo,
+            interpretation: .discrete,
+            frameCount: 1
+        )
+        #expect(discreteStereo[0, 0] == 4)
+        #expect(discreteStereo[1, 0] == 0)
+    }
+}
+
+private final class MultiOutputTestNode: AudioNode {
+    init(context: BaseAudioContext) {
+        super.init(
+            context: context,
+            numberOfInputs: 0,
+            numberOfOutputs: 2,
+            options: AudioNodeOptions(),
+            processor: MultiOutputTestProcessor()
+        )
+    }
+}
+
+private final class MultiOutputTestProcessor: @unchecked Sendable, RenderNodeProcessor {
+    func outputChannelCount(
+        output _: Int,
+        inputChannelCounts _: [Int],
+        node _: RenderNodeState
+    ) -> Int {
+        1
+    }
+
+    func process(
+        context: RenderProcessContext,
+        inputs _: [AudioBus],
+        outputs: inout [AudioBus]
+    ) {
+        for frame in 0..<context.frameCount {
+            outputs[0][0, frame] = 1
+            outputs[1][0, frame] = 2
+        }
+    }
+}
+
+private final class MultiInputTestNode: AudioNode {
+    init(context: BaseAudioContext) {
+        super.init(
+            context: context,
+            numberOfInputs: 2,
+            numberOfOutputs: 1,
+            options: AudioNodeOptions(),
+            processor: MultiInputTestProcessor()
+        )
+    }
+}
+
+private final class MultiInputTestProcessor: @unchecked Sendable, RenderNodeProcessor {
+    func outputChannelCount(
+        output _: Int,
+        inputChannelCounts _: [Int],
+        node _: RenderNodeState
+    ) -> Int {
+        1
+    }
+
+    func process(
+        context: RenderProcessContext,
+        inputs: [AudioBus],
+        outputs: inout [AudioBus]
+    ) {
+        for frame in 0..<context.frameCount {
+            outputs[0][0, frame] = inputs[0][0, frame] + inputs[1][0, frame]
+        }
+    }
 }

@@ -16,7 +16,11 @@ final class RenderOscillatorProcessor: @unchecked Sendable, RenderNodeProcessor 
 
     var parameterIDs: [AudioParamID] { [frequency, detune] }
 
-    func outputChannelCount(inputChannelCount _: Int, node _: RenderNodeState) -> Int {
+    func outputChannelCount(
+        output _: Int,
+        inputChannelCounts _: [Int],
+        node _: RenderNodeState
+    ) -> Int {
         1
     }
 
@@ -33,20 +37,24 @@ final class RenderOscillatorProcessor: @unchecked Sendable, RenderNodeProcessor 
 
     func process(
         context: RenderProcessContext,
-        input _: AudioBus,
-        output: inout AudioBus
+        inputs _: [AudioBus],
+        outputs: inout [AudioBus]
     ) {
-        guard let startTime else { return }
+        guard let startTime, !outputs.isEmpty else { return }
         let quantumStartTime = Double(context.currentFrame) / Double(context.sampleRate)
-        let frequency = Double(context.params[frequency]?.value ?? 440)
-        let detune = Double(context.params[detune]?.value ?? 0)
-        let phaseIncrement = 2 * Double.pi * frequency * pow(2, detune / 1_200)
-            / Double(context.sampleRate)
+        let frequencies = context.parameterValues[frequency]
+            ?? Array(repeating: 440, count: context.frameCount)
+        let detunes = context.parameterValues[detune]
+            ?? Array(repeating: 0, count: context.frameCount)
 
         for frame in 0..<context.frameCount {
             let time = quantumStartTime + Double(frame) / Double(context.sampleRate)
             guard time >= startTime, stopTime.map({ time < $0 }) ?? true else { continue }
-            output[0, frame] = sample(phase: phase)
+            outputs[0][0, frame] = sample(phase: phase)
+            let phaseIncrement = 2 * Double.pi
+                * Double(frequencies[frame])
+                * pow(2, Double(detunes[frame]) / 1_200)
+                / Double(context.sampleRate)
             phase = (phase + phaseIncrement).truncatingRemainder(dividingBy: 2 * Double.pi)
             if phase < 0 { phase += 2 * Double.pi }
         }
