@@ -8,7 +8,7 @@ public final class AudioDestinationNode: AudioNode {
             numberOfInputs: 1,
             numberOfOutputs: 0,
             options: AudioNodeOptions(channelCount: maxChannelCount, channelCountMode: .explicit),
-            kind: .destination
+            processor: RenderDestinationProcessor()
         )
     }
 }

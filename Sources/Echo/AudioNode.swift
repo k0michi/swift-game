@@ -20,7 +20,7 @@ open class AudioNode {
         numberOfInputs: UInt32,
         numberOfOutputs: UInt32,
         options: AudioNodeOptions,
-        kind: RenderNodeKind
+        processor: any RenderNodeProcessor
     ) {
         self.context = context
         graph = context.graph
@@ -33,7 +33,7 @@ open class AudioNode {
             numberOfInputs: numberOfInputs,
             numberOfOutputs: numberOfOutputs,
             options: options,
-            kind: kind
+            processor: processor
         )
     }
 

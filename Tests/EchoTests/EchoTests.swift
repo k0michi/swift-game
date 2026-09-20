@@ -1,4 +1,5 @@
 import Dispatch
+import Foundation
 import Testing
 @testable import Echo
 
@@ -117,5 +118,148 @@ struct EchoTests {
             values.insert(value)
         }
         #expect(values == Set((0..<1_000).map(UInt32.init)))
+    }
+
+    @Test
+    func rendersOscillatorThroughGainIntoDestination() throws {
+        let context = AudioContext(contextOptions: AudioContextOptions(sampleRate: 8))
+        let oscillator = OscillatorNode(
+            context: context,
+            options: OscillatorOptions(frequency: 2)
+        )
+        let gain = GainNode(context: context, options: GainOptions(gain: 0.25))
+        try oscillator.connect(gain)
+        try gain.connect(context.destination)
+        oscillator.start()
+
+        var output = AudioBus(numberOfChannels: 2, frameCapacity: 4)
+        try context.render(into: &output, frameCount: 4)
+
+        let expected: [Float] = [0, 0.25, 0, -0.25]
+        for channel in 0..<2 {
+            for frame in 0..<4 {
+                #expect(abs(output[channel, frame] - expected[frame]) < 0.000_001)
+            }
+        }
+    }
+
+    @Test
+    func schedulesOscillatorStartAndStopAtSampleBoundaries() throws {
+        let context = AudioContext(contextOptions: AudioContextOptions(sampleRate: 8))
+        let oscillator = OscillatorNode(
+            context: context,
+            options: OscillatorOptions(type: .square, frequency: 2)
+        )
+        try oscillator.connect(context.destination)
+        oscillator.start(when: 0.25)
+        oscillator.stop(when: 0.5)
+
+        var output = AudioBus(numberOfChannels: 2, frameCapacity: 8)
+        try context.render(into: &output, frameCount: 8)
+
+        #expect(Array(output.channelData(0, frameCount: 8)) == [0, 0, 1, 1, 0, 0, 0, 0])
+        #expect(Array(output.channelData(1, frameCount: 8)) == [0, 0, 1, 1, 0, 0, 0, 0])
+    }
+
+    @Test
+    func offlineContextRendersOscillatorThroughFinalPartialQuantum() async throws {
+        let context = try OfflineAudioContext(
+            numberOfChannels: 1,
+            length: 300,
+            sampleRate: 8_000
+        )
+        let oscillator = OscillatorNode(
+            context: context,
+            options: OscillatorOptions(frequency: 1_000)
+        )
+        try oscillator.connect(context.destination)
+        oscillator.start()
+
+        let buffer = try await context.startRendering()
+        let samples = try buffer.getChannelData(0)
+
+        #expect(buffer.length == 300)
+        #expect(buffer.numberOfChannels == 1)
+        #expect(context.currentTime == 300.0 / 8_000.0)
+        #expect(context.state == .closed)
+        for frame in samples.indices {
+            let expected = Float(sin(2 * Double.pi * 1_000 * Double(frame) / 8_000))
+            #expect(abs(samples[frame] - expected) < 0.000_001)
+        }
+    }
+
+    @Test
+    func offlineContextRejectsUnsupportedConfiguration() {
+        #expect(throws: OfflineAudioContextError.invalidChannelCount) {
+            try OfflineAudioContext(numberOfChannels: 0, length: 128, sampleRate: 48_000)
+        }
+        #expect(throws: OfflineAudioContextError.invalidLength) {
+            try OfflineAudioContext(numberOfChannels: 1, length: 0, sampleRate: 48_000)
+        }
+        #expect(throws: OfflineAudioContextError.invalidSampleRate) {
+            try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: 2_999)
+        }
+    }
+
+    @Test
+    func buildsAndInvalidatesTopologicalRenderOrder() throws {
+        let context = AudioContext()
+        let oscillator = context.createOscillator()
+        let gain = context.createGain()
+        try oscillator.connect(gain)
+        try gain.connect(context.destination)
+        oscillator.start()
+
+        var output = AudioBus(numberOfChannels: 2, frameCapacity: 128)
+        try context.render(into: &output, frameCount: 128)
+        #expect(context.graph.renderGraph.renderOrder == [
+            oscillator.id,
+            gain.id,
+            context.destination.id,
+        ])
+
+        gain.disconnect()
+        try context.render(into: &output, frameCount: 128)
+        let disconnectedOrder = context.graph.renderGraph.renderOrder
+        #expect(Set(disconnectedOrder) == Set([oscillator.id, gain.id, context.destination.id]))
+        #expect(disconnectedOrder.firstIndex(of: oscillator.id)! < disconnectedOrder.firstIndex(of: gain.id)!)
+    }
+
+    @Test
+    func mutesOnlyNodesInUnsupportedFeedbackCycles() throws {
+        let context = AudioContext(contextOptions: AudioContextOptions(sampleRate: 8))
+        let oscillator = OscillatorNode(
+            context: context,
+            options: OscillatorOptions(type: .square, frequency: 2)
+        )
+        let first = context.createGain()
+        let second = context.createGain()
+        try first.connect(second)
+        try second.connect(first)
+        try second.connect(context.destination)
+        try oscillator.connect(context.destination)
+        oscillator.start()
+
+        var output = AudioBus(numberOfChannels: 2, frameCapacity: 4)
+        try context.render(into: &output, frameCount: 4)
+
+        #expect(context.graph.renderGraph.mutedNodeIDs == Set([first.id, second.id]))
+        #expect(Array(output.channelData(0, frameCount: 4)) == [1, 1, -1, -1])
+        #expect(context.currentTime == 0.5)
+    }
+
+    @Test
+    func includesAudioParamInputsInRenderOrder() throws {
+        let context = AudioContext()
+        let modulationSource = context.createOscillator()
+        let gain = context.createGain()
+        try modulationSource.connect(gain.gain)
+        try gain.connect(context.destination)
+
+        var output = AudioBus(numberOfChannels: 2, frameCapacity: 128)
+        try context.render(into: &output, frameCount: 128)
+
+        let order = context.graph.renderGraph.renderOrder
+        #expect(order.firstIndex(of: modulationSource.id)! < order.firstIndex(of: gain.id)!)
     }
 }

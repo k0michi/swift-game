@@ -21,4 +21,7 @@ enum ControlMessage: Sendable {
     case setChannelInterpretation(id: AudioNodeID, value: ChannelInterpretation)
     case setParamValue(id: AudioParamID, value: Float)
     case setAutomationRate(id: AudioParamID, value: AutomationRate)
+    case setOscillatorType(id: AudioNodeID, type: OscillatorType)
+    case startSource(id: AudioNodeID, when: Double)
+    case stopSource(id: AudioNodeID, when: Double)
 }

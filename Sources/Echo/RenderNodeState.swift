@@ -5,5 +5,5 @@ struct RenderNodeState: Sendable {
     var channelCount: UInt32
     var channelCountMode: ChannelCountMode
     var channelInterpretation: ChannelInterpretation
-    let kind: RenderNodeKind
+    let processor: any RenderNodeProcessor
 }

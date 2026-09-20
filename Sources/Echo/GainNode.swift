@@ -13,7 +13,7 @@ public final class GainNode: AudioNode {
             numberOfInputs: 1,
             numberOfOutputs: 1,
             options: options.audioNodeOptions,
-            kind: .gain(gain.id)
+            processor: RenderGainProcessor(gain: gain.id)
         )
     }
 }

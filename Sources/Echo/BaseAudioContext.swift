@@ -1,8 +1,12 @@
 open class BaseAudioContext {
     let graph: AudioGraph
     let backend: any AudioBackend
+    private let destinationChannelCount: UInt32
 
-    public private(set) lazy var destination = AudioDestinationNode(context: self)
+    public private(set) lazy var destination = AudioDestinationNode(
+        context: self,
+        maxChannelCount: destinationChannelCount
+    )
     public private(set) lazy var listener = AudioListener(context: self)
 
     public var sampleRate: Float { backend.sampleRate }
@@ -12,8 +16,9 @@ open class BaseAudioContext {
     public var state: AudioContextState { backend.state }
     public var renderQuantumSize: UInt32 { backend.renderQuantumSize }
 
-    init(backend: any AudioBackend) {
+    init(backend: any AudioBackend, destinationChannelCount: UInt32 = 2) {
         self.backend = backend
+        self.destinationChannelCount = destinationChannelCount
         graph = AudioGraph(
             sampleRate: backend.sampleRate,
             renderQuantumSize: backend.renderQuantumSize
@@ -30,6 +35,10 @@ open class BaseAudioContext {
 
     public func createGain() -> GainNode {
         GainNode(context: self)
+    }
+
+    public func createOscillator() -> OscillatorNode {
+        OscillatorNode(context: self)
     }
 
     public func render(into output: inout AudioBus, frameCount: Int) throws {

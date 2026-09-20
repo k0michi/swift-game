@@ -10,7 +10,7 @@ final class AudioGraph {
         numberOfInputs: UInt32,
         numberOfOutputs: UInt32,
         options: AudioNodeOptions,
-        kind: RenderNodeKind
+        processor: any RenderNodeProcessor
     ) -> AudioNodeID {
         let id = AudioNodeID()
         messages.enqueue(.registerNode(RenderNodeState(
@@ -20,7 +20,7 @@ final class AudioGraph {
             channelCount: options.channelCount,
             channelCountMode: options.channelCountMode,
             channelInterpretation: options.channelInterpretation,
-            kind: kind
+            processor: processor
         )))
         return id
     }
@@ -94,6 +94,18 @@ final class AudioGraph {
 
     func setAutomationRate(id: AudioParamID, value: AutomationRate) {
         messages.enqueue(.setAutomationRate(id: id, value: value))
+    }
+
+    func setOscillatorType(id: AudioNodeID, type: OscillatorType) {
+        messages.enqueue(.setOscillatorType(id: id, type: type))
+    }
+
+    func startSource(id: AudioNodeID, when: Double) {
+        messages.enqueue(.startSource(id: id, when: when))
+    }
+
+    func stopSource(id: AudioNodeID, when: Double) {
+        messages.enqueue(.stopSource(id: id, when: when))
     }
 
     func render(into output: inout AudioBus, frameCount: Int) throws {
