@@ -48,15 +48,9 @@ FetchContent_MakeAvailable(dawn)
 
 if(DEFINED DAWN_METADATA_DIRECTORY)
     set(DAWN_CXX_RUNTIME_LINKER_FLAGS "")
-    if(UNIX AND NOT APPLE)
-        foreach(LIBRARY IN LISTS CMAKE_CXX_IMPLICIT_LINK_LIBRARIES)
-            if(IS_ABSOLUTE "${LIBRARY}" OR LIBRARY MATCHES "^-")
-                string(APPEND DAWN_CXX_RUNTIME_LINKER_FLAGS "${LIBRARY}\n")
-            else()
-                string(APPEND DAWN_CXX_RUNTIME_LINKER_FLAGS "-l${LIBRARY}\n")
-            endif()
-        endforeach()
-    endif()
+    foreach(LIBRARY IN LISTS CMAKE_CXX_IMPLICIT_LINK_LIBRARIES)
+        string(APPEND DAWN_CXX_RUNTIME_LINKER_FLAGS "${LIBRARY}\n")
+    endforeach()
 
     file(MAKE_DIRECTORY "${DAWN_METADATA_DIRECTORY}")
     file(GENERATE
