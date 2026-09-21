@@ -45,6 +45,10 @@ public class BaseAudioContext {
         ConstantSourceNode(context: self)
     }
 
+    public func createDelay(_ maxDelayTime: Double = 1) throws -> DelayNode {
+        try DelayNode(context: self, options: DelayOptions(maxDelayTime: maxDelayTime))
+    }
+
     func setState(_ state: AudioContextState) {
         guard self.state != state else { return }
 

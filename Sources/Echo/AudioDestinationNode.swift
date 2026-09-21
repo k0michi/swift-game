@@ -15,8 +15,11 @@ public final class AudioDestinationNode: AudioNode {
 
     public override func setChannelCount(_ channelCount: UInt32) throws {
         guard channelCount == self.channelCount else {
-            throw WebAudioError.notSupported
+            throw WebAudioError.invalidState
         }
     }
 
+    public override func setChannelCountMode(_ channelCountMode: ChannelCountMode) throws {
+        guard channelCountMode == .explicit else { throw WebAudioError.invalidState }
+    }
 }

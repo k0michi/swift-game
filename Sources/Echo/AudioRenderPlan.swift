@@ -5,10 +5,12 @@ final class AudioRenderPlan: @unchecked Sendable {
         case constant(
             startFrame: UInt64?,
             stopFrame: UInt64?,
-            value: Float,
-            defaultValue: Float,
-            minValue: Float,
-            maxValue: Float,
+            parameter: AudioParamTimeline,
+            paramSources: [Int]
+        )
+        case delay(
+            state: DelayRenderState,
+            parameter: AudioParamTimeline,
             paramSources: [Int]
         )
     }
@@ -17,8 +19,11 @@ final class AudioRenderPlan: @unchecked Sendable {
         let inputChannelCount: Int?
         let outputChannelCount: Int
         let interpretation: ChannelInterpretation
+        let channelCount: Int
+        let channelCountMode: ChannelCountMode
         let sources: [Int]
         let isMuted: Bool
+        let isCycleBreaker: Bool
         let processor: Processor
     }
 
@@ -31,25 +36,37 @@ final class AudioRenderPlan: @unchecked Sendable {
         init(configuration: NodeConfiguration, frameCount: Int) {
             self.configuration = configuration
             input = configuration.inputChannelCount.map {
-                AudioRenderQuantum(channelCapacity: $0, frameCount: frameCount)
+                AudioRenderQuantum(
+                    channelCapacity: Self.isDelay(configuration.processor) ? Int(AudioBuffer.maximumNumberOfChannels) : $0,
+                    frameCount: frameCount, channelCount: $0
+                )
             }
             output = AudioRenderQuantum(
-                channelCapacity: configuration.outputChannelCount,
-                frameCount: frameCount
+                channelCapacity: Self.isDelay(configuration.processor)
+                    ? Int(AudioBuffer.maximumNumberOfChannels) : configuration.outputChannelCount,
+                frameCount: frameCount, channelCount: configuration.outputChannelCount
             )
-            if case let .constant(_, _, _, _, _, _, sources) = configuration.processor, !sources.isEmpty {
-                paramInput = AudioRenderQuantum(channelCapacity: 1, frameCount: frameCount)
-            } else {
+            switch configuration.processor {
+            case let .constant(_, _, _, sources), let .delay(_, _, sources):
+                paramInput = sources.isEmpty ? nil : AudioRenderQuantum(channelCapacity: 1, frameCount: frameCount)
+            case .passThrough:
                 paramInput = nil
             }
+        }
+
+        private static func isDelay(_ processor: Processor) -> Bool {
+            if case .delay = processor { return true }
+            return false
         }
     }
 
     let frameCount: Int
     private let slots: [Slot]
+    private let destinationIndex: Int
 
-    init(configurations: [NodeConfiguration], frameCount: Int) {
+    init(configurations: [NodeConfiguration], frameCount: Int, destinationIndex: Int) {
         self.frameCount = frameCount
+        self.destinationIndex = destinationIndex
         slots = configurations.map { Slot(configuration: $0, frameCount: frameCount) }
     }
 
@@ -61,7 +78,9 @@ final class AudioRenderPlan: @unchecked Sendable {
             let configuration = slot.configuration
             if configuration.isMuted { continue }
 
-            if let input = slot.input {
+            if let input = slot.input, !configuration.isCycleBreaker {
+                configureInput(input, for: configuration)
+                input.clear()
                 for sourceIndex in configuration.sources {
                     ChannelMixer.mix(
                         slots[sourceIndex].output,
@@ -74,7 +93,7 @@ final class AudioRenderPlan: @unchecked Sendable {
             switch configuration.processor {
             case .passThrough:
                 if let input = slot.input { slot.output.copy(from: input) }
-            case let .constant(startFrame, stopFrame, value, defaultValue, minValue, maxValue, paramSources):
+            case let .constant(startFrame, stopFrame, parameter, paramSources):
                 guard let startFrame else { continue }
                 slot.paramInput?.clear()
                 if let paramInput = slot.paramInput {
@@ -89,14 +108,47 @@ final class AudioRenderPlan: @unchecked Sendable {
                     guard currentFrame >= startFrame, stopFrame.map({ currentFrame < $0 }) ?? true else {
                         continue
                     }
-                    let modulation = slot.paramInput.map { $0.channelData(0)[index] } ?? 0
-                    let sum = value + modulation
-                    samples[index] = min(max(sum.isNaN ? defaultValue : sum, minValue), maxValue)
+                    let modulationIndex = parameter.automationRate == .kRate ? 0 : index
+                    let modulation = slot.paramInput.map { $0.channelData(0)[modulationIndex] } ?? 0
+                    samples[index] = parameter.computedValue(
+                        at: currentFrame,
+                        quantumStart: frame,
+                        modulation: modulation
+                    )
+                }
+            case let .delay(state, parameter, paramSources):
+                slot.paramInput?.clear()
+                if let paramInput = slot.paramInput {
+                    for sourceIndex in paramSources {
+                        ChannelMixer.mix(slots[sourceIndex].output, into: paramInput, interpretation: .speakers)
+                    }
+                }
+                if let input = slot.input {
+                    if configuration.isCycleBreaker {
+                        state.read(output: slot.output, parameter: parameter,
+                                   modulation: slot.paramInput, interpretation: configuration.interpretation,
+                                   frame: frame)
+                    } else {
+                        state.render(input: input, output: slot.output, parameter: parameter,
+                                     modulation: slot.paramInput, interpretation: configuration.interpretation,
+                                     frame: frame)
+                    }
                 }
             }
         }
 
-        guard let destination = slots.last?.output else { return }
+        for slot in slots where slot.configuration.isCycleBreaker && !slot.configuration.isMuted {
+            guard let input = slot.input, case let .delay(state, _, _) = slot.configuration.processor else { continue }
+            configureInput(input, for: slot.configuration)
+            input.clear()
+            for sourceIndex in slot.configuration.sources {
+                ChannelMixer.mix(slots[sourceIndex].output, into: input,
+                                 interpretation: slot.configuration.interpretation)
+            }
+            state.write(input: input, frame: frame)
+        }
+
+        let destination = slots[destinationIndex].output
         for channel in 0 ..< destination.channelCount {
             let target = try buffer.getChannelData(UInt32(channel))
             let source = destination.channelData(channel)
@@ -104,5 +156,19 @@ final class AudioRenderPlan: @unchecked Sendable {
                 target[offset + sample] = source[sample]
             }
         }
+    }
+
+    private func configureInput(_ input: AudioRenderQuantum, for configuration: NodeConfiguration) {
+        var maximum = 1
+        for sourceIndex in configuration.sources {
+            maximum = max(maximum, slots[sourceIndex].output.channelCount)
+        }
+        let count: Int
+        switch configuration.channelCountMode {
+        case .max: count = maximum
+        case .clampedMax: count = min(maximum, configuration.channelCount)
+        case .explicit: count = configuration.channelCount
+        }
+        input.setChannelCount(count)
     }
 }

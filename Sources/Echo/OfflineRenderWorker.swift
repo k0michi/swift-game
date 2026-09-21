@@ -18,6 +18,7 @@ final class OfflineRenderWorker: @unchecked Sendable {
     private let initialFrame: UInt64
     private let currentFrame: ManagedAtomic<UInt64>
     private let cancelled: ManagedAtomic<Bool>
+    private let suspensions: OfflineRenderSuspensions?
     private let beforeQuantum: (@Sendable (UInt64) -> Void)?
     private let continuation: CheckedContinuation<OfflineRenderResult, Error>
 
@@ -27,6 +28,7 @@ final class OfflineRenderWorker: @unchecked Sendable {
         initialFrame: UInt64,
         currentFrame: ManagedAtomic<UInt64>,
         cancelled: ManagedAtomic<Bool>,
+        suspensions: OfflineRenderSuspensions?,
         beforeQuantum: (@Sendable (UInt64) -> Void)?,
         continuation: CheckedContinuation<OfflineRenderResult, Error>
     ) {
@@ -35,6 +37,7 @@ final class OfflineRenderWorker: @unchecked Sendable {
         self.initialFrame = initialFrame
         self.currentFrame = currentFrame
         self.cancelled = cancelled
+        self.suspensions = suspensions
         self.beforeQuantum = beforeQuantum
         self.continuation = continuation
     }
@@ -45,6 +48,7 @@ final class OfflineRenderWorker: @unchecked Sendable {
         from initialFrame: UInt64,
         currentFrame: ManagedAtomic<UInt64>,
         cancelled: ManagedAtomic<Bool> = ManagedAtomic(false),
+        suspensions: OfflineRenderSuspensions? = nil,
         beforeQuantum: (@Sendable (UInt64) -> Void)? = nil
     ) async throws -> OfflineRenderResult {
         try await withCheckedThrowingContinuation { continuation in
@@ -54,6 +58,7 @@ final class OfflineRenderWorker: @unchecked Sendable {
                 initialFrame: initialFrame,
                 currentFrame: currentFrame,
                 cancelled: cancelled,
+                suspensions: suspensions,
                 beforeQuantum: beforeQuantum,
                 continuation: continuation
             )
@@ -69,6 +74,8 @@ final class OfflineRenderWorker: @unchecked Sendable {
                 if cancelled.load(ordering: .acquiring) { throw WebAudioError.invalidState }
                 let frame = initialFrame + UInt64(offset)
                 beforeQuantum?(frame)
+                try suspensions?.waitIfScheduled(at: frame, cancelled: cancelled)
+                if cancelled.load(ordering: .acquiring) { throw WebAudioError.invalidState }
                 while let replacement = controlQueue.dequeue() {
                     plan = replacement
                 }

@@ -3,4 +3,5 @@ public enum WebAudioError: Error, Sendable, Equatable {
     case invalidState
     case indexSize
     case notSupported
+    case rangeError
 }

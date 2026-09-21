@@ -1,4 +1,5 @@
 import Atomics
+import Foundation
 
 public final class OfflineAudioContext: BaseAudioContext {
     public let length: UInt32?
@@ -12,6 +13,9 @@ public final class OfflineAudioContext: BaseAudioContext {
     private let renderCancelled = ManagedAtomic(false)
     private var activeControlQueue: RenderControlQueue?
     private var renderControlError: Error?
+    private lazy var suspensions = OfflineRenderSuspensions()
+    private var activeSuspension: OfflineRenderSuspension?
+    private var closeWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init(options: OfflineAudioContextOptions) throws {
         let renderQuantumSize = try Self.resolveRenderQuantumSize(
@@ -79,6 +83,9 @@ public final class OfflineAudioContext: BaseAudioContext {
             isRendering = false
             activeControlQueue = nil
             renderControlError = nil
+            let waiters = closeWaiters
+            closeWaiters.removeAll()
+            waiters.forEach { $0.resume() }
         }
         committedFrames += UInt64(bufferLength)
         setState(.running)
@@ -90,7 +97,8 @@ public final class OfflineAudioContext: BaseAudioContext {
                 into: OfflineRenderBuffer(value: buffer),
                 from: renderFrame,
                 currentFrame: currentFrame,
-                cancelled: renderCancelled
+                cancelled: renderCancelled,
+                suspensions: suspensions
             )
         } catch {
             if state != .closed { setState(.suspended) }
@@ -115,7 +123,54 @@ public final class OfflineAudioContext: BaseAudioContext {
         }
 
         renderCancelled.store(true, ordering: .releasing)
+        suspensions.cancelAll()
+        activeSuspension = nil
         setState(.closed)
+        if isRendering {
+            await withCheckedContinuation { continuation in
+                closeWaiters.append(continuation)
+            }
+        }
+    }
+
+    public func suspend(at suspendTime: Double) async throws {
+        let quantum = Double(renderQuantumSize)
+        let quantizedFrame = (suspendTime * Double(sampleRate) / quantum).rounded(.up) * quantum
+        guard state != .closed,
+              suspendTime.isFinite,
+              quantizedFrame.isFinite,
+              quantizedFrame > Double(renderFrame),
+              quantizedFrame < Double(UInt64.max),
+              length.map({ quantizedFrame < Double($0) }) ?? true
+        else {
+            throw WebAudioError.invalidState
+        }
+
+        let frame = UInt64(quantizedFrame)
+        guard !suspensions.contains(frame: frame) else { throw WebAudioError.invalidState }
+        let suspension = suspensions.schedule(at: frame)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                suspension.reached.wait()
+                continuation.resume()
+            }
+        }
+        guard state != .closed,
+              suspension.state.load(ordering: .acquiring) == OfflineRenderSuspension.Status.reached
+        else {
+            throw WebAudioError.invalidState
+        }
+        activeSuspension = suspension
+        setState(.suspended)
+    }
+
+    public func resume() async throws {
+        guard state != .closed, renderingStarted, let activeSuspension else {
+            throw WebAudioError.invalidState
+        }
+        self.activeSuspension = nil
+        setState(.running)
+        activeSuspension.resumed.signal()
     }
 
     override func graphDidChange() {
@@ -126,10 +181,9 @@ public final class OfflineAudioContext: BaseAudioContext {
         } catch {
             renderControlError = error
             renderCancelled.store(true, ordering: .releasing)
+            suspensions.cancelAll()
         }
     }
-
-    // TODO: Implement suspend(at:) and resume() with render-quantum synchronization.
 
     private static func resolveRenderQuantumSize(
         _ hint: AudioContextRenderSizeHint,

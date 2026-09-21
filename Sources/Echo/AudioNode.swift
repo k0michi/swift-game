@@ -37,7 +37,7 @@ public class AudioNode {
         context.graphDidChange()
     }
 
-    public func setChannelCountMode(_ channelCountMode: ChannelCountMode) {
+    public func setChannelCountMode(_ channelCountMode: ChannelCountMode) throws {
         self.channelCountMode = channelCountMode
         graph.invalidate()
         context.graphDidChange()

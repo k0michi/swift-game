@@ -16,16 +16,18 @@ final class AudioGraph {
     @MainActor
     private final class RenderSlot {
         let node: AudioNode
-        let inputChannelCount: Int?
-        let outputChannelCount: Int
+        var inputChannelCount: Int?
+        var outputChannelCount: Int
         var sources: [RenderSlot] = []
         var paramSources: [(AudioParam, [RenderSlot])] = []
         var isMuted = false
+        var isCycleBreaker = false
 
         init(node: AudioNode) {
             self.node = node
-            inputChannelCount = node.numberOfInputs == 0 ? nil : Int(node.channelCount)
-            outputChannelCount = Int(node.channelCount)
+            inputChannelCount = node.numberOfInputs == 0 ? nil
+                : node is AudioDestinationNode ? Int(node.channelCount) : 1
+            outputChannelCount = node is AudioDestinationNode ? Int(node.channelCount) : 1
         }
     }
 
@@ -103,13 +105,47 @@ final class AudioGraph {
             return slot
         }
 
-        _ = visit(destination)
-        for slot in order {
-            slot.isMuted = outgoingNodes(from: slot.node).contains { destination in
-                destination === slot.node || hasPath(from: destination, to: slot.node)
+        let destinationSlot = visit(destination)
+        let noCycleBreakers: Set<ObjectIdentifier> = []
+        let cycleBreakers = Set(order.compactMap { slot -> ObjectIdentifier? in
+            guard slot.node is DelayNode,
+                  outgoingNodes(from: slot.node, ignoringInputsOf: noCycleBreakers).contains(where: { next in
+                      next === slot.node || hasPath(
+                          from: next, to: slot.node, ignoringInputsOf: noCycleBreakers
+                      )
+                  })
+            else { return nil }
+            return ObjectIdentifier(slot.node)
+        })
+
+        var ordered: [RenderSlot] = []
+        var marked: Set<ObjectIdentifier> = []
+        func orderVisit(_ slot: RenderSlot) {
+            guard marked.insert(ObjectIdentifier(slot.node)).inserted else { return }
+            if !cycleBreakers.contains(ObjectIdentifier(slot.node)) {
+                slot.sources.forEach(orderVisit)
             }
+            for (_, sources) in slot.paramSources {
+                sources.forEach(orderVisit)
+            }
+            ordered.append(slot)
         }
-        orderedSlots = order
+        orderVisit(destinationSlot)
+        for slot in order where cycleBreakers.contains(ObjectIdentifier(slot.node)) {
+            slot.sources.forEach(orderVisit)
+        }
+
+        for slot in ordered {
+            slot.isMuted = outgoingNodes(from: slot.node, ignoringInputsOf: cycleBreakers).contains { next in
+                next === slot.node || hasPath(
+                    from: next,
+                    to: slot.node,
+                    ignoringInputsOf: cycleBreakers
+                )
+            }
+            slot.isCycleBreaker = cycleBreakers.contains(ObjectIdentifier(slot.node)) && !slot.isMuted
+        }
+        orderedSlots = ordered
         needsPreparation = false
     }
 
@@ -127,10 +163,15 @@ final class AudioGraph {
                 processor = .constant(
                     startFrame: source.scheduledStartFrame,
                     stopFrame: source.scheduledStopFrame,
-                    value: offset.value,
-                    defaultValue: offset.defaultValue,
-                    minValue: offset.minValue,
-                    maxValue: offset.maxValue,
+                    parameter: offset.renderTimeline,
+                    paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
+                )
+            } else if let delay = slot.node as? DelayNode {
+                let delayTime = delay.delayTime
+                let paramSources = slot.paramSources.first { $0.0 === delayTime }?.1 ?? []
+                processor = .delay(
+                    state: delay.renderState,
+                    parameter: delayTime.renderTimeline,
                     paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
                 )
             } else if slot.node is AudioDestinationNode {
@@ -143,27 +184,44 @@ final class AudioGraph {
                 inputChannelCount: slot.inputChannelCount,
                 outputChannelCount: slot.outputChannelCount,
                 interpretation: slot.node.channelInterpretation,
+                channelCount: Int(slot.node.channelCount),
+                channelCountMode: slot.node.channelCountMode,
                 sources: slot.sources.map { indices[ObjectIdentifier($0)]! },
                 isMuted: slot.isMuted,
+                isCycleBreaker: slot.isCycleBreaker,
                 processor: processor
             )
         }
-        return AudioRenderPlan(configurations: configurations, frameCount: frameCount)
+        return AudioRenderPlan(
+            configurations: configurations,
+            frameCount: frameCount,
+            destinationIndex: orderedSlots.firstIndex { $0.node === destination }!
+        )
     }
 
-    private func hasPath(from start: AudioNode, to target: AudioNode) -> Bool {
+    private func hasPath(
+        from start: AudioNode,
+        to target: AudioNode,
+        ignoringInputsOf cycleBreakers: Set<ObjectIdentifier>
+    ) -> Bool {
         var visited: Set<ObjectIdentifier> = []
         var pending = [start]
         while let node = pending.popLast() {
             if node === target { return true }
             guard visited.insert(ObjectIdentifier(node)).inserted else { continue }
-            pending.append(contentsOf: outgoingNodes(from: node))
+            pending.append(contentsOf: outgoingNodes(from: node, ignoringInputsOf: cycleBreakers))
         }
         return false
     }
 
-    private func outgoingNodes(from node: AudioNode) -> [AudioNode] {
-        connections.filter { $0.source === node }.map(\.destination)
+    private func outgoingNodes(
+        from node: AudioNode,
+        ignoringInputsOf cycleBreakers: Set<ObjectIdentifier>
+    ) -> [AudioNode] {
+        connections.filter {
+            $0.source === node && !cycleBreakers.contains(ObjectIdentifier($0.destination))
+        }.map(\.destination)
             + paramConnections.compactMap { $0.source === node ? $0.destination.owner : nil }
     }
+
 }
