@@ -178,7 +178,7 @@ import Testing
 
 @MainActor
 @Test func controlMessagesApplyAtTheNextRenderQuantum() async throws {
-    let context = try OfflineAudioContext(numberOfChannels: 1, length: 256, sampleRate: 48_000)
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 384, sampleRate: 48_000)
     let source = context.createConstantSource()
     source.offset.value = 0.25
     try source.start()
@@ -188,7 +188,7 @@ import Testing
     let queue = RenderControlQueue(initialPlan: initialPlan)
     let renderBuffer = OfflineRenderBuffer(value: try context.createBuffer(
         numberOfChannels: 1,
-        length: 256,
+        length: 384,
         sampleRate: 48_000
     ))
     let reachedBoundary = DispatchSemaphore(value: 0)
@@ -202,7 +202,7 @@ import Testing
             from: 0,
             currentFrame: currentFrame,
             beforeQuantum: { frame in
-                if frame == 128 {
+                if frame == 128 || frame == 256 {
                     reachedBoundary.signal()
                     resumeRendering.wait()
                 }
@@ -226,10 +226,66 @@ import Testing
     queue.enqueue(replacement)
     resumeRendering.signal()
 
+    let didReachThirdQuantum = await withCheckedContinuation { continuation in
+        DispatchQueue.global().async {
+            continuation.resume(returning: reachedBoundary.wait(timeout: .now() + 5) == .success)
+        }
+    }
+    guard didReachThirdQuantum else {
+        resumeRendering.signal()
+        _ = try await renderTask.value
+        Issue.record("Rendering did not reach the third quantum")
+        return
+    }
+    source.disconnect()
+    queue.enqueue(try context.graph.makeRenderPlan(destination: context.destination, frameCount: 128))
+    resumeRendering.signal()
+
     let result = try await renderTask.value
     let samples = try result.buffer.getChannelData(0)
     #expect(samples[0] == 0.25)
     #expect(samples[127] == 0.25)
     #expect(samples[128] == 0.75)
     #expect(samples[255] == 0.75)
+    #expect(samples[256] == 0)
+    #expect(samples[383] == 0)
+}
+
+@MainActor
+@Test func renderControlQueuePreservesMessageOrder() throws {
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: 48_000)
+    let source = context.createConstantSource()
+    try source.start()
+    try source.connect(context.destination)
+    let initial = try context.graph.makeRenderPlan(destination: context.destination, frameCount: 128)
+    let queue = RenderControlQueue(initialPlan: initial)
+
+    source.offset.value = 0.25
+    let first = try context.graph.makeRenderPlan(destination: context.destination, frameCount: 128)
+    source.offset.value = 0.75
+    let second = try context.graph.makeRenderPlan(destination: context.destination, frameCount: 128)
+    queue.enqueue(first)
+    queue.enqueue(second)
+
+    #expect(queue.dequeue() === first)
+    #expect(queue.dequeue() === second)
+    #expect(queue.dequeue() == nil)
+}
+
+@MainActor
+@Test func offlineContextQueuesControlChangesWhenRenderingStarts() async throws {
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: 48_000)
+    let source = context.createConstantSource()
+    source.offset.value = 0.25
+    try source.start()
+    try source.connect(context.destination)
+    context.onstatechange = { state in
+        if state == .running {
+            source.offset.value = 0.75
+        }
+    }
+
+    let buffer = try await context.startRendering()
+
+    #expect(try buffer.getChannelData(0).allSatisfy { $0 == 0.75 })
 }
