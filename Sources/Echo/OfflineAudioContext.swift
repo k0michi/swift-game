@@ -1,3 +1,5 @@
+import Atomics
+
 public final class OfflineAudioContext: BaseAudioContext {
     public let length: UInt32?
     public var oncomplete: ((OfflineAudioCompletionEvent) -> Void)?
@@ -6,6 +8,10 @@ public final class OfflineAudioContext: BaseAudioContext {
     private var committedFrames: UInt64 = 0
     private var renderedFrames: UInt64 = 0
     private var renderingStarted = false
+    private var isRendering = false
+    private let renderCancelled = ManagedAtomic(false)
+    private var activeControlQueue: RenderControlQueue?
+    private var renderControlError: Error?
 
     public init(options: OfflineAudioContextOptions) throws {
         let renderQuantumSize = try Self.resolveRenderQuantumSize(
@@ -45,6 +51,7 @@ public final class OfflineAudioContext: BaseAudioContext {
 
     public func startRendering(chunkSize: UInt32? = nil) async throws -> AudioBuffer {
         guard state != .closed,
+              !isRendering,
               length.map({ committedFrames < UInt64($0) }) ?? true
         else {
             throw WebAudioError.invalidState
@@ -60,13 +67,36 @@ public final class OfflineAudioContext: BaseAudioContext {
             length: bufferLength,
             sampleRate: sampleRate
         ))
+        let plan = try graph.makeRenderPlan(destination: destination, frameCount: Int(renderQuantumSize))
+        let controlQueue = RenderControlQueue(initialPlan: plan)
 
         renderingStarted = true
+        isRendering = true
+        activeControlQueue = controlQueue
+        renderControlError = nil
+        renderCancelled.store(false, ordering: .releasing)
+        defer {
+            isRendering = false
+            activeControlQueue = nil
+            renderControlError = nil
+        }
         committedFrames += UInt64(bufferLength)
         setState(.running)
 
-        // TODO: Render the connected graph into this buffer.
-        advance(by: bufferLength)
+        let result: OfflineRenderResult
+        do {
+            result = try await OfflineRenderWorker.render(
+                controlQueue: controlQueue,
+                into: OfflineRenderBuffer(value: buffer),
+                from: renderFrame,
+                currentFrame: currentFrame,
+                cancelled: renderCancelled
+            )
+        } catch {
+            if state != .closed { setState(.suspended) }
+            throw renderControlError ?? error
+        }
+        guard state != .closed else { throw WebAudioError.invalidState }
         renderedFrames += UInt64(bufferLength)
 
         if let length, renderedFrames >= UInt64(length) {
@@ -76,7 +106,7 @@ public final class OfflineAudioContext: BaseAudioContext {
             setState(.suspended)
         }
 
-        return buffer
+        return result.buffer
     }
 
     public func close() async throws {
@@ -84,7 +114,19 @@ public final class OfflineAudioContext: BaseAudioContext {
             throw WebAudioError.invalidState
         }
 
+        renderCancelled.store(true, ordering: .releasing)
         setState(.closed)
+    }
+
+    override func graphDidChange() {
+        guard isRendering, state != .closed, let activeControlQueue else { return }
+        do {
+            let plan = try graph.makeRenderPlan(destination: destination, frameCount: Int(renderQuantumSize))
+            activeControlQueue.enqueue(plan)
+        } catch {
+            renderControlError = error
+            renderCancelled.store(true, ordering: .releasing)
+        }
     }
 
     // TODO: Implement suspend(at:) and resume() with render-quantum synchronization.

@@ -33,15 +33,62 @@ public class AudioNode {
         }
 
         self.channelCount = channelCount
+        graph.invalidate()
+        context.graphDidChange()
     }
 
     public func setChannelCountMode(_ channelCountMode: ChannelCountMode) {
         self.channelCountMode = channelCountMode
+        graph.invalidate()
+        context.graphDidChange()
     }
 
     public func setChannelInterpretation(_ channelInterpretation: ChannelInterpretation) {
         self.channelInterpretation = channelInterpretation
+        graph.invalidate()
+        context.graphDidChange()
     }
 
-    // TODO: Implement connect and disconnect with control messages.
+    @discardableResult
+    public func connect(_ destinationNode: AudioNode, output: UInt32 = 0, input: UInt32 = 0) throws -> AudioNode {
+        guard context === destinationNode.context else { throw WebAudioError.invalidAccess }
+        guard output < numberOfOutputs, input < destinationNode.numberOfInputs else {
+            throw WebAudioError.indexSize
+        }
+        try graph.connect(self, to: destinationNode, output: output, input: input)
+        context.graphDidChange()
+        return destinationNode
+    }
+
+    public func disconnect() {
+        graph.disconnect(self)
+        context.graphDidChange()
+    }
+
+    public func disconnect(output: UInt32) throws {
+        guard output < numberOfOutputs else { throw WebAudioError.indexSize }
+        graph.disconnect(self, output: output)
+        context.graphDidChange()
+    }
+
+    public func disconnect(_ destinationNode: AudioNode) throws {
+        guard graph.disconnect(self, from: destinationNode) else { throw WebAudioError.invalidAccess }
+        context.graphDidChange()
+    }
+
+    var audioParams: [AudioParam] { [] }
+
+    public func connect(_ destinationParam: AudioParam, output: UInt32 = 0) throws {
+        guard context === destinationParam.context else { throw WebAudioError.invalidAccess }
+        guard output < numberOfOutputs else { throw WebAudioError.indexSize }
+        graph.connect(self, to: destinationParam, output: output)
+        context.graphDidChange()
+    }
+
+    public func disconnect(_ destinationParam: AudioParam) throws {
+        guard graph.disconnect(self, from: destinationParam) else { throw WebAudioError.invalidAccess }
+        context.graphDidChange()
+    }
+
+    // TODO: Add the remaining Web IDL disconnect overloads.
 }

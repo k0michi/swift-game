@@ -1,3 +1,5 @@
+import Atomics
+
 @MainActor
 public class BaseAudioContext {
     public let sampleRate: Float
@@ -7,7 +9,7 @@ public class BaseAudioContext {
     public var onstatechange: ((AudioContextState) -> Void)?
 
     public var currentTime: Double {
-        Double(currentFrame) / Double(sampleRate)
+        Double(currentFrame.load(ordering: .relaxed)) / Double(sampleRate)
     }
 
     public private(set) lazy var destination = AudioDestinationNode(
@@ -17,7 +19,9 @@ public class BaseAudioContext {
 
     let graph = AudioGraph()
     private let destinationChannelCount: UInt32
-    private var currentFrame: UInt64 = 0
+    let currentFrame = ManagedAtomic<UInt64>(0)
+
+    var renderFrame: UInt64 { currentFrame.load(ordering: .relaxed) }
 
     init(sampleRate: Float, renderQuantumSize: UInt32, destinationChannelCount: UInt32) {
         self.sampleRate = sampleRate
@@ -37,6 +41,10 @@ public class BaseAudioContext {
         ))
     }
 
+    public func createConstantSource() -> ConstantSourceNode {
+        ConstantSourceNode(context: self)
+    }
+
     func setState(_ state: AudioContextState) {
         guard self.state != state else { return }
 
@@ -44,7 +52,6 @@ public class BaseAudioContext {
         onstatechange?(state)
     }
 
-    func advance(by frameCount: UInt32) {
-        currentFrame += UInt64(frameCount)
-    }
+    func graphDidChange() {}
+
 }
