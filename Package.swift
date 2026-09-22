@@ -71,6 +71,7 @@ let package = Package(
         .library(name: "SDL3Dawn", targets: ["SDL3Dawn"]),
         .library(name: "Interop", targets: ["Interop"]),
         .library(name: "Echo", targets: ["Echo"]),
+        .library(name: "EchoSDL3", targets: ["EchoSDL3"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
@@ -78,6 +79,7 @@ let package = Package(
     targets: [
         .target(name: "Interop"),
         .target(name: "Echo", dependencies: [.product(name: "Atomics", package: "swift-atomics")]),
+        .target(name: "EchoSDL3", dependencies: ["Echo", "SDL3"]),
         .target(
             name: "CSDL3",
             cSettings: [
@@ -136,6 +138,10 @@ let package = Package(
         .testTarget(
             name: "EchoTests",
             dependencies: ["Echo"]
+        ),
+        .testTarget(
+            name: "EchoSDL3Tests",
+            dependencies: ["EchoSDL3", "Echo", "SDL3"]
         ),
     ]
 )

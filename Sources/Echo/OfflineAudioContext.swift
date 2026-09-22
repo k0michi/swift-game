@@ -66,6 +66,9 @@ public final class OfflineAudioContext: BaseAudioContext {
             min(UInt64(chunkSize ?? UInt32(clamping: remaining)), remaining)
         } ?? UInt64(chunkSize ?? renderQuantumSize)
         let bufferLength = try roundedToRenderQuantum(requestedLength)
+        guard !committedFrames.addingReportingOverflow(UInt64(bufferLength)).overflow,
+              !renderFrame.addingReportingOverflow(UInt64(bufferLength)).overflow
+        else { throw WebAudioError.notSupported }
         let buffer = try AudioBuffer(options: AudioBufferOptions(
             numberOfChannels: numberOfChannels,
             length: bufferLength,
@@ -101,7 +104,11 @@ public final class OfflineAudioContext: BaseAudioContext {
                 suspensions: suspensions
             )
         } catch {
-            if state != .closed { setState(.suspended) }
+            if state != .closed {
+                suspensions.cancelAll()
+                activeSuspension = nil
+                setState(.closed)
+            }
             throw renderControlError ?? error
         }
         guard state != .closed else { throw WebAudioError.invalidState }
@@ -207,7 +214,9 @@ public final class OfflineAudioContext: BaseAudioContext {
         }
 
         let quantum = UInt64(renderQuantumSize)
-        let rounded = ((frameCount + quantum - 1) / quantum) * quantum
+        let (adjusted, overflow) = frameCount.addingReportingOverflow(quantum - 1)
+        guard !overflow else { throw WebAudioError.notSupported }
+        let rounded = (adjusted / quantum) * quantum
         guard let result = UInt32(exactly: rounded) else {
             throw WebAudioError.notSupported
         }

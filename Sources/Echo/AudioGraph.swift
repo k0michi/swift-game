@@ -27,7 +27,7 @@ final class AudioGraph {
             self.node = node
             inputChannelCount = node.numberOfInputs == 0 ? nil
                 : node is AudioDestinationNode ? Int(node.channelCount) : 1
-            outputChannelCount = node is AudioDestinationNode ? Int(node.channelCount) : 1
+            outputChannelCount = (node as? AudioDestinationNode).map { Int($0.maxChannelCount) } ?? 1
         }
     }
 

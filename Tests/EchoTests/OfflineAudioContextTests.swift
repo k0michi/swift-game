@@ -70,6 +70,19 @@ import Testing
 }
 
 @MainActor
+@Test func oversizedOfflineChunkFailsBeforeStartingRendering() async throws {
+    let context = try OfflineAudioContext(options: OfflineAudioContextOptions(sampleRate: 48_000))
+    do {
+        _ = try await context.startRendering(chunkSize: .max)
+        Issue.record("Oversized chunk was accepted")
+    } catch {
+        #expect(error as? WebAudioError == .notSupported)
+    }
+    #expect(context.state == .suspended)
+    #expect(context.currentTime == 0)
+}
+
+@MainActor
 @Test func offlineContextValidatesConstructionAndState() async throws {
     #expect(throws: WebAudioError.notSupported) {
         try OfflineAudioContext(numberOfChannels: 0, length: 128, sampleRate: 48_000)

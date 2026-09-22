@@ -37,7 +37,8 @@ final class AudioRenderPlan: @unchecked Sendable {
             self.configuration = configuration
             input = configuration.inputChannelCount.map {
                 AudioRenderQuantum(
-                    channelCapacity: Self.isDelay(configuration.processor) ? Int(AudioBuffer.maximumNumberOfChannels) : $0,
+                    channelCapacity: Self.isDelay(configuration.processor) || Self.isDestination(configuration.processor)
+                        ? Int(AudioBuffer.maximumNumberOfChannels) : $0,
                     frameCount: frameCount, channelCount: $0
                 )
             }
@@ -56,6 +57,11 @@ final class AudioRenderPlan: @unchecked Sendable {
 
         private static func isDelay(_ processor: Processor) -> Bool {
             if case .delay = processor { return true }
+            return false
+        }
+
+        private static func isDestination(_ processor: Processor) -> Bool {
+            if case .passThrough = processor { return true }
             return false
         }
     }
@@ -94,7 +100,9 @@ final class AudioRenderPlan: @unchecked Sendable {
 
             switch configuration.processor {
             case .passThrough:
-                if let input = slot.input { slot.output.copy(from: input) }
+                if let input = slot.input {
+                    ChannelMixer.mix(input, into: slot.output, interpretation: configuration.interpretation)
+                }
             case let .constant(startFrame, stopFrame, parameter, paramSources):
                 guard let startFrame else { continue }
                 slot.paramInput?.clear()
