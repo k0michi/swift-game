@@ -61,16 +61,18 @@ final class AudioRenderPlan: @unchecked Sendable {
     }
 
     let frameCount: Int
+    let destinationChannelCount: Int
     private let slots: [Slot]
     private let destinationIndex: Int
 
     init(configurations: [NodeConfiguration], frameCount: Int, destinationIndex: Int) {
         self.frameCount = frameCount
         self.destinationIndex = destinationIndex
+        destinationChannelCount = configurations[destinationIndex].outputChannelCount
         slots = configurations.map { Slot(configuration: $0, frameCount: frameCount) }
     }
 
-    func render(at frame: UInt64, into buffer: AudioBuffer, offset: Int) throws {
+    func render(at frame: UInt64, into target: OfflineRenderTarget, offset: Int) {
         for slot in slots {
             slot.input?.clear()
             slot.output.clear()
@@ -150,10 +152,10 @@ final class AudioRenderPlan: @unchecked Sendable {
 
         let destination = slots[destinationIndex].output
         for channel in 0 ..< destination.channelCount {
-            let target = try buffer.getChannelData(UInt32(channel))
+            let channelTarget = target.channelData(channel)
             let source = destination.channelData(channel)
             for sample in 0 ..< frameCount {
-                target[offset + sample] = source[sample]
+                channelTarget[offset + sample] = source[sample]
             }
         }
     }

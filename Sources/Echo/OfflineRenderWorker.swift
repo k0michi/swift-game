@@ -15,6 +15,7 @@ struct OfflineRenderResult: @unchecked Sendable {
 final class OfflineRenderWorker: @unchecked Sendable {
     private let controlQueue: RenderControlQueue
     private let buffer: AudioBuffer
+    private let target: OfflineRenderTarget
     private let initialFrame: UInt64
     private let currentFrame: ManagedAtomic<UInt64>
     private let cancelled: ManagedAtomic<Bool>
@@ -25,6 +26,7 @@ final class OfflineRenderWorker: @unchecked Sendable {
     private init(
         controlQueue: RenderControlQueue,
         buffer: OfflineRenderBuffer,
+        target: OfflineRenderTarget,
         initialFrame: UInt64,
         currentFrame: ManagedAtomic<UInt64>,
         cancelled: ManagedAtomic<Bool>,
@@ -34,6 +36,7 @@ final class OfflineRenderWorker: @unchecked Sendable {
     ) {
         self.controlQueue = controlQueue
         self.buffer = buffer.value
+        self.target = target
         self.initialFrame = initialFrame
         self.currentFrame = currentFrame
         self.cancelled = cancelled
@@ -51,10 +54,12 @@ final class OfflineRenderWorker: @unchecked Sendable {
         suspensions: OfflineRenderSuspensions? = nil,
         beforeQuantum: (@Sendable (UInt64) -> Void)? = nil
     ) async throws -> OfflineRenderResult {
-        try await withCheckedThrowingContinuation { continuation in
+        let target = try OfflineRenderTarget(buffer: buffer.value, plan: controlQueue.initialPlan)
+        return try await withCheckedThrowingContinuation { continuation in
             let worker = OfflineRenderWorker(
                 controlQueue: controlQueue,
                 buffer: buffer,
+                target: target,
                 initialFrame: initialFrame,
                 currentFrame: currentFrame,
                 cancelled: cancelled,
@@ -77,9 +82,12 @@ final class OfflineRenderWorker: @unchecked Sendable {
                 try suspensions?.waitIfScheduled(at: frame, cancelled: cancelled)
                 if cancelled.load(ordering: .acquiring) { throw WebAudioError.invalidState }
                 while let replacement = controlQueue.dequeue() {
+                    guard replacement.frameCount == quantum,
+                          replacement.destinationChannelCount == target.channelCount
+                    else { throw WebAudioError.notSupported }
                     plan = replacement
                 }
-                try plan.render(at: frame, into: buffer, offset: offset)
+                plan.render(at: frame, into: target, offset: offset)
                 currentFrame.store(frame + UInt64(quantum), ordering: .releasing)
             }
             continuation.resume(returning: OfflineRenderResult(
