@@ -270,6 +270,34 @@ import Testing
     #expect(queue.dequeue() === first)
     #expect(queue.dequeue() === second)
     #expect(queue.dequeue() == nil)
+    #expect(queue.retainedMessageCount == 3)
+    queue.acknowledgeAppliedPlan()
+    queue.reclaimAppliedPlans()
+    #expect(queue.retainedMessageCount == 1)
+
+    queue.enqueue(first)
+    #expect(queue.retainedMessageCount == 2)
+    #expect(queue.dequeue() === first)
+    queue.acknowledgeAppliedPlan()
+    queue.reclaimAppliedPlans()
+    #expect(queue.retainedMessageCount == 1)
+}
+
+@MainActor
+@Test func appliedRenderPlansAreReclaimedDuringContinuedUpdates() throws {
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: 48_000)
+    let plan = try context.graph.makeRenderPlan(destination: context.destination, frameCount: 128)
+    let queue = RenderControlQueue(initialPlan: plan)
+
+    for _ in 0 ..< 256 {
+        queue.enqueue(plan)
+        #expect(queue.dequeue() === plan)
+        queue.acknowledgeAppliedPlan()
+        #expect(queue.retainedMessageCount <= 2)
+    }
+
+    queue.reclaimAppliedPlans()
+    #expect(queue.retainedMessageCount == 1)
 }
 
 @MainActor

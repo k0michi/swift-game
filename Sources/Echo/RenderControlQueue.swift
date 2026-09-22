@@ -15,6 +15,7 @@ final class RenderControlQueue: @unchecked Sendable {
     private var producerTail: Message
     private var consumerHead: Message
     private var retainedMessages: [Message]
+    private let appliedHead = ManagedAtomic<UnsafeMutableRawPointer?>(nil)
 
     @MainActor
     init(initialPlan: AudioRenderPlan) {
@@ -27,6 +28,7 @@ final class RenderControlQueue: @unchecked Sendable {
 
     @MainActor
     func enqueue(_ plan: AudioRenderPlan) {
+        reclaimAppliedPlans()
         let message = Message(plan: plan)
         retainedMessages.append(message)
         producerTail.next.store(Unmanaged.passUnretained(message).toOpaque(), ordering: .releasing)
@@ -41,4 +43,21 @@ final class RenderControlQueue: @unchecked Sendable {
         consumerHead = next
         return next.plan
     }
+
+    func acknowledgeAppliedPlan() {
+        appliedHead.store(Unmanaged.passUnretained(consumerHead).toOpaque(), ordering: .releasing)
+    }
+
+    @MainActor
+    func reclaimAppliedPlans() {
+        guard let pointer = appliedHead.load(ordering: .acquiring),
+              let index = retainedMessages.firstIndex(where: {
+                  Unmanaged.passUnretained($0).toOpaque() == pointer
+              }), index > 0
+        else { return }
+        retainedMessages.removeFirst(index)
+    }
+
+    @MainActor
+    var retainedMessageCount: Int { retainedMessages.count }
 }

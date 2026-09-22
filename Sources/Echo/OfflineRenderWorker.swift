@@ -87,6 +87,7 @@ final class OfflineRenderWorker: @unchecked Sendable {
                     else { throw WebAudioError.notSupported }
                     plan = replacement
                 }
+                controlQueue.acknowledgeAppliedPlan()
                 plan.render(at: frame, into: target, offset: offset)
                 currentFrame.store(frame + UInt64(quantum), ordering: .releasing)
             }

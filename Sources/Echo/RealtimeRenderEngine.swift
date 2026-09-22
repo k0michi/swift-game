@@ -54,6 +54,7 @@ final class RealtimeRenderEngine: @unchecked Sendable {
                     }
                     plan = replacement
                 }
+                controlQueue.acknowledgeAppliedPlan()
                 plan.render(at: nextFrame, into: target, offset: 0)
                 nextFrame += UInt64(quantumSize)
                 currentFrame.store(nextFrame, ordering: .releasing)
