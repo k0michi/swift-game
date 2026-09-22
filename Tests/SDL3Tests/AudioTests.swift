@@ -116,7 +116,7 @@ extension SDL3Tests {
     }
 
     @Test
-    func audioStreamKeepsSystemAlive() throws {
+    func audioStreamKeepsSystemAlive() async throws {
         weak var weakSystem: System?
         var stream: AudioStream?
 
@@ -132,6 +132,8 @@ extension SDL3Tests {
         #expect(weakSystem != nil)
         #expect(stream != nil)
         stream = nil
+        waitForAudioCleanup()
+        await Task.yield()
         #expect(weakSystem == nil)
     }
 
@@ -209,7 +211,7 @@ extension SDL3Tests {
     }
 
     @Test
-    func audioDeviceIDIsCanonicalAndOwnsOpenedDevice() throws {
+    func audioDeviceIDIsCanonicalAndOwnsOpenedDevice() async throws {
         weak var weakSystem: System?
         var device: AudioDeviceID?
         var stream: AudioStream?
@@ -233,6 +235,8 @@ extension SDL3Tests {
         #expect(weakSystem != nil)
         stream = nil
         device = nil
+        waitForAudioCleanup()
+        await Task.yield()
         #expect(weakSystem == nil)
     }
 
@@ -251,6 +255,7 @@ extension SDL3Tests {
         #expect(weakProbe != nil)
 
         stream = nil
+        waitForAudioCleanup()
         #expect(weakProbe == nil)
         withExtendedLifetime(system) {}
     }
@@ -272,7 +277,7 @@ extension SDL3Tests {
 
         try owner.resume()
         #expect(callbackFinished.wait(timeout: .now() + 2) == .success)
-        waitForAudioCallbackCleanup()
+        waitForAudioCleanup()
         withExtendedLifetime((system, owner)) {}
     }
 

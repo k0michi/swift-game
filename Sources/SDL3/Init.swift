@@ -21,65 +21,69 @@ public struct InitFlags: OptionSet, Sendable {
 // SDL_Quit
 @MainActor
 public final class System {
-    static weak var active: System?
+    private static var activeSystems: [WeakSystem] = []
+    private static var initializationCount = 0
+    private let flags: InitFlags
 
-    fileprivate init() {}
+    static func active(for flags: InitFlags) -> System? {
+        activeSystems.reversed().lazy.compactMap(\.value).first {
+            $0.flags.contains(flags)
+        }
+    }
+
+    fileprivate init(flags: InitFlags) {
+        self.flags = flags
+        Self.initializationCount += 1
+        Self.activeSystems.removeAll { $0.value == nil }
+        Self.activeSystems.append(WeakSystem(self))
+    }
 
     isolated deinit {
-        SDL_Quit()
+        SDL_QuitSubSystem(flags.rawValue)
+        Self.initializationCount -= 1
+        Self.activeSystems.removeAll { $0.value == nil || $0.value === self }
+        Self.quitIfUnused()
+    }
+
+    fileprivate static func quitIfUnused() {
+        if initializationCount == 0 { SDL_Quit() }
+    }
+}
+
+@MainActor
+private final class WeakSystem {
+    weak var value: System?
+
+    init(_ value: System) {
+        self.value = value
     }
 }
 
 // SDL_Init
 @MainActor
 public func `init`(flags: InitFlags) throws -> System {
-    guard System.active == nil else {
-        throw SDLError(
-            operation: "SDL_Init",
-            message: "an SDL system is already active"
-        )
-    }
-
     guard SDL_Init(flags.rawValue) else {
-        throw SDLError(operation: "SDL_Init")
+        let error = SDLError(operation: "SDL_Init")
+        System.quitIfUnused()
+        throw error
     }
 
-    let system = System()
-    System.active = system
-    return system
+    return System(flags: flags)
 }
 
 // SDL_QuitSubSystem
-@MainActor
-public final class Subsystem {
-    private let flags: InitFlags
-    private let system: System
-
-    fileprivate init(flags: InitFlags, system: System) {
-        self.flags = flags
-        self.system = system
-    }
-
-    isolated deinit {
-        SDL_QuitSubSystem(flags.rawValue)
-    }
-}
+public typealias Subsystem = System
 
 // SDL_InitSubSystem
 @MainActor
 public func initSubsystem(flags: InitFlags) throws -> Subsystem {
-    guard let system = System.active else {
-        throw SDLError(
-            operation: "SDL_InitSubSystem",
-            message: "SDL is not initialized"
-        )
-    }
-
     guard SDL_InitSubSystem(flags.rawValue) else {
-        throw SDLError(operation: "SDL_InitSubSystem")
+        let error = SDLError(operation: "SDL_InitSubSystem")
+        System.quitIfUnused()
+        throw error
     }
 
-    return Subsystem(flags: flags, system: system)
+    return System(flags: flags)
 }
 
 // SDL_WasInit

@@ -101,7 +101,7 @@ public func createWindow(
     h: Int32,
     flags: WindowFlags
 ) throws -> Window {
-    guard let system = System.active else {
+    guard let system = System.active(for: .video) else {
         throw SDLError(
             operation: "SDL_CreateWindow",
             message: "SDL is not initialized"

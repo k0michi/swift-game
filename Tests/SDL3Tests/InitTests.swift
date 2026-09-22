@@ -16,13 +16,26 @@ struct SDL3Tests {
     }
 
     @Test
-    func secondSystemIsRejected() throws {
-        let system = try `init`(flags: [.video])
+    func overlappingInitializationsKeepSubsystemsActive() throws {
+        var first: System? = try `init`(flags: [.video])
+        var second: System? = try `init`(flags: [.video, .audio])
 
-        #expect(throws: SDLError.self) {
-            _ = try `init`(flags: [.video])
-        }
+        #expect(wasInit(flags: [.video, .audio]).contains([.video, .audio]))
+        first = nil
+        #expect(wasInit(flags: [.video, .audio]).contains([.video, .audio]))
+        second = nil
+        #expect(!wasInit(flags: [.video, .audio]).contains(.video))
+        withExtendedLifetime((first, second)) {}
+    }
 
-        withExtendedLifetime(system) {}
+    @Test
+    func initSubsystemWorksWithoutPriorInit() throws {
+        var subsystem: Subsystem? = try initSubsystem(flags: [.audio])
+        #expect(wasInit(flags: [.audio]).contains(.audio))
+        let spec = AudioSpec(format: .f32, channels: 2, freq: 48_000)
+        let stream = try createAudioStream(srcSpec: spec, dstSpec: spec)
+        subsystem = nil
+        #expect(try getAudioStreamAvailable(stream: stream) == 0)
+        withExtendedLifetime((subsystem, stream)) {}
     }
 }
