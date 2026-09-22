@@ -2,9 +2,13 @@ import Atomics
 
 @MainActor
 public final class AudioContext: BaseAudioContext {
+    public var onerror: (() -> Void)?
+
     private let backend: any AudioOutputBackend
     private var controlQueue: RenderControlQueue?
     private var engine: RealtimeRenderEngine?
+    private let backendFailed = ManagedAtomic(false)
+    private var errorMonitor: Task<Void, Never>?
 
     public init(
         options: AudioContextOptions = AudioContextOptions(),
@@ -49,16 +53,31 @@ public final class AudioContext: BaseAudioContext {
             channelCount: destination.maxChannelCount,
             currentFrame: currentFrame
         )
-        try backend.start { output in engine.fill(output) }
+        backendFailed.store(false, ordering: .relaxed)
+        try backend.start(render: { output in engine.fill(output) }, onError: { [backendFailed] in
+            backendFailed.store(true, ordering: .releasing)
+        })
         controlQueue = queue
         self.engine = engine
         setState(.running)
+        errorMonitor = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000)
+                guard let self else { return }
+                if backendFailed.exchange(false, ordering: .acquiring) {
+                    await handleBackendFailure()
+                    return
+                }
+            }
+        }
     }
 
     public func suspend() async throws {
         guard state != .closed else { throw WebAudioError.invalidState }
         guard state == .running else { return }
         try backend.stop()
+        errorMonitor?.cancel()
+        errorMonitor = nil
         engine = nil
         controlQueue = nil
         setState(.suspended)
@@ -67,6 +86,8 @@ public final class AudioContext: BaseAudioContext {
     public func close() async throws {
         guard state != .closed else { throw WebAudioError.invalidState }
         if state == .running { try backend.stop() }
+        errorMonitor?.cancel()
+        errorMonitor = nil
         engine = nil
         controlQueue = nil
         setState(.closed)
@@ -78,11 +99,23 @@ public final class AudioContext: BaseAudioContext {
             let plan = try graph.makeRenderPlan(destination: destination, frameCount: Int(renderQuantumSize))
             controlQueue.enqueue(plan)
         } catch {
-            // TODO: Propagate asynchronous graph preparation errors through an AudioContext error event.
             try? backend.stop()
+            errorMonitor?.cancel()
+            errorMonitor = nil
             engine = nil
             self.controlQueue = nil
+            onerror?()
             setState(.closed)
         }
+    }
+
+    private func handleBackendFailure() async {
+        guard state == .running else { return }
+        try? backend.stop()
+        engine = nil
+        controlQueue = nil
+        errorMonitor = nil
+        onerror?()
+        setState(.suspended)
     }
 }

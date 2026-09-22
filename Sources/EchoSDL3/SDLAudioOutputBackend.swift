@@ -54,7 +54,10 @@ public final class SDLAudioOutputBackend: AudioOutputBackend, @unchecked Sendabl
         withExtendedLifetime(system) {}
     }
 
-    public func start(render: @escaping @Sendable (UnsafeMutableBufferPointer<Float>) -> Void) throws {
+    public func start(
+        render: @escaping @Sendable (UnsafeMutableBufferPointer<Float>) -> Void,
+        onError: @escaping @Sendable () -> Void
+    ) throws {
         let scratch = self.scratch
         let channels = Int(channelCount)
         let bytesPerFrame = channels * MemoryLayout<Float>.size
@@ -74,8 +77,10 @@ public final class SDLAudioOutputBackend: AudioOutputBackend, @unchecked Sendabl
                     start: samples.baseAddress,
                     count: sampleCount * MemoryLayout<Float>.size
                 )
-                // TODO: Report asynchronous stream write failures to AudioContext.
-                guard (try? SDL3.putAudioStreamData(stream: callbackStream, buf: bytes)) != nil else { return }
+                guard (try? SDL3.putAudioStreamData(stream: callbackStream, buf: bytes)) != nil else {
+                    onError()
+                    return
+                }
                 framesRemaining -= frames
             }
         }

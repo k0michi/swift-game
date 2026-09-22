@@ -6,18 +6,28 @@ private final class ManualAudioBackend: AudioOutputBackend, @unchecked Sendable 
     let channelCount: UInt32
     var failStart = false
     private var render: (@Sendable (UnsafeMutableBufferPointer<Float>) -> Void)?
+    private var onError: (@Sendable () -> Void)?
 
     init(sampleRate: Float = 48_000, channelCount: UInt32 = 2) {
         self.sampleRate = sampleRate
         self.channelCount = channelCount
     }
 
-    func start(render: @escaping @Sendable (UnsafeMutableBufferPointer<Float>) -> Void) throws {
+    func start(
+        render: @escaping @Sendable (UnsafeMutableBufferPointer<Float>) -> Void,
+        onError: @escaping @Sendable () -> Void
+    ) throws {
         if failStart { throw WebAudioError.notSupported }
         self.render = render
+        self.onError = onError
     }
 
-    func stop() throws { render = nil }
+    func stop() throws {
+        render = nil
+        onError = nil
+    }
+
+    func failWhileRunning() { onError?() }
 
     func pull(frames: Int) -> [Float] {
         var samples = [Float](repeating: 0, count: frames * Int(channelCount))
@@ -66,6 +76,53 @@ private final class ManualAudioBackend: AudioOutputBackend, @unchecked Sendable 
     }
     #expect(context.state == .suspended)
     #expect(context.currentTime == 0)
+}
+
+@MainActor
+@Test func realtimeBackendFailureNotifiesAndSuspendsContext() async throws {
+    let backend = ManualAudioBackend()
+    let context = try AudioContext(backend: backend)
+    var events: [String] = []
+    context.onerror = { events.append("error") }
+    context.onstatechange = { events.append($0.rawValue) }
+    try await context.resume()
+
+    backend.failWhileRunning()
+    for _ in 0 ..< 100 where context.state == .running {
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
+
+    #expect(context.state == .suspended)
+    #expect(events == ["running", "error", "suspended"])
+    try await context.close()
+}
+
+@MainActor
+@Test func graphPreparationFailureNotifiesContext() async throws {
+    final class UnsupportedNode: AudioNode {
+        init(context: BaseAudioContext) {
+            super.init(
+                context: context,
+                numberOfInputs: 0,
+                numberOfOutputs: 1,
+                channelCount: 1,
+                channelCountMode: .max,
+                channelInterpretation: .speakers
+            )
+        }
+    }
+
+    let backend = ManualAudioBackend()
+    let context = try AudioContext(backend: backend)
+    var events: [String] = []
+    context.onerror = { events.append("error") }
+    context.onstatechange = { events.append($0.rawValue) }
+    try await context.resume()
+
+    try UnsupportedNode(context: context).connect(context.destination)
+
+    #expect(context.state == .closed)
+    #expect(events == ["running", "error", "closed"])
 }
 
 @MainActor
