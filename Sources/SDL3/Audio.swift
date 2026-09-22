@@ -2,31 +2,12 @@ import CSDL3
 import Dispatch
 import Foundation
 
-private let audioCallbackThreadKey = "SDL3.Audio.callbackDepth"
-private let audioCallbackCleanupQueue = DispatchQueue(
-    label: "SDL3.Audio.callbackCleanup"
+private let audioCleanupQueue = DispatchQueue(
+    label: "SDL3.Audio.cleanup"
 )
 
-private var isExecutingAudioCallback: Bool {
-    (Thread.current.threadDictionary[audioCallbackThreadKey] as? Int ?? 0) > 0
-}
-
-private func withAudioCallback<Result>(_ body: () -> Result) -> Result {
-    let threadDictionary = Thread.current.threadDictionary
-    let depth = threadDictionary[audioCallbackThreadKey] as? Int ?? 0
-    threadDictionary[audioCallbackThreadKey] = depth + 1
-    defer {
-        if depth == 0 {
-            threadDictionary.removeObject(forKey: audioCallbackThreadKey)
-        } else {
-            threadDictionary[audioCallbackThreadKey] = depth
-        }
-    }
-    return body()
-}
-
-func waitForAudioCallbackCleanup() {
-    audioCallbackCleanupQueue.sync {}
+func waitForAudioCleanup() {
+    audioCleanupQueue.sync {}
 }
 
 // SDL_AUDIO_MASK_BITSIZE
@@ -147,29 +128,14 @@ public final class AudioDeviceID: Hashable, @unchecked Sendable {
         audioDeviceIDRegistry.remove(self)
         guard let openedSystem else { return }
 
-        if isExecutingAudioCallback {
-            // Never close an SDL audio device from its audio callback thread.
-            let cleanup = AudioDeviceCallbackCleanup(
-                rawValue: rawValue,
-                system: openedSystem,
-                callbackBox: postmixCallbackBox
-            )
-            self.postmixCallbackBox = nil
-            audioCallbackCleanupQueue.async {
-                cleanup.run()
-            }
-            return
+        let cleanup = AudioDeviceCallbackCleanup(
+            rawValue: rawValue,
+            system: openedSystem,
+            callbackBox: postmixCallbackBox
+        )
+        audioCleanupQueue.async {
+            cleanup.run()
         }
-
-        callbackLock.lock()
-        if postmixCallbackBox != nil {
-            _ = SDL_SetAudioPostmixCallback(rawValue, nil, nil)
-            postmixCallbackBox = nil
-        }
-        callbackLock.unlock()
-
-        // SDL_CloseAudioDevice
-        SDL_CloseAudioDevice(rawValue)
     }
 }
 
@@ -258,35 +224,16 @@ public final class AudioStream: @unchecked Sendable {
     }
 
     deinit {
-        if isExecutingAudioCallback,
-            getCallbackBox != nil || putCallbackBox != nil
-        {
-            // SDL_DestroyAudioStream must not run from an
-            // SDL_OpenAudioDeviceStream callback.
-            // https://github.com/libsdl-org/SDL/issues/15871
+        if getCallbackBox != nil || putCallbackBox != nil {
             let cleanup = AudioStreamCallbackCleanup(
                 storage: storage,
                 getCallbackBox: getCallbackBox,
                 putCallbackBox: putCallbackBox
             )
-            getCallbackBox = nil
-            putCallbackBox = nil
-            audioCallbackCleanupQueue.async {
+            audioCleanupQueue.async {
                 cleanup.run()
             }
-            return
         }
-
-        callbackLock.lock()
-        if getCallbackBox != nil {
-            _ = SDL_SetAudioStreamGetCallback(pointer, nil, nil)
-            getCallbackBox = nil
-        }
-        if putCallbackBox != nil {
-            _ = SDL_SetAudioStreamPutCallback(pointer, nil, nil)
-            putCallbackBox = nil
-        }
-        callbackLock.unlock()
     }
 }
 
@@ -300,16 +247,9 @@ fileprivate final class AudioStreamStorage: @unchecked Sendable {
     }
 
     deinit {
-        if isExecutingAudioCallback {
-            // Defensive fallback for releasing an unrelated stream from any
-            // SDL audio callback. See https://github.com/libsdl-org/SDL/issues/15871
-            let destruction = AudioStreamDestruction(pointer: pointer, system: system)
-            audioCallbackCleanupQueue.async {
-                destruction.run()
-            }
-        } else {
-            // SDL_DestroyAudioStream
-            SDL_DestroyAudioStream(pointer)
+        let destruction = AudioStreamDestruction(pointer: pointer, system: system)
+        audioCleanupQueue.async {
+            destruction.run()
         }
     }
 }
@@ -389,22 +329,17 @@ public typealias AudioStreamCallback = @Sendable (
 ) -> Void
 
 fileprivate final class AudioStreamCallbackBox: @unchecked Sendable {
-    let storage: AudioStreamStorage
+    weak var stream: AudioStream?
     let callback: AudioStreamCallback
 
-    init(storage: AudioStreamStorage, callback: @escaping AudioStreamCallback) {
-        self.storage = storage
+    init(stream: AudioStream, callback: @escaping AudioStreamCallback) {
+        self.stream = stream
         self.callback = callback
     }
 
     func invoke(additionalAmount: Int32, totalAmount: Int32) {
-        withAudioCallback {
-            callback(
-                AudioStream(storage: storage),
-                additionalAmount,
-                totalAmount
-            )
-        }
+        guard let stream else { return }
+        callback(stream, additionalAmount, totalAmount)
     }
 }
 
@@ -761,11 +696,7 @@ public func putAudioStreamDataNoCopy(
             let box = Unmanaged<AudioStreamDataCompleteCallbackBox>
                 .fromOpaque(userdata)
                 .takeRetainedValue()
-            withAudioCallback {
-                box.callback(
-                    UnsafeRawBufferPointer(start: buf, count: Int(buflen))
-                )
-            }
+            box.callback(UnsafeRawBufferPointer(start: buf, count: Int(buflen)))
         },
         userdata
     )
@@ -981,15 +912,13 @@ public func setAudioPostmixCallback(
             let box = Unmanaged<AudioPostmixCallbackBox>
                 .fromOpaque(userdata)
                 .takeUnretainedValue()
-            withAudioCallback {
-                box.callback(
-                    AudioSpec(spec.pointee),
-                    UnsafeMutableBufferPointer(
-                        start: buffer,
-                        count: Int(buflen) / MemoryLayout<Float>.stride
-                    )
+            box.callback(
+                AudioSpec(spec.pointee),
+                UnsafeMutableBufferPointer(
+                    start: buffer,
+                    count: Int(buflen) / MemoryLayout<Float>.stride
                 )
-            }
+            )
         },
         userdata
     )
@@ -1096,7 +1025,7 @@ public func getSilenceValueForFormat(format: AudioFormat) -> Int32 {
 
 @MainActor
 private func activeSystem(operation: String) throws -> System {
-    guard let system = System.active else {
+    guard let system = System.active(for: .audio) else {
         throw SDLError(operation: operation, message: "SDL is not initialized")
     }
     return system
@@ -1174,7 +1103,7 @@ private func setAudioStreamCallback(
     defer { stream.callbackLock.unlock() }
 
     let box = callback.map {
-        AudioStreamCallbackBox(storage: stream.storage, callback: $0)
+        AudioStreamCallbackBox(stream: stream, callback: $0)
     }
     let userdata = box.map { Unmanaged.passUnretained($0).toOpaque() }
     let succeeded = setter(
