@@ -42,6 +42,10 @@ public final class AudioContext: BaseAudioContext {
         _ = destination
     }
 
+    public func createMediaStreamSource(_ mediaStream: MediaStream) throws -> MediaStreamAudioSourceNode {
+        try MediaStreamAudioSourceNode(context: self, options: MediaStreamAudioSourceOptions(mediaStream: mediaStream))
+    }
+
     public func resume() async throws {
         guard state != .closed else { throw WebAudioError.invalidState }
         guard state != .running else { return }

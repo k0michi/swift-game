@@ -13,6 +13,7 @@ final class AudioRenderPlan: @unchecked Sendable {
             parameter: AudioParamTimeline,
             paramSources: [Int]
         )
+        case mediaStream(state: MediaStreamRenderState)
     }
 
     struct NodeConfiguration: Sendable {
@@ -50,7 +51,7 @@ final class AudioRenderPlan: @unchecked Sendable {
             switch configuration.processor {
             case let .constant(_, _, _, sources), let .delay(_, _, sources):
                 paramInput = sources.isEmpty ? nil : AudioRenderQuantum(channelCapacity: 1, frameCount: frameCount)
-            case .passThrough:
+            case .passThrough, .mediaStream:
                 paramInput = nil
             }
         }
@@ -103,6 +104,8 @@ final class AudioRenderPlan: @unchecked Sendable {
                 if let input = slot.input {
                     ChannelMixer.mix(input, into: slot.output, interpretation: configuration.interpretation)
                 }
+            case let .mediaStream(state):
+                state.render(into: slot.output)
             case let .constant(startFrame, stopFrame, parameter, paramSources):
                 guard let startFrame else { continue }
                 slot.paramInput?.clear()

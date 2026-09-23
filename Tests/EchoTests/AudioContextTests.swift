@@ -169,3 +169,62 @@ private final class ManualAudioBackend: AudioOutputBackend, @unchecked Sendable 
     #expect(abs(third[0] - 1) < 0.001)
     try await context.close()
 }
+
+@MainActor
+@Test func mediaStreamSourceSelectsFirstAudioTrackAndRendersChannels() async throws {
+    let backend = ManualAudioBackend(channelCount: 2)
+    let context = try AudioContext(
+        options: AudioContextOptions(renderSizeHint: .frameCount(4)),
+        backend: backend
+    )
+    let later = try MediaStreamTrack(id: "z", sampleRate: 48_000, channelCount: 1)
+    let selected = try MediaStreamTrack(id: "a", sampleRate: 48_000, channelCount: 2)
+    let stream = MediaStream(tracks: [later, selected])
+    let source = try context.createMediaStreamSource(stream)
+    try source.connect(context.destination)
+    try await context.resume()
+
+    _ = [Float](arrayLiteral: 0.25, 0.75, 0.5, 1, 0.75, 0.25, 1, 0.5)
+        .withUnsafeBufferPointer { selected.appendInterleaved($0) }
+    _ = [Float](repeating: 1, count: 4)
+        .withUnsafeBufferPointer { later.appendInterleaved($0) }
+    #expect(source.mediaStream === stream)
+    #expect(backend.pull(frames: 4) == [0.25, 0.75, 0.5, 1, 0.75, 0.25, 1, 0.5])
+
+    selected.stop()
+    let endedOutput = AudioRenderQuantum(channelCapacity: 2, frameCount: 4, channelCount: 2)
+    source.renderState.render(into: endedOutput)
+    #expect(endedOutput.channelCount == 1)
+    #expect(backend.pull(frames: 4).allSatisfy { $0 == 0 })
+    try await context.close()
+}
+
+@MainActor
+@Test func mediaStreamTrackSelectionUsesUTF16CodeUnitOrder() throws {
+    let backend = ManualAudioBackend(channelCount: 1)
+    let context = try AudioContext(backend: backend)
+    let supplementary = try MediaStreamTrack(id: "\u{10000}", sampleRate: 48_000, channelCount: 1)
+    let basic = try MediaStreamTrack(id: "\u{E000}", sampleRate: 48_000, channelCount: 1)
+    let source = try context.createMediaStreamSource(MediaStream(tracks: [basic, supplementary]))
+    #expect(source.renderState.track === supplementary)
+}
+
+@MainActor
+@Test func mediaStreamSourceResamplesAndRejectsEmptyStream() async throws {
+    let backend = ManualAudioBackend(channelCount: 1)
+    let context = try AudioContext(
+        options: AudioContextOptions(renderSizeHint: .frameCount(4)),
+        backend: backend
+    )
+    #expect(throws: WebAudioError.invalidState) {
+        try context.createMediaStreamSource(MediaStream(tracks: []))
+    }
+    let track = try MediaStreamTrack(id: "mic", sampleRate: 24_000, channelCount: 1)
+    let source = try context.createMediaStreamSource(MediaStream(tracks: [track]))
+    try source.connect(context.destination)
+    try await context.resume()
+    _ = [Float](arrayLiteral: 0, 1, 0).withUnsafeBufferPointer { track.appendInterleaved($0) }
+
+    #expect(backend.pull(frames: 4) == [0, 0.5, 1, 0.5])
+    try await context.close()
+}

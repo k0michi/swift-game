@@ -27,7 +27,9 @@ final class AudioGraph {
             self.node = node
             inputChannelCount = node.numberOfInputs == 0 ? nil
                 : node is AudioDestinationNode ? Int(node.channelCount) : 1
-            outputChannelCount = (node as? AudioDestinationNode).map { Int($0.maxChannelCount) } ?? 1
+            outputChannelCount = (node as? AudioDestinationNode).map { Int($0.maxChannelCount) }
+                ?? (node as? MediaStreamAudioSourceNode).map { Int($0.renderState.track.channelCount) }
+                ?? 1
         }
     }
 
@@ -174,6 +176,8 @@ final class AudioGraph {
                     parameter: delayTime.renderTimeline,
                     paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
                 )
+            } else if let source = slot.node as? MediaStreamAudioSourceNode {
+                processor = .mediaStream(state: source.renderState)
             } else if slot.node is AudioDestinationNode {
                 processor = .passThrough
             } else {
