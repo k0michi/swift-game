@@ -95,3 +95,62 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test.ps1
+
+  web:
+    runs-on: ubuntu-24.04
+    env:
+      SWIFT_SNAPSHOT: swift-DEVELOPMENT-SNAPSHOT-2026-10-17-a
+      SWIFT_EMSCRIPTEN_SDK: swift-DEVELOPMENT-SNAPSHOT-2026-10-17-a_wasm-emscripten
+      SWIFT_EMSCRIPTEN_SDK_CHECKSUM: 71c9f690771cb553a68685e6fd8669f390f938801d75de363ccb2da48e568bfe
+      # The version the Swift SDK was built with.
+      EMSDK_VERSION: 6.0.13
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The SDK's modules work only with the compiler of the same snapshot.
+      - name: Install the Swift snapshot
+        shell: bash
+        run: |
+          toolchain="$RUNNER_TEMP/swift"
+          mkdir -p "$toolchain"
+          curl -fsSL "https://download.swift.org/development/ubuntu2404/$SWIFT_SNAPSHOT/$SWIFT_SNAPSHOT-ubuntu24.04.tar.gz" |
+            tar xz --strip-components=1 -C "$toolchain"
+          echo "$toolchain/usr/bin" >> "$GITHUB_PATH"
+
+      - name: Install the Swift SDK for Emscripten
+        shell: bash
+        run: |
+          swift sdk install \
+            "https://github.com/k0michi/swift-emscripten-sdk/releases/download/$SWIFT_SNAPSHOT/$SWIFT_EMSCRIPTEN_SDK.artifactbundle.tar.gz" \
+            --checksum "$SWIFT_EMSCRIPTEN_SDK_CHECKSUM"
+
+      - name: Install Emscripten
+        shell: bash
+        run: |
+          emsdk="$RUNNER_TEMP/emsdk"
+          git clone --depth 1 https://github.com/emscripten-core/emsdk "$emsdk"
+          "$emsdk/emsdk" install "$EMSDK_VERSION"
+          "$emsdk/emsdk" activate "$EMSDK_VERSION"
+          echo "EMSDK=$emsdk" >> "$GITHUB_ENV"
+          echo "$emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Cache dependencies
+        uses: actions/cache@v6
+        with:
+          path: .build/dependencies/emscripten
+          key: web-deps-${{ env.SWIFT_SNAPSHOT }}-${{ env.EMSDK_VERSION }}-${{ hashFiles('CMakeLists.txt', 'scripts/emscripten/**') }}
+
+      - name: Build for the browser
+        shell: bash
+        run: ./scripts/emscripten/build.sh
+
+      - name: Install Playwright
+        shell: bash
+        run: |
+          npm ci --prefix Tests/EchoBrowserTests --no-audit --no-fund
+          npx --prefix Tests/EchoBrowserTests playwright install --with-deps chromium
+
+      - name: Test Echo on Web Audio
+        shell: bash
+        run: ./scripts/emscripten/test-browser.sh
