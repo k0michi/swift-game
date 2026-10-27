@@ -109,7 +109,13 @@ let package = Package(
             name: "Echo",
             dependencies: ["CEchoWeb", .product(name: "Atomics", package: "swift-atomics")] + foundation
         ),
-        .target(name: "EchoSDL3", dependencies: ["Echo", "SDL3"]),
+        // Swift targets that import SDL3 or Dawn, even indirectly, need their
+        // headers to load CSDL3 or CDawn.
+        .target(
+            name: "EchoSDL3",
+            dependencies: ["Echo", "SDL3"],
+            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags)]
+        ),
         .target(
             name: "CSDL3",
             cSettings: [
@@ -138,7 +144,8 @@ let package = Package(
         ),
         .target(
             name: "SDL3Dawn",
-            dependencies: ["SDL3", "Dawn"]
+            dependencies: ["SDL3", "Dawn"],
+            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags)]
         ),
         .executableTarget(
             name: "SwiftGame",
@@ -180,7 +187,8 @@ let package = Package(
         ),
         .testTarget(
             name: "EchoSDL3Tests",
-            dependencies: ["EchoSDL3", "Echo", "SDL3"]
+            dependencies: ["EchoSDL3", "Echo", "SDL3"],
+            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags)]
         ),
     ]
 )
