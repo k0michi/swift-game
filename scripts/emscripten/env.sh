@@ -22,12 +22,13 @@ export CC="$emscripten_scripts/cc.sh"
 
 # swift build for the Emscripten SDK. The manifest reads files and the
 # environment that SwiftPM does not track, so neither it nor the build plan
-# made from it is cached.
+# made from it is cached. link.sh reads the plan of the native build system,
+# which is also the one that knows the Emscripten triple.
 swift_build() {
     if [ -n "${SWIFT_SDKS_PATH:-}" ]; then
         set -- --swift-sdks-path "$SWIFT_SDKS_PATH" "$@"
     fi
-    "$SWIFT" build --manifest-cache none --disable-build-manifest-caching --swift-sdk "$SWIFT_EMSCRIPTEN_SDK" "$@"
+    "$SWIFT" build --build-system native --manifest-cache none --disable-build-manifest-caching --swift-sdk "$SWIFT_EMSCRIPTEN_SDK" "$@"
 }
 
 # Prints a path from the SDK's configuration, such as sdkRootPath.
