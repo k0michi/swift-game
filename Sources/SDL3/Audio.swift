@@ -1,14 +1,39 @@
 import CSDL3
+#if canImport(Dispatch)
 import Dispatch
+#endif
 import Foundation
 
+#if canImport(Dispatch)
 private let audioCleanupQueue = DispatchQueue(
     label: "SDL3.Audio.cleanup"
 )
 
+private func scheduleAudioCleanup(_ work: @escaping @Sendable () -> Void) {
+    audioCleanupQueue.async(execute: work)
+}
+
 func waitForAudioCleanup() {
     audioCleanupQueue.sync {}
 }
+#elseif os(Emscripten)
+// Without threads, SDL runs audio callbacks on the main thread, so a deinit
+// can run inside one. The cleanup waits for a later turn of the event loop.
+private func scheduleAudioCleanup(_ work: @escaping @Sendable () -> Void) {
+    let box = Unmanaged.passRetained(AudioCleanupWork(work)).toOpaque()
+    emscripten_async_call({ box in
+        Unmanaged<AudioCleanupWork>.fromOpaque(box!).takeRetainedValue().work()
+    }, box, 0)
+}
+
+private final class AudioCleanupWork {
+    let work: @Sendable () -> Void
+
+    init(_ work: @escaping @Sendable () -> Void) {
+        self.work = work
+    }
+}
+#endif
 
 // SDL_AUDIO_MASK_BITSIZE
 public let audioMaskBitsize: UInt32 = 0xFF
@@ -133,7 +158,7 @@ public final class AudioDeviceID: Hashable, @unchecked Sendable {
             system: openedSystem,
             callbackBox: postmixCallbackBox
         )
-        audioCleanupQueue.async {
+        scheduleAudioCleanup {
             cleanup.run()
         }
     }
@@ -230,7 +255,7 @@ public final class AudioStream: @unchecked Sendable {
                 getCallbackBox: getCallbackBox,
                 putCallbackBox: putCallbackBox
             )
-            audioCleanupQueue.async {
+            scheduleAudioCleanup {
                 cleanup.run()
             }
         }
@@ -248,7 +273,7 @@ fileprivate final class AudioStreamStorage: @unchecked Sendable {
 
     deinit {
         let destruction = AudioStreamDestruction(pointer: pointer, system: system)
-        audioCleanupQueue.async {
+        scheduleAudioCleanup {
             destruction.run()
         }
     }

@@ -3,6 +3,10 @@
 
 #include <SDL3/SDL.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+
 extern const SDL_WindowFlags CSDL3_WINDOW_FULLSCREEN;
 extern const SDL_WindowFlags CSDL3_WINDOW_OPENGL;
 extern const SDL_WindowFlags CSDL3_WINDOW_OCCLUDED;

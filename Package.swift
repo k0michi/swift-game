@@ -4,14 +4,21 @@ import PackageDescription
 import Foundation
 
 let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
-let sdlFlagsRoot = "\(packageRoot)/.build/dependencies/sdl3"
-let dawnFlagsRoot = "\(packageRoot)/.build/dependencies/dawn"
+// The manifest is evaluated on the host and cannot see the Swift SDK being
+// built for, so SWIFT_GAME_TARGET=emscripten selects the dependencies built
+// for wasm32-unknown-emscripten.
+let isEmscripten = ProcessInfo.processInfo.environment["SWIFT_GAME_TARGET"] == "emscripten"
+let dependenciesRoot = "\(packageRoot)/.build/dependencies" + (isEmscripten ? "/emscripten" : "")
+let sdlFlagsRoot = "\(dependenciesRoot)/sdl3"
+let dawnFlagsRoot = "\(dependenciesRoot)/dawn"
+let sdlBuildScript = isEmscripten ? "./scripts/emscripten/build-sdl.sh" : "./scripts/build-sdl.sh"
+let dawnBuildScript = isEmscripten ? "./scripts/emscripten/build-dawn.sh" : "./scripts/build-dawn.sh"
 
 func readSDLFlags(named name: String) -> [String] {
     let path = "\(sdlFlagsRoot)/\(name)-flags.txt"
 
     guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
-        fatalError("SDL build metadata is missing. Run ./scripts/build-sdl.sh first.")
+        fatalError("SDL build metadata is missing. Run \(sdlBuildScript) first.")
     }
 
     return contents.split(whereSeparator: \.isNewline).map(String.init)
@@ -34,7 +41,7 @@ let sdlLinkerFlags = readSDLFlags(named: "linker").flatMap { flag -> [String] in
 func readDawnFlags(named name: String) -> [String] {
     let path = "\(dawnFlagsRoot)/\(name)-flags.txt"
     guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
-        fatalError("Dawn build metadata is missing. Run ./scripts/build-dawn.sh first.")
+        fatalError("Dawn build metadata is missing. Run \(dawnBuildScript) first.")
     }
     return contents.split(whereSeparator: \.isNewline).map(String.init)
 }
@@ -59,6 +66,15 @@ let dawnLinkerFlags = readDawnFlags(named: "linker").flatMap { flag -> [String] 
     return ["-l\(libraryName)"]
 }
 
+// Apple platforms ship Foundation. For Emscripten it is built from the sources
+// that scripts/emscripten/fetch-foundation.sh checks out and patches.
+let foundationDependencies: [Package.Dependency] = isEmscripten
+    ? [.package(path: "\(dependenciesRoot)/foundation/swift-corelibs-foundation")]
+    : []
+let foundation: [Target.Dependency] = isEmscripten
+    ? [.product(name: "Foundation", package: "swift-corelibs-foundation")]
+    : []
+
 let package = Package(
     name: "SwiftGame",
     platforms: [
@@ -75,10 +91,10 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
-    ],
+    ] + foundationDependencies,
     targets: [
         .target(name: "Interop"),
-        .target(name: "Echo", dependencies: [.product(name: "Atomics", package: "swift-atomics")]),
+        .target(name: "Echo", dependencies: [.product(name: "Atomics", package: "swift-atomics")] + foundation),
         .target(name: "EchoSDL3", dependencies: ["Echo", "SDL3"]),
         .target(
             name: "CSDL3",
@@ -101,7 +117,7 @@ let package = Package(
         ),
         .target(
             name: "SDL3",
-            dependencies: ["CSDL3", "Interop"],
+            dependencies: ["CSDL3", "Interop"] + foundation,
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags),
             ]
