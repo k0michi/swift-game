@@ -74,7 +74,7 @@ public struct EmscriptenLinker: Sendable {
             + (shell.map { ["--shell-file", $0.path] } ?? [])
         arguments += emccFlags.flatMap { ["-Xlinker-driver", $0] }
         try run(swiftc, arguments)
-        print("Linked \(output.path)")
+        report("Linked \(output.path)")
         return output
     }
 

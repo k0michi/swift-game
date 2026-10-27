@@ -34,7 +34,7 @@ public struct GitSource: Sendable, CustomStringConvertible {
         }
 
         let remote = workspace.sourceMirror?.appendingPathComponent(name).path ?? url
-        print("Fetching \(name) at \(commit.prefix(12))")
+        report("Fetching \(name) at \(commit.prefix(12))")
         try? FileManager.default.removeItem(at: directory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try run("git", ["init", "--quiet"], in: directory)

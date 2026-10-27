@@ -28,7 +28,7 @@ public struct ArchiveArtifact: Artifact {
     public func build(for toolchain: Toolchain, into directory: URL, in workspace: Workspace) throws -> ArtifactUsage {
         let archive = directory.appendingPathComponent("archive.zip")
         let contents = directory.appendingPathComponent("contents")
-        print("Downloading \(url)")
+        report("Downloading \(url)")
         try run("curl", ["-fsSL", "-o", archive.path, url])
         let digest = BuildSystem.sha256(try Data(contentsOf: archive))
         guard digest == sha256 else {

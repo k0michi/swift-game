@@ -27,7 +27,7 @@ extension Artifact {
            let cached = try? JSONDecoder().decode(ArtifactUsage.self, from: data) {
             usage = cached
         } else {
-            print("Building \(name) for \(toolchain.platform.rawValue)")
+            report("Building \(name) for \(toolchain.platform.rawValue)")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             usage = try build(for: toolchain, into: directory, in: workspace)
             let encoder = JSONEncoder()

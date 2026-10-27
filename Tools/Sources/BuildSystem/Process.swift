@@ -50,9 +50,10 @@ public func output(
 public func which(_ name: String) throws -> URL {
     if name.contains("/") || name.contains("\\") { return URL(fileURLWithPath: name) }
     #if os(Windows)
+    // Programs need an extension from PATHEXT to run.
     let environment = ProcessInfo.processInfo.environment
     let paths = (environment["Path"] ?? environment["PATH"] ?? "").split(separator: ";")
-    let names = [name] + (environment["PATHEXT"] ?? ".EXE;.CMD;.BAT").split(separator: ";").map { name + $0 }
+    let names = (environment["PATHEXT"] ?? ".EXE;.CMD;.BAT").split(separator: ";").map { name + $0 }
     #else
     let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":")
     let names = [name]
@@ -60,7 +61,12 @@ public func which(_ name: String) throws -> URL {
     for path in paths {
         for name in names {
             let candidate = URL(fileURLWithPath: String(path)).appendingPathComponent(name)
-            if FileManager.default.isExecutableFile(atPath: candidate.path) {
+            // isExecutableFile alone is true for some missing files on
+            // Windows.
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDirectory),
+               !isDirectory.boolValue,
+               FileManager.default.isExecutableFile(atPath: candidate.path) {
                 return candidate
             }
         }
@@ -91,6 +97,13 @@ private func makeProcess(
         process.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
     }
     return process
+}
+
+// Writes a line of progress straight to standard output. print buffers it
+// when the output is a pipe, as in CI, which puts it out of order with the
+// commands' output and errors.
+public func report(_ line: String) {
+    FileHandle.standardOutput.write(Data((line + "\n").utf8))
 }
 
 public struct BuildError: Error, CustomStringConvertible {
