@@ -97,7 +97,11 @@ let package = Package(
         .target(name: "Interop"),
         .target(name: "CEmscripten"),
         .target(name: "MainLoop", dependencies: ["CEmscripten"]),
-        .target(name: "Echo", dependencies: [.product(name: "Atomics", package: "swift-atomics")] + foundation),
+        .target(name: "CEchoWeb"),
+        .target(
+            name: "Echo",
+            dependencies: ["CEchoWeb", .product(name: "Atomics", package: "swift-atomics")] + foundation
+        ),
         .target(name: "EchoSDL3", dependencies: ["Echo", "SDL3"]),
         .target(
             name: "CSDL3",
@@ -135,6 +139,14 @@ let package = Package(
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
             ]
+        ),
+        // Echo on the browser's Web Audio, run in headless Chromium by
+        // scripts/emscripten/test-browser.sh.
+        .executableTarget(
+            name: "EchoBrowserTests",
+            dependencies: ["Echo", "MainLoop"],
+            path: "Tests/EchoBrowserTests",
+            exclude: ["package.json", "package-lock.json", "node_modules", "runner.js"]
         ),
         .testTarget(
             name: "DawnTests",
