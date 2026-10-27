@@ -2,10 +2,14 @@
 import CEmscripten
 @_spi(ExperimentalCustomExecutors) @_spi(ExperimentalScheduling) import _Concurrency
 
-// The main and default executor in the browser, set by runMainLoop.
-enum BrowserExecutorFactory: ExecutorFactory {
-    static var mainExecutor: any MainExecutor { BrowserExecutor.shared }
-    static var defaultExecutor: any TaskExecutor { BrowserExecutor.shared }
+// The main and default executor in the browser. An executable selects it
+// with `typealias DefaultExecutorFactory = BrowserExecutorFactory` in its
+// @main type, which Swift reads only with -disable-availability-checking for
+// now.
+@_spi(ExperimentalCustomExecutors)
+public enum BrowserExecutorFactory: ExecutorFactory {
+    public static var mainExecutor: any MainExecutor { BrowserExecutor.shared }
+    public static var defaultExecutor: any TaskExecutor { BrowserExecutor.shared }
 }
 
 // Runs jobs on the browser's event loop: in a task of their own soon after
@@ -58,8 +62,9 @@ final class BrowserExecutor: MainExecutor, TaskExecutor, SchedulingExecutor, @un
         }
     }
 
-    // The queued jobs run and the stack unwinds to the browser, which keeps
-    // the runtime alive and calls back into it.
+    // `async main` calls this and exits when it returns. Instead, the queued
+    // jobs run and the stack unwinds to the browser, which keeps the runtime
+    // alive and calls back into it.
     public func run() throws {
         drain()
         emscripten_exit_with_live_runtime()

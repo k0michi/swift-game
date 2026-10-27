@@ -75,6 +75,13 @@ let foundation: [Target.Dependency] = isEmscripten
     ? [.product(name: "Foundation", package: "swift-corelibs-foundation")]
     : []
 
+// Swift reads an executable's DefaultExecutorFactory, which MainLoop's
+// browser executor needs, only when availability is not checked. Emscripten
+// has no OS versions for availability to check.
+let customExecutorSettings: [SwiftSetting] = isEmscripten
+    ? [.unsafeFlags(["-Xfrontend", "-disable-availability-checking"])]
+    : []
+
 let package = Package(
     name: "SwiftGame",
     platforms: [
@@ -138,7 +145,7 @@ let package = Package(
             dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop"],
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
-            ]
+            ] + customExecutorSettings
         ),
         // Echo on the browser's Web Audio, run in headless Chromium by
         // scripts/emscripten/test-browser.sh.
@@ -146,7 +153,8 @@ let package = Package(
             name: "EchoBrowserTests",
             dependencies: ["Echo", "MainLoop"],
             path: "Tests/EchoBrowserTests",
-            exclude: ["package.json", "package-lock.json", "node_modules", "runner.js"]
+            exclude: ["package.json", "package-lock.json", "node_modules", "runner.js"],
+            swiftSettings: customExecutorSettings
         ),
         .testTarget(
             name: "DawnTests",

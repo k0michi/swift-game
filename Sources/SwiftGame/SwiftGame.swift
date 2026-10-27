@@ -1,5 +1,5 @@
 import Dawn
-import MainLoop
+@_spi(ExperimentalCustomExecutors) import MainLoop
 import SDL3
 import SDL3Dawn
 
@@ -69,13 +69,11 @@ private final class SquareWaveGenerator: @unchecked Sendable {
 @main
 @MainActor
 struct SwiftGame {
-    static func main() {
-        runMainLoop {
-            try await run()
-        }
-    }
+    #if os(Emscripten)
+    typealias DefaultExecutorFactory = BrowserExecutorFactory
+    #endif
 
-    private static func run() async throws {
+    static func main() async throws {
         let system = try `init`(flags: [.audio, .video])
 
         let audioSpec = AudioSpec(format: .f32, channels: 2, freq: 48_000)
