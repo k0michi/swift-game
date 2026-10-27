@@ -18,7 +18,7 @@ public func run(
     environment: [String: String] = [:]
 ) throws {
     let process = try makeProcess(executable, arguments, in: directory, environment: environment)
-    try process.run()
+    try launch(process)
     process.waitUntilExit()
     guard process.terminationStatus == 0 else {
         throw ProcessError(command: [executable] + arguments, status: process.terminationStatus)
@@ -35,7 +35,7 @@ public func output(
     let process = try makeProcess(executable, arguments, in: directory, environment: environment)
     let pipe = Pipe()
     process.standardOutput = pipe
-    try process.run()
+    try launch(process)
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     guard process.terminationStatus == 0 else {
@@ -44,7 +44,9 @@ public func output(
     return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .newlines)
 }
 
-// The full path of an executable in PATH.
+// The full path of an executable in PATH. Symbolic links are kept: a
+// toolchain's swift and swiftc are links to one driver that reads the name it
+// was run by.
 public func which(_ name: String) throws -> URL {
     if name.contains("/") || name.contains("\\") { return URL(fileURLWithPath: name) }
     #if os(Windows)
@@ -59,11 +61,20 @@ public func which(_ name: String) throws -> URL {
         for name in names {
             let candidate = URL(fileURLWithPath: String(path)).appendingPathComponent(name)
             if FileManager.default.isExecutableFile(atPath: candidate.path) {
-                return candidate.resolvingSymlinksInPath()
+                return candidate
             }
         }
     }
     throw BuildError("\(name) is not in PATH")
+}
+
+private func launch(_ process: Process) throws {
+    do {
+        try process.run()
+    } catch {
+        let directory = process.currentDirectoryURL.map { " in \($0.path)" } ?? ""
+        throw BuildError("Cannot run \(process.executableURL?.path ?? "?")\(directory): \(error)")
+    }
 }
 
 private func makeProcess(

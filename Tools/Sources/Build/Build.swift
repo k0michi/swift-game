@@ -5,6 +5,9 @@ import Foundation
 @main
 enum Main {
     static func main() {
+        // Progress goes to a pipe in CI, where buffering would put it out of
+        // order with the commands' output and errors.
+        setvbuf(stdout, nil, _IONBF, 0)
         let arguments = CommandLine.arguments
         if let command = CompilerForwarding.forwardedCommand(for: arguments) {
             CompilerForwarding.run(command, Array(arguments.dropFirst()))
