@@ -2,7 +2,7 @@ name: CI
 
 env:
   SWIFT_VERSION: 6.3.3
-  BUILD_CACHE_VERSION: 3
+  BUILD_CACHE_VERSION: 4
 
 on:
   push:
@@ -41,40 +41,30 @@ jobs:
             libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
           sudo apt-get install --yes libx11-xcb-dev
 
-      - name: Compute build cache context
-        id: build-cache-context
-        shell: bash
-        run: echo "native-source=${{ hashFiles('CMakeLists.txt', 'cmake/Dawn/CMakeLists.txt') }}" >> "$GITHUB_OUTPUT"
-
       - name: Cache build
         uses: actions/cache@v6
         with:
-          path: .build
-          key: build-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-native-${{ steps.build-cache-context.outputs.native-source }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Sources/**', 'Tests/**', 'cmake/**', 'Scripts/**') }}
+          path: |
+            .build
+            Tools/.build
+          key: build-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Sources/**', 'Tests/**', 'Tools/**') }}
           restore-keys: |
-            build-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-native-${{ steps.build-cache-context.outputs.native-source }}-
             build-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-
 
-      - name: Build on macOS or Linux
-        if: runner.os != 'Windows'
+      - name: Build
         shell: bash
-        run: ./scripts/build.sh
+        run: swift run --package-path Tools build
 
-      - name: Build on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/build.ps1
-
-      - name: Test SDL3 wrapper on macOS
-        if: runner.os == 'macOS'
+      - name: Test on macOS and Windows
+        if: runner.os != 'Linux'
         shell: bash
-        run: ./scripts/test.sh
+        run: swift run --package-path Tools build test
 
       - name: Test with coverage on Linux
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          ./scripts/test.sh --enable-code-coverage
+          swift run --package-path Tools build test -- --enable-code-coverage
           coverage_data="$(find .build -type f -name default.profdata -print -quit)"
           test_bundle="$(find .build -type f -name '*.xctest' -print -quit)"
           test -n "$coverage_data"
@@ -90,11 +80,6 @@ jobs:
           disable_search: true
           flags: linux
           fail_ci_if_error: true
-
-      - name: Test SDL3 wrapper on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/test.ps1
 
   web:
     runs-on: ubuntu-24.04
@@ -138,12 +123,14 @@ jobs:
       - name: Cache dependencies
         uses: actions/cache@v6
         with:
-          path: .build/dependencies/emscripten
-          key: web-deps-${{ env.SWIFT_SNAPSHOT }}-${{ env.EMSDK_VERSION }}-${{ hashFiles('CMakeLists.txt', 'scripts/emscripten/**') }}
+          path: |
+            .build/sources
+            .build/artifacts/emscripten
+          key: web-deps-${{ env.SWIFT_SNAPSHOT }}-${{ env.EMSDK_VERSION }}-${{ hashFiles('Tools/**') }}
 
       - name: Build for the browser
         shell: bash
-        run: ./scripts/emscripten/build.sh
+        run: swift run --package-path Tools build --platform emscripten
 
       - name: Install Playwright
         shell: bash
@@ -153,4 +140,4 @@ jobs:
 
       - name: Test Echo on Web Audio
         shell: bash
-        run: ./scripts/emscripten/test-browser.sh
+        run: swift run --package-path Tools build test --platform emscripten

@@ -1,6 +1,6 @@
 {
   "private": true,
-  "description": "Node.js modules for scripts/emscripten/test-browser.sh",
+  "description": "Node.js modules for the browser tests of Tools/",
   "type": "module",
   "devDependencies": {
     "playwright": "1.64.1"

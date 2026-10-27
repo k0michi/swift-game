@@ -1,0 +1,8 @@
+// webgpu.h, from Dawn on the host and emdawnwebgpu in the browser, built or
+// downloaded by Tools. SwiftPM reads its headers and libraries from
+// swift-game-dawn.pc and passes them to every target that depends on this
+// one, directly or not.
+module CDawnLibrary [system] {
+    header "CDawnLibrary.h"
+    export *
+}

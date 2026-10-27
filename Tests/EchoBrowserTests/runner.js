@@ -1,4 +1,5 @@
-// Runs EchoBrowserTests in headless Chromium for scripts/emscripten/test-browser.sh.
+// Runs EchoBrowserTests in headless Chromium for
+// `swift run --package-path Tools build test --platform emscripten`.
 //
 // Usage: node runner.js <directory with EchoBrowserTests.html>
 //

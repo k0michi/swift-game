@@ -6,70 +6,13 @@ import Foundation
 let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 // The manifest is evaluated on the host and cannot see the Swift SDK being
 // built for, so SWIFT_GAME_TARGET=emscripten selects the dependencies built
-// for wasm32-unknown-emscripten.
+// for wasm32-unknown-emscripten. Tools/ sets it when it builds for the browser.
 let isEmscripten = ProcessInfo.processInfo.environment["SWIFT_GAME_TARGET"] == "emscripten"
-let dependenciesRoot = "\(packageRoot)/.build/dependencies" + (isEmscripten ? "/emscripten" : "")
-let sdlFlagsRoot = "\(dependenciesRoot)/sdl3"
-let dawnFlagsRoot = "\(dependenciesRoot)/dawn"
-let sdlBuildScript = isEmscripten ? "./scripts/emscripten/build-sdl.sh" : "./scripts/build-sdl.sh"
-let dawnBuildScript = isEmscripten ? "./scripts/emscripten/build-dawn.sh" : "./scripts/build-dawn.sh"
-
-func readSDLFlags(named name: String) -> [String] {
-    let path = "\(sdlFlagsRoot)/\(name)-flags.txt"
-
-    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
-        fatalError("SDL build metadata is missing. Run \(sdlBuildScript) first.")
-    }
-
-    return contents.split(whereSeparator: \.isNewline).map(String.init)
-}
-
-let sdlCompilerFlags = readSDLFlags(named: "compiler")
-let sdlSwiftCompilerFlags = sdlCompilerFlags.flatMap { ["-Xcc", $0] }
-let sdlLinkerFlags = readSDLFlags(named: "linker").flatMap { flag -> [String] in
-    if flag == "-pthread" {
-        return ["-lpthread"]
-    }
-
-    guard flag.hasPrefix("-Wl,") else {
-        return [flag]
-    }
-
-    return flag.dropFirst(4).split(separator: ",").flatMap { ["-Xlinker", String($0)] }
-}
-
-func readDawnFlags(named name: String) -> [String] {
-    let path = "\(dawnFlagsRoot)/\(name)-flags.txt"
-    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
-        fatalError("Dawn build metadata is missing. Run \(dawnBuildScript) first.")
-    }
-    return contents.split(whereSeparator: \.isNewline).map(String.init)
-}
-
-let dawnCompilerFlags = readDawnFlags(named: "compiler")
-let dawnSwiftCompilerFlags = dawnCompilerFlags.flatMap { ["-Xcc", $0] }
-let dawnLinkerFlags = readDawnFlags(named: "linker").flatMap { flag -> [String] in
-    if flag.contains("::") || flag.contains("$<") || flag == "dawn_public_config" || flag.contains("NOTFOUND") || ["debug", "optimized", "general"].contains(flag) {
-        return []
-    }
-    if flag.hasPrefix("-framework ") {
-        return ["-framework", String(flag.dropFirst("-framework ".count))]
-    }
-    if flag.hasPrefix("-Wl,") {
-        return flag.dropFirst(4).split(separator: ",").flatMap { ["-Xlinker", String($0)] }
-    }
-    if flag.hasPrefix("-") || flag.hasPrefix("/") || flag.contains(":") {
-        return [flag]
-    }
-
-    let libraryName = flag.hasSuffix(".lib") ? String(flag.dropLast(4)) : flag
-    return ["-l\(libraryName)"]
-}
 
 // Apple platforms ship Foundation. For Emscripten it is built from the sources
-// that scripts/emscripten/fetch-foundation.sh checks out and patches.
+// that Tools checks out and patches.
 let foundationDependencies: [Package.Dependency] = isEmscripten
-    ? [.package(path: "\(dependenciesRoot)/foundation/swift-corelibs-foundation")]
+    ? [.package(path: "\(packageRoot)/.build/sources/swift-corelibs-foundation")]
     : []
 let foundation: [Target.Dependency] = isEmscripten
     ? [.product(name: "Foundation", package: "swift-corelibs-foundation")]
@@ -109,53 +52,30 @@ let package = Package(
             name: "Echo",
             dependencies: ["CEchoWeb", .product(name: "Atomics", package: "swift-atomics")] + foundation
         ),
-        // Swift targets that import SDL3 or Dawn, even indirectly, need their
-        // headers to load CSDL3 or CDawn.
-        .target(
-            name: "EchoSDL3",
-            dependencies: ["Echo", "SDL3"],
-            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags)]
-        ),
-        .target(
-            name: "CSDL3",
-            cSettings: [
-                .unsafeFlags(sdlCompilerFlags),
-            ],
-            linkerSettings: [
-                .unsafeFlags(sdlLinkerFlags),
-            ]
-        ),
-        .target(
-            name: "CDawn",
-            cSettings: [.unsafeFlags(dawnCompilerFlags)],
-            linkerSettings: [.unsafeFlags(dawnLinkerFlags)]
-        ),
+        .target(name: "EchoSDL3", dependencies: ["Echo", "SDL3"]),
+        .systemLibrary(name: "CSDL3Library", pkgConfig: "swift-game-sdl3"),
+        .target(name: "CSDL3", dependencies: ["CSDL3Library"]),
+        .systemLibrary(name: "CDawnLibrary", pkgConfig: "swift-game-dawn"),
+        .target(name: "CDawn", dependencies: ["CDawnLibrary"]),
         .target(
             name: "Dawn",
-            dependencies: ["CDawn", "Interop"],
-            swiftSettings: [.unsafeFlags(dawnSwiftCompilerFlags)]
+            dependencies: ["CDawn", "Interop"]
         ),
         .target(
             name: "SDL3",
-            dependencies: ["CSDL3", "Interop"] + foundation,
-            swiftSettings: [
-                .unsafeFlags(sdlSwiftCompilerFlags),
-            ]
+            dependencies: ["CSDL3", "Interop"] + foundation
         ),
         .target(
             name: "SDL3Dawn",
-            dependencies: ["SDL3", "Dawn"],
-            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags)]
+            dependencies: ["SDL3", "Dawn"]
         ),
         .executableTarget(
             name: "SwiftGame",
             dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop"],
-            swiftSettings: [
-                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
-            ] + customExecutorSettings
+            swiftSettings: customExecutorSettings
         ),
         // Echo on the browser's Web Audio, run in headless Chromium by
-        // scripts/emscripten/test-browser.sh.
+        // `swift run --package-path Tools build test --platform emscripten`.
         .executableTarget(
             name: "EchoBrowserTests",
             dependencies: ["Echo", "MainLoop"],
@@ -165,17 +85,11 @@ let package = Package(
         ),
         .testTarget(
             name: "DawnTests",
-            dependencies: ["Dawn", "Interop"],
-            swiftSettings: [
-                .unsafeFlags(dawnSwiftCompilerFlags),
-            ]
+            dependencies: ["Dawn", "Interop"]
         ),
         .testTarget(
             name: "SDL3Tests",
-            dependencies: ["SDL3"],
-            swiftSettings: [
-                .unsafeFlags(sdlSwiftCompilerFlags),
-            ]
+            dependencies: ["SDL3"]
         ),
         .testTarget(
             name: "InteropTests",
@@ -187,8 +101,7 @@ let package = Package(
         ),
         .testTarget(
             name: "EchoSDL3Tests",
-            dependencies: ["EchoSDL3", "Echo", "SDL3"],
-            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags)]
+            dependencies: ["EchoSDL3", "Echo", "SDL3"]
         ),
     ]
 )

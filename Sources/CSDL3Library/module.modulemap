@@ -1,0 +1,7 @@
+// SDL3, built by Tools for the platform being built for. SwiftPM reads its
+// headers and libraries from swift-game-sdl3.pc and passes them to every
+// target that depends on this one, directly or not.
+module CSDL3Library [system] {
+    header "CSDL3Library.h"
+    export *
+}
