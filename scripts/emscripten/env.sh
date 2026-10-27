@@ -24,11 +24,17 @@ export CC="$emscripten_scripts/cc.sh"
 # environment that SwiftPM does not track, so neither it nor the build plan
 # made from it is cached. link.sh reads the plan of the native build system,
 # which is also the one that knows the Emscripten triple.
+#
+# Emscripten's libc is musl, which hides much of POSIX behind _GNU_SOURCE.
+# Foundation defines it only for platforms SwiftPM names, and SwiftPM names
+# none for Emscripten, so it is defined for everything here, as Swift does
+# itself for musl targets.
 swift_build() {
     if [ -n "${SWIFT_SDKS_PATH:-}" ]; then
         set -- --swift-sdks-path "$SWIFT_SDKS_PATH" "$@"
     fi
-    "$SWIFT" build --build-system native --manifest-cache none --disable-build-manifest-caching --swift-sdk "$SWIFT_EMSCRIPTEN_SDK" "$@"
+    "$SWIFT" build --build-system native --manifest-cache none --disable-build-manifest-caching \
+        --swift-sdk "$SWIFT_EMSCRIPTEN_SDK" -Xcc -D_GNU_SOURCE "$@"
 }
 
 # Prints a path from the SDK's configuration, such as sdkRootPath.
