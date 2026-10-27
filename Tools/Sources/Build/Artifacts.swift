@@ -10,6 +10,10 @@ let sdl = CMakeArtifact(
         "SDL_SHARED": "OFF",
         "SDL_STATIC": "ON",
         "SDL_DEPS_SHARED": "OFF",
+        // With dependencies linked rather than loaded, SDL would link the
+        // libusb of whichever machine builds it. HIDAPI uses the OS's own
+        // APIs without it on macOS and Windows.
+        "SDL_HIDAPI_LIBUSB": "OFF",
         "SDL_INSTALL": "OFF",
         "SDL_TEST_LIBRARY": "OFF",
         "SDL_TESTS": "OFF",
