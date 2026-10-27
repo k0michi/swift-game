@@ -73,6 +73,9 @@ public let propWindowX11DisplayPointer = "SDL.window.x11.display"
 // SDL_PROP_WINDOW_X11_WINDOW_NUMBER
 public let propWindowX11WindowNumber = "SDL.window.x11.window"
 
+// SDL_PROP_WINDOW_EMSCRIPTEN_CANVAS_ID_STRING
+public let propWindowEmscriptenCanvasIDString = "SDL.window.emscripten.canvas_id"
+
 // SDL_Window
 @MainActor
 public final class Window {

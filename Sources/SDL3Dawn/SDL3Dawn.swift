@@ -87,6 +87,24 @@ public extension Instance {
             throw SDL3DawnError.surfaceSourceUnavailable
         }
         return surface
+        #elseif os(Emscripten)
+        let properties = try getWindowProperties(window: window)
+        // SDL gives the canvas as a CSS selector, such as "#canvas".
+        guard let canvasSelector = getStringProperty(
+            props: properties,
+            name: propWindowEmscriptenCanvasIDString
+        ) else {
+            throw SDL3DawnError.surfaceSourceUnavailable
+        }
+
+        let surface = try createSurface(
+            descriptor: SurfaceDescriptor(
+                nextInChain: EmscriptenSurfaceSourceCanvasHTMLSelector(
+                    selector: canvasSelector
+                )
+            )
+        )
+        return surface
         #else
         throw SDL3DawnError.surfaceSourceUnavailable
         #endif

@@ -38,3 +38,12 @@ public func getNumberProperty(
 ) -> Int64 {
     SDL_GetNumberProperty(props.rawValue, name, defaultValue)
 }
+
+// SDL_GetStringProperty
+public func getStringProperty(
+    props: PropertiesID,
+    name: String,
+    defaultValue: String? = nil
+) -> String? {
+    SDL_GetStringProperty(props.rawValue, name, defaultValue).map { String(cString: $0) }
+}

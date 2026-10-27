@@ -53,6 +53,9 @@ public struct RequestAdapterOptions: Sendable {
 public enum SType: UInt32, Sendable {
     case shaderSourceSPIRV = 0x0000_0001
     case shaderSourceWGSL = 0x0000_0002
+    #if os(Emscripten)
+    case emscriptenSurfaceSourceCanvasHTMLSelector = 0x0004_0000
+    #else
     case surfaceSourceMetalLayer = 0x0000_0004
     case surfaceSourceWindowsHWND = 0x0000_0005
     case surfaceSourceXlibWindow = 0x0000_0006
@@ -61,6 +64,7 @@ public enum SType: UInt32, Sendable {
     case shaderModuleCompilationOptions = 0x0005_0019
     case colorTargetStateExpandResolveTextureDawn = 0x0005_001A
     case dawnShaderSourceSPIRV = 0x0005_0053
+    #endif
 }
 
 // WGPUChainedStruct
@@ -78,6 +82,9 @@ public protocol ChainedStructNode {
     var chain: ChainedStruct { get set }
 }
 
+// Emdawnwebgpu implements only the parts of webgpu.h that the browser's
+// WebGPU has, so Dawn's native extensions are left out for Emscripten.
+#if !os(Emscripten)
 // WGPUDawnShaderModuleSPIRVOptionsDescriptor
 public struct DawnShaderModuleSPIRVOptionsDescriptor: ChainedStructNode {
     public var chain: ChainedStruct
@@ -128,6 +135,8 @@ public struct ShaderModuleCompilationOptions: ChainedStructNode {
         self.strictMath = strictMath
     }
 }
+
+#endif
 
 // WGPUShaderSourceSPIRV
 public struct ShaderSourceSPIRV: ChainedStructNode {
@@ -191,6 +200,24 @@ public struct SurfaceDescriptor {
     }
 }
 
+#if os(Emscripten)
+// WGPUEmscriptenSurfaceSourceCanvasHTMLSelector
+public struct EmscriptenSurfaceSourceCanvasHTMLSelector: ChainedStructNode {
+    public var chain: ChainedStruct
+    public var selector: String
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        selector: String
+    ) {
+        self.chain = ChainedStruct(
+            next: nextInChain,
+            sType: .emscriptenSurfaceSourceCanvasHTMLSelector
+        )
+        self.selector = selector
+    }
+}
+#else
 // WGPUSurfaceSourceMetalLayer
 public struct SurfaceSourceMetalLayer: ChainedStructNode {
     public var chain: ChainedStruct
@@ -267,6 +294,7 @@ public struct SurfaceSourceXlibWindow: ChainedStructNode {
         self.window = window
     }
 }
+#endif
 
 // WGPUTextureUsage
 public struct TextureUsage: OptionSet, Sendable {
@@ -299,9 +327,11 @@ public enum TextureAspect: UInt32, Sendable {
     case all = 0x0000_0001
     case stencilOnly = 0x0000_0002
     case depthOnly = 0x0000_0003
+    #if !os(Emscripten)
     case plane0Only = 0x0005_0000
     case plane1Only = 0x0005_0001
     case plane2Only = 0x0005_0002
+    #endif
 }
 
 // WGPUAddressMode
@@ -1132,6 +1162,7 @@ public struct BlendComponent {
     }
 }
 
+#if !os(Emscripten)
 // WGPUColorTargetStateExpandResolveTextureDawn
 public struct ColorTargetStateExpandResolveTextureDawn: ChainedStructNode {
     public var chain: ChainedStruct
@@ -1148,6 +1179,7 @@ public struct ColorTargetStateExpandResolveTextureDawn: ChainedStructNode {
         self.enabled = enabled
     }
 }
+#endif
 
 // WGPUConstantEntry
 public struct ConstantEntry {
@@ -1525,7 +1557,9 @@ public enum LoadOp: UInt32, Sendable {
     case undefined = 0x0000_0000
     case load = 0x0000_0001
     case clear = 0x0000_0002
+    #if !os(Emscripten)
     case expandResolveTexture = 0x0005_0003
+    #endif
 }
 
 // WGPUStoreOp
@@ -2341,8 +2375,15 @@ public final class Surface {
             CompositeAlphaMode(rawValue: UInt32(truncatingIfNeeded: $0.rawValue))
         }
 
+        var usages = TextureUsage(rawValue: cCapabilities.usages)
+        #if os(Emscripten)
+        // Emdawnwebgpu leaves usages at 0, though a canvas can always be
+        // rendered to.
+        usages.insert(.renderAttachment)
+        #endif
+
         return SurfaceCapabilities(
-            usages: TextureUsage(rawValue: cCapabilities.usages),
+            usages: usages,
             formats: formats,
             presentModes: presentModes,
             alphaModes: alphaModes
@@ -2388,12 +2429,17 @@ public final class Surface {
 
     // wgpuSurfacePresent
     public func present() throws {
+        #if os(Emscripten)
+        // The browser presents the canvas after the animation frame callback
+        // returns, and emdawnwebgpu aborts on wgpuSurfacePresent.
+        #else
         let status = wgpuSurfacePresent(handle)
         guard status == WGPUStatus_Success else {
             throw WebGPUError.presentFailed(
                 status: UInt32(truncatingIfNeeded: status.rawValue)
             )
         }
+        #endif
     }
 
     isolated deinit {
@@ -2453,6 +2499,10 @@ private extension SType {
         switch self {
         case .shaderSourceSPIRV: WGPUSType_ShaderSourceSPIRV
         case .shaderSourceWGSL: WGPUSType_ShaderSourceWGSL
+        #if os(Emscripten)
+        case .emscriptenSurfaceSourceCanvasHTMLSelector:
+            WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector
+        #else
         case .surfaceSourceMetalLayer: WGPUSType_SurfaceSourceMetalLayer
         case .surfaceSourceWindowsHWND: WGPUSType_SurfaceSourceWindowsHWND
         case .surfaceSourceXlibWindow: WGPUSType_SurfaceSourceXlibWindow
@@ -2463,6 +2513,7 @@ private extension SType {
         case .colorTargetStateExpandResolveTextureDawn:
             WGPUSType_ColorTargetStateExpandResolveTextureDawn
         case .dawnShaderSourceSPIRV: WGPUSType_DawnShaderSourceSPIRV
+        #endif
         }
     }
 }
@@ -2746,6 +2797,7 @@ private extension TextureFormat {
             case .astc12x10UnormSrgb: WGPUTextureFormat_ASTC12x10UnormSrgb
             case .astc12x12Unorm: WGPUTextureFormat_ASTC12x12Unorm
             case .astc12x12UnormSrgb: WGPUTextureFormat_ASTC12x12UnormSrgb
+            #if !os(Emscripten)
             case .r8BG8Biplanar420Unorm: WGPUTextureFormat_R8BG8Biplanar420Unorm
             case .r10X6BG10X6Biplanar420Unorm: WGPUTextureFormat_R10X6BG10X6Biplanar420Unorm
             case .r8BG8A8Triplanar420Unorm: WGPUTextureFormat_R8BG8A8Triplanar420Unorm
@@ -2754,6 +2806,7 @@ private extension TextureFormat {
             case .r10X6BG10X6Biplanar422Unorm: WGPUTextureFormat_R10X6BG10X6Biplanar422Unorm
             case .r10X6BG10X6Biplanar444Unorm: WGPUTextureFormat_R10X6BG10X6Biplanar444Unorm
             case .opaqueYCbCrAndroid: WGPUTextureFormat_OpaqueYCbCrAndroid
+            #endif
             default: throw WebGPUError.unsupportedTextureFormat(self)
             }
         }
@@ -2778,9 +2831,11 @@ private extension TextureAspect {
         case .all: WGPUTextureAspect_All
         case .stencilOnly: WGPUTextureAspect_StencilOnly
         case .depthOnly: WGPUTextureAspect_DepthOnly
+        #if !os(Emscripten)
         case .plane0Only: WGPUTextureAspect_Plane0Only
         case .plane1Only: WGPUTextureAspect_Plane1Only
         case .plane2Only: WGPUTextureAspect_Plane2Only
+        #endif
         }
     }
 }
@@ -2947,7 +3002,9 @@ private extension LoadOp {
         case .undefined: WGPULoadOp_Undefined
         case .load: WGPULoadOp_Load
         case .clear: WGPULoadOp_Clear
+        #if !os(Emscripten)
         case .expandResolveTexture: WGPULoadOp_ExpandResolveTexture
+        #endif
         }
     }
 }
@@ -2971,6 +3028,7 @@ private func withCChain<Result>(
     }
 
     switch node {
+    #if !os(Emscripten)
     case let state as ColorTargetStateExpandResolveTextureDawn:
         return try withCChain(state.chain.next) { next in
             var cState = WGPUColorTargetStateExpandResolveTextureDawn()
@@ -3026,6 +3084,7 @@ private func withCChain<Result>(
                 )
             }
         }
+    #endif
     case let source as ShaderSourceSPIRV:
         guard let codeSize = UInt32(exactly: source.code.count) else {
             throw WebGPUError.shaderSourceSPIRVTooLarge
@@ -3060,6 +3119,23 @@ private func withCChain<Result>(
                 }
             }
         }
+    #if os(Emscripten)
+    case let source as EmscriptenSurfaceSourceCanvasHTMLSelector:
+        return try withCChain(source.chain.next) { next in
+            try withWGPUStringView(source.selector) { selector in
+                var cSource = WGPUEmscriptenSurfaceSourceCanvasHTMLSelector()
+                cSource.chain.next = next
+                cSource.chain.sType = source.chain.sType.cValue
+                cSource.selector = selector
+                return try withUnsafeMutablePointer(to: &cSource) { source in
+                    try body(
+                        UnsafeMutableRawPointer(source)
+                            .assumingMemoryBound(to: WGPUChainedStruct.self)
+                    )
+                }
+            }
+        }
+    #else
     case let source as SurfaceSourceMetalLayer:
         return try withCChain(source.chain.next) { next in
             try source.layer.withUnsafeMutableRawPointer { layer in
@@ -3127,6 +3203,7 @@ private func withCChain<Result>(
                 }
             }
         }
+    #endif
     default:
         throw WebGPUError.unsupportedChainedStruct(node.chain.sType)
     }

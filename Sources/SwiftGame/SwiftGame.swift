@@ -1,4 +1,5 @@
 import Dawn
+import MainLoop
 import SDL3
 import SDL3Dawn
 
@@ -68,7 +69,13 @@ private final class SquareWaveGenerator: @unchecked Sendable {
 @main
 @MainActor
 struct SwiftGame {
-    static func main() async throws {
+    static func main() {
+        runMainLoop {
+            try await run()
+        }
+    }
+
+    private static func run() async throws {
         let system = try `init`(flags: [.audio, .video])
 
         let audioSpec = AudioSpec(format: .f32, channels: 2, freq: 48_000)
@@ -109,6 +116,8 @@ struct SwiftGame {
             let backendType = BackendType.metal
         #elseif os(Windows)
             let backendType = BackendType.d3D12
+        #elseif os(Emscripten)
+            let backendType = BackendType.undefined
         #else
             let backendType = BackendType.vulkan
         #endif
@@ -289,6 +298,7 @@ struct SwiftGame {
             }
 
             instance.processEvents()
+            await nextFrame()
         }
 
         withExtendedLifetime(

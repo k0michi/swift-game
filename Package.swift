@@ -88,12 +88,15 @@ let package = Package(
         .library(name: "Interop", targets: ["Interop"]),
         .library(name: "Echo", targets: ["Echo"]),
         .library(name: "EchoSDL3", targets: ["EchoSDL3"]),
+        .library(name: "MainLoop", targets: ["MainLoop"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
     ] + foundationDependencies,
     targets: [
         .target(name: "Interop"),
+        .target(name: "CEmscripten"),
+        .target(name: "MainLoop", dependencies: ["CEmscripten"]),
         .target(name: "Echo", dependencies: [.product(name: "Atomics", package: "swift-atomics")] + foundation),
         .target(name: "EchoSDL3", dependencies: ["Echo", "SDL3"]),
         .target(
@@ -128,7 +131,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "SwiftGame",
-            dependencies: ["SDL3", "Dawn", "SDL3Dawn"],
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop"],
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
             ]
