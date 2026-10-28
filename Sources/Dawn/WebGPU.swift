@@ -39,11 +39,20 @@ public enum BackendType: UInt32, Sendable {
     case openGLES = 0x0000_0008
 }
 
+// WGPUFeatureLevel
+public enum FeatureLevel: UInt32, Sendable {
+    case undefined = 0x0000_0000
+    case compatibility = 0x0000_0001
+    case core = 0x0000_0002
+}
+
 // WGPURequestAdapterOptions
 public struct RequestAdapterOptions: Sendable {
+    public var featureLevel: FeatureLevel
     public var backendType: BackendType
 
-    public init(backendType: BackendType = .undefined) {
+    public init(featureLevel: FeatureLevel = .undefined, backendType: BackendType = .undefined) {
+        self.featureLevel = featureLevel
         self.backendType = backendType
     }
 }
@@ -1681,6 +1690,7 @@ public final class Instance: @unchecked Sendable {
         options: RequestAdapterOptions = RequestAdapterOptions()
     ) async throws -> Adapter {
         var cOptions = CDawn.WGPURequestAdapterOptions()
+        cOptions.featureLevel = options.featureLevel.cValue
         cOptions.backendType = options.backendType.cValue
         let result: AdapterRequestResult = await withCheckedContinuation { continuation in
             let context = AdapterRequestContext(continuation)
@@ -1707,6 +1717,16 @@ public final class Instance: @unchecked Sendable {
             )
         }
         return Adapter(handle: handle, instance: self)
+    }
+}
+
+private extension FeatureLevel {
+    var cValue: WGPUFeatureLevel {
+        switch self {
+        case .undefined: WGPUFeatureLevel_Undefined
+        case .compatibility: WGPUFeatureLevel_Compatibility
+        case .core: WGPUFeatureLevel_Core
+        }
     }
 }
 

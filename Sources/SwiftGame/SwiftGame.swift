@@ -120,8 +120,15 @@ struct SwiftGame {
             let backendType = BackendType.vulkan
         #endif
 
+        // The demo only needs compatibility mode, which the WebGL 2 fallback offers too.
+        #if os(Emscripten)
+            let featureLevel = FeatureLevel.compatibility
+        #else
+            let featureLevel = FeatureLevel.core
+        #endif
+
         let adapter = try await instance.requestAdapter(
-            options: RequestAdapterOptions(backendType: backendType)
+            options: RequestAdapterOptions(featureLevel: featureLevel, backendType: backendType)
         )
         let device = try await adapter.requestDevice()
         let queue = device.getQueue()
