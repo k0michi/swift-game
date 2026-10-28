@@ -85,7 +85,7 @@ let customExecutorSettings: [SwiftSetting] = isEmscripten
 let package = Package(
     name: "SwiftGame",
     platforms: [
-        .macOS(.v11),
+        .macOS(.v13),
     ],
     products: [
         .executable(name: "swift-game", targets: ["SwiftGame"]),
