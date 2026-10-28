@@ -8,12 +8,18 @@ set -eu
 # C++ library, so the product is linked here from the objects SwiftPM planned.
 #
 # Usage: link.sh <product> [configuration]
+#
+# SWIFT_GAME_DAWN_LINKER_FLAGS can name another file of Dawn's linker flags,
+# and SWIFT_GAME_OUTPUT_DIRECTORY another directory for the output, as
+# link-webgl2.sh does.
 
 . "$(dirname -- "$0")/env.sh"
 
 product=$1
 configuration=${2:-debug}
 bin_directory=$(swift_build --configuration "$configuration" --show-bin-path)
+dawn_linker_flags=${SWIFT_GAME_DAWN_LINKER_FLAGS:-"$repository_root/.build/dependencies/emscripten/dawn/linker-flags.txt"}
+output_directory=${SWIFT_GAME_OUTPUT_DIRECTORY:-$bin_directory}
 foundation_sources="$SWIFTCI_USE_LOCAL_DEPS/swift-corelibs-foundation/Sources/CoreFoundation"
 objects="$bin_directory/$product.objects"
 
@@ -55,7 +61,7 @@ echo "'$archive'" >> "$objects"
 # Library paths and -l flags go to swiftc; everything else is for emcc.
 set --
 for flags in "$repository_root/.build/dependencies/emscripten/sdl3/linker-flags.txt" \
-    "$repository_root/.build/dependencies/emscripten/dawn/linker-flags.txt"; do
+    "$dawn_linker_flags"; do
     while IFS= read -r flag; do
         case "$flag" in
         "") ;;
@@ -70,7 +76,7 @@ resource_directory=$(swift_sdk_path swiftStaticResourcesPath)
 tools_directory="$(dirname -- "$sdk_root")/swift.xctoolchain/usr/bin"
 
 "${SWIFT_EXEC:-swiftc}" \
-    -o "$bin_directory/$product.html" \
+    -o "$output_directory/$product.html" \
     -module-name "$(echo "$product" | tr -- '-' '_')" \
     -emit-executable \
     -target wasm32-unknown-emscripten \
@@ -84,4 +90,4 @@ tools_directory="$(dirname -- "$sdk_root")/swift.xctoolchain/usr/bin"
     -Xlinker-driver -sALLOW_MEMORY_GROWTH=1 \
     "$@"
 
-echo "Linked $bin_directory/$product.html"
+echo "Linked $output_directory/$product.html"
