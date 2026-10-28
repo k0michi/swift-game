@@ -38,7 +38,7 @@ set(DAWN_FETCH_DEPENDENCIES ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
     dawn
     GIT_REPOSITORY https://dawn.googlesource.com/dawn
-    GIT_TAG 9a18acddc494a7cf5d3aed4bce81eb351ca59904
+    GIT_TAG 5fbd545292cb7a4a9a275e322abec6007ffe2ae8
     GIT_SHALLOW FALSE
     GIT_PROGRESS TRUE
     GIT_SUBMODULES ""
