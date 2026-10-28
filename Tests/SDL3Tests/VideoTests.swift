@@ -21,6 +21,17 @@ extension SDL3Tests {
     }
 
     @Test
+    func setsWindowTitle() throws {
+        let system = try `init`(flags: [.video])
+        let window = try createWindow(title: "SDL3Tests", w: 1, h: 1, flags: [.hidden])
+
+        try setWindowTitle(window: window, title: "1.5 s - best 2.0 s")
+
+        #expect(getWindowTitle(window: window) == "1.5 s - best 2.0 s")
+        withExtendedLifetime((system, window)) {}
+    }
+
+    @Test
     func windowKeepsSystemAlive() throws {
         weak var weakSystem: System?
         var window: Window?

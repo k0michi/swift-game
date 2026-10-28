@@ -19,6 +19,17 @@ extension SDL3Tests {
     }
 
     @Test
+    func hidesAndShowsCursor() throws {
+        let system = try `init`(flags: [.video])
+
+        try hideCursor()
+        #expect(!cursorVisible())
+        try showCursor()
+        #expect(cursorVisible())
+        withExtendedLifetime(system) {}
+    }
+
+    @Test
     func keycodeExposesEmbeddedScancode() {
         #expect(Keycode.left.isScancode)
         #expect(Keycode.left.scancode == .left)

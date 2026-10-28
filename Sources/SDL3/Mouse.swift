@@ -44,3 +44,25 @@ public func getMouseState() -> (flags: MouseButtonFlags, x: Float, y: Float) {
     let flags = SDL_GetMouseState(&x, &y)
     return (MouseButtonFlags(rawValue: flags), x, y)
 }
+
+// SDL_ShowCursor
+@MainActor
+public func showCursor() throws {
+    guard SDL_ShowCursor() else {
+        throw SDLError(operation: "SDL_ShowCursor")
+    }
+}
+
+// SDL_HideCursor
+@MainActor
+public func hideCursor() throws {
+    guard SDL_HideCursor() else {
+        throw SDLError(operation: "SDL_HideCursor")
+    }
+}
+
+// SDL_CursorVisible
+@MainActor
+public func cursorVisible() -> Bool {
+    SDL_CursorVisible()
+}

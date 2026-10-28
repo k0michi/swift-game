@@ -138,3 +138,17 @@ public func getWindowSizeInPixels(window: Window) throws -> WindowPixelSize {
     }
     return WindowPixelSize(w: w, h: h)
 }
+
+// SDL_SetWindowTitle
+@MainActor
+public func setWindowTitle(window: Window, title: String) throws {
+    guard SDL_SetWindowTitle(window.cPointer, title) else {
+        throw SDLError(operation: "SDL_SetWindowTitle")
+    }
+}
+
+// SDL_GetWindowTitle
+@MainActor
+public func getWindowTitle(window: Window) -> String {
+    String(cString: SDL_GetWindowTitle(window.cPointer))
+}

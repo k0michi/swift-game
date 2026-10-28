@@ -3,7 +3,7 @@ import Dawn
 import SDL3
 import SDL3Dawn
 
-private enum DemoError: Error {
+private enum SetupError: Error {
     case surfaceFormatUnavailable
     case surfaceAlphaModeUnavailable
     case surfacePresentModeUnavailable
@@ -11,61 +11,10 @@ private enum DemoError: Error {
     case invalidWindowPixelSize
 }
 
-private struct DummyImage {
-    var width: UInt32
-    var height: UInt32
-    var pixels: [UInt8]
-}
-
-private func makeDummyImage(width: UInt32, height: UInt32) -> DummyImage {
-    let pixels = (0..<height).flatMap { y in
-        (0..<width).flatMap { x -> [UInt8] in
-            let isLight = ((x / 8) + (y / 8)).isMultiple(of: 2)
-            return isLight
-                ? [0xFF, 0xFF, 0xFF, 0xFF]
-                : [0x00, 0x00, 0x00, 0xFF]
-        }
-    }
-    return DummyImage(width: width, height: height, pixels: pixels)
-}
-
-private final class SquareWaveGenerator: @unchecked Sendable {
-    private let frequency: Float
-    private let sampleRate: Float
-    private let channels: Int
-    private let amplitude: Float
-    private var phase: Float = 0
-
-    init(
-        frequency: Float,
-        sampleRate: Int,
-        channels: Int,
-        amplitude: Float
-    ) {
-        self.frequency = frequency
-        self.sampleRate = Float(sampleRate)
-        self.channels = channels
-        self.amplitude = amplitude
-    }
-
-    func render(byteCount: Int) -> [Float] {
-        let frameSize = channels * MemoryLayout<Float>.stride
-        let frameCount = (byteCount + frameSize - 1) / frameSize
-        var samples = [Float]()
-        samples.reserveCapacity(frameCount * channels)
-
-        for _ in 0..<frameCount {
-            let sample = phase < 0.5 ? amplitude : -amplitude
-            samples.append(contentsOf: repeatElement(sample, count: channels))
-            phase += frequency / sampleRate
-            if phase >= 1 {
-                phase -= 1
-            }
-        }
-        return samples
-    }
-}
-
+/// A bullet-dodging game: the white ball follows the mouse, and yellow balls
+/// come in from the edges, faster and more often over time, bouncing off each
+/// other. A click starts a new round after a hit, and F3 toggles the frame
+/// graph and the FPS.
 @main
 @MainActor
 struct SwiftGame {
@@ -76,36 +25,14 @@ struct SwiftGame {
     static func main() async throws {
         let system = try `init`(flags: [.audio, .video])
 
-        let audioSpec = AudioSpec(format: .f32, channels: 2, freq: 48_000)
-        let squareWave = SquareWaveGenerator(
-            frequency: 440,
-            sampleRate: Int(audioSpec.freq),
-            channels: Int(audioSpec.channels),
-            amplitude: 0.1
-        )
-        let audioStream = try openAudioDeviceStream(
-            devid: audioDeviceDefaultPlayback,
-            spec: audioSpec
-        ) { stream, additionalAmount, _ in
-            guard additionalAmount > 0 else { return }
-            let samples = squareWave.render(byteCount: Int(additionalAmount))
-            try? samples.withUnsafeBytes {
-                try putAudioStreamData(stream: stream, buf: $0)
-            }
-        }
-        try resumeAudioStreamDevice(stream: audioStream)
-
-        var windowFlags: WindowFlags = [.resizable, .highPixelDensity]
+        var windowFlags: WindowFlags = [.highPixelDensity]
         #if os(macOS)
             windowFlags.insert(.metal)
         #endif
-
+        // The window is the field, in points.
         let window = try createWindow(
-            title: "Window",
-            w: 1280,
-            h: 720,
-            flags: windowFlags
-        )
+            title: "swift-game", w: Int32(fieldWidth), h: Int32(fieldHeight), flags: windowFlags)
+        try hideCursor()
 
         let instance = try createInstance()
         let surface = try instance.createSurface(from: window)
@@ -120,7 +47,7 @@ struct SwiftGame {
             let backendType = BackendType.vulkan
         #endif
 
-        // The demo only needs compatibility mode, which the WebGL 2 fallback offers too.
+        // The game only needs compatibility mode, which the WebGL 2 fallback offers too.
         #if os(Emscripten)
             let featureLevel = FeatureLevel.compatibility
         #else
@@ -131,188 +58,121 @@ struct SwiftGame {
             options: RequestAdapterOptions(featureLevel: featureLevel, backendType: backendType)
         )
         let device = try await adapter.requestDevice()
-        let queue = device.getQueue()
-        let surfaceFormat = try configure(
-            surface: surface,
-            device: device,
-            adapter: adapter,
-            window: window
-        )
-        let image = makeDummyImage(width: 64, height: 64)
-        let texture = try device.createTexture(
-            descriptor: TextureDescriptor(
-                label: "dummy image",
-                usage: [.copyDst, .textureBinding],
-                dimension: .`2D`,
-                size: Extent3D(
-                    width: image.width,
-                    height: image.height,
-                    depthOrArrayLayers: 1
-                ),
-                format: .rgba8Unorm
-            )
-        )
-        image.pixels.withUnsafeBytes { data in
-            queue.writeTexture(
-                destination: TexelCopyTextureInfo(texture: texture),
-                data: data,
-                dataLayout: TexelCopyBufferLayout(
-                    bytesPerRow: image.width * 4,
-                    rowsPerImage: image.height
-                ),
-                writeSize: Extent3D(
-                    width: image.width,
-                    height: image.height,
-                    depthOrArrayLayers: 1
-                )
-            )
-        }
-        let textureView = try texture.createView()
-        let sampler = try device.createSampler(
-            descriptor: SamplerDescriptor(
-                label: "dummy image sampler",
-                addressModeU: .clampToEdge,
-                addressModeV: .clampToEdge,
-                addressModeW: .clampToEdge,
-                magFilter: .nearest,
-                minFilter: .nearest,
-                mipmapFilter: .nearest
-            )
-        )
-        let bindGroupLayout = try device.createBindGroupLayout(
-            descriptor: BindGroupLayoutDescriptor(
-                label: "dummy image bind group layout",
-                entries: [
-                    BindGroupLayoutEntry(
-                        binding: 0,
-                        visibility: .fragment,
-                        sampler: SamplerBindingLayout(type: .filtering)
-                    ),
-                    BindGroupLayoutEntry(
-                        binding: 1,
-                        visibility: .fragment,
-                        texture: TextureBindingLayout(
-                            sampleType: .float,
-                            viewDimension: .`2D`
-                        )
-                    ),
-                ]
-            )
-        )
-        let bindGroup = try device.createBindGroup(
-            descriptor: BindGroupDescriptor(
-                label: "dummy image bind group",
-                layout: bindGroupLayout,
-                entries: [
-                    BindGroupEntry(binding: 0, sampler: sampler),
-                    BindGroupEntry(binding: 1, textureView: textureView),
-                ]
-            )
-        )
-        let pipeline = try createTexturedPipeline(
-            device: device,
-            format: surfaceFormat,
-            bindGroupLayout: bindGroupLayout
-        )
-        let vertexData: [Float] = [
-            -0.5, 0.5, 0.0, 0.0,
-            -0.5, -0.5, 0.0, 1.0,
-            0.5, 0.5, 1.0, 0.0,
-            0.5, -0.5, 1.0, 1.0,
-        ]
-        let indexData: [UInt16] = [0, 1, 2, 2, 1, 3]
-        let vertexBufferSize = UInt64(vertexData.count * MemoryLayout<Float>.stride)
-        let vertexBuffer = try device.createBuffer(
-            descriptor: BufferDescriptor(
-                label: "triangle vertices",
-                usage: [.copyDst, .vertex],
-                size: vertexBufferSize
-            )
-        )
-        vertexData.withUnsafeBufferPointer { vertexData in
-            queue.writeBuffer(
-                vertexBuffer,
-                bufferOffset: 0,
-                data: UnsafeRawBufferPointer(vertexData)
-            )
-        }
-        let indexBufferSize = UInt64(indexData.count * MemoryLayout<UInt16>.stride)
-        let indexBuffer = try device.createBuffer(
-            descriptor: BufferDescriptor(
-                label: "quad indices",
-                usage: [.copyDst, .index],
-                size: indexBufferSize
-            )
-        )
-        indexData.withUnsafeBufferPointer { indexData in
-            queue.writeBuffer(
-                indexBuffer,
-                bufferOffset: 0,
-                data: UnsafeRawBufferPointer(indexData)
-            )
+        let format = try configure(surface: surface, device: device, adapter: adapter, window: window)
+        let renderer = try Renderer(device: device, format: format)
+
+        var sound: SoundEffects?
+        do {
+            sound = try SoundEffects()
+        } catch {
+            print("Sound is unavailable: \(error)")
         }
 
+        print("Move the mouse to dodge the yellow bullets. Press F3 to toggle the frame graph and FPS.")
+        #if os(Emscripten)
+            print("Click or press a key to turn on sound.")
+        #endif
+
+        var game = Game()
+        var frameGraph = FrameGraph()
+        var fpsCounter = FPSCounter()
+        var showsOverlay = true
+        var shownTitle = ""
+        var tickAccumulator: Float = 0
+        var lastFrame = ContinuousClock.now
         var isRunning = true
 
         while isRunning {
             var shouldConfigureSurface = false
             while let event = pollEvent() {
-                if event.type == .quit || event.type == .windowCloseRequested {
-                    isRunning = false
-                }
-                if event.type == .windowPixelSizeChanged
-                    || event.type == .windowMetalViewResized
-                {
-                    shouldConfigureSurface = true
+                switch event {
+                case let event as MouseMotionEvent:
+                    game.playerX = min(max(event.x, 0), fieldWidth)
+                    game.playerY = min(max(event.y, 0), fieldHeight)
+                case let event as MouseButtonEvent where event.down && game.isOver:
+                    game.restart()
+                    sound?.restart()
+                case let event as KeyboardEvent where event.down && event.key == .f3 && !event.repeat:
+                    showsOverlay.toggle()
+                default:
+                    if event.type == .quit || event.type == .windowCloseRequested {
+                        isRunning = false
+                    } else if event.type == .windowPixelSizeChanged
+                        || event.type == .windowMetalViewResized
+                    {
+                        shouldConfigureSurface = true
+                    }
                 }
             }
-
             guard isRunning else { break }
-
             if shouldConfigureSurface {
-                _ = try? configure(
-                    surface: surface,
-                    device: device,
-                    adapter: adapter,
-                    window: window
-                )
+                _ = try? configure(surface: surface, device: device, adapter: adapter, window: window)
             }
 
+            let now = ContinuousClock.now
+            let frameMilliseconds = milliseconds(now - lastFrame)
+            lastFrame = now
+            frameGraph.record(frameMilliseconds)
+            fpsCounter.record(frameMilliseconds)
+            // Run as many fixed ticks as the elapsed time covers. The cap keeps a
+            // backgrounded tab from running a long burst of ticks when it returns.
+            tickAccumulator = min(tickAccumulator + frameMilliseconds / 1000, 0.25)
+            let wasOver = game.isOver
+            while tickAccumulator >= tickDuration {
+                game.tick()
+                tickAccumulator -= tickDuration
+            }
+            if let bounce = game.strongestBounce {
+                sound?.bounce(speed: bounce.speed, x: bounce.x, fieldWidth: fieldWidth)
+                game.strongestBounce = nil
+            }
+            if game.isOver && !wasOver {
+                sound?.gameOver()
+            }
+
+            let title = "\(formatTenths(game.elapsed)) s - best \(formatTenths(game.best)) s"
+            if title != shownTitle {
+                shownTitle = title
+                try? setWindowTitle(window: window, title: title)
+            }
+
+            // How far the frame is between the last tick and the next one.
+            let blend = game.isOver ? 1 : tickAccumulator / tickDuration
+            var batch = Batch()
+            for bullet in game.bullets {
+                batch.appendBall(
+                    x: bullet.previousX + (bullet.x - bullet.previousX) * blend,
+                    y: bullet.previousY + (bullet.y - bullet.previousY) * blend,
+                    radius: bulletRadius, color: RGBA(r: 1, g: 0.85, b: 0.2, a: 1))
+            }
+            batch.appendBall(
+                x: game.playerX, y: game.playerY, radius: playerRadius,
+                color: game.isOver ? RGBA(r: 1, g: 0.3, b: 0.3, a: 1) : RGBA(r: 1, g: 1, b: 1, a: 1))
+            if showsOverlay {
+                frameGraph.append(to: &batch)
+                fpsCounter.append(to: &batch)
+            }
+
+            let background =
+                game.isOver
+                ? RGBA(r: 0.45, g: 0.1, b: 0.1, a: 1)
+                : RGBA(r: 100.0 / 255, g: 149.0 / 255, b: 237.0 / 255, a: 1)
             do {
-                try drawTexturedQuad(
-                    surface: surface,
-                    device: device,
-                    queue: queue,
-                    pipeline: pipeline,
-                    bindGroup: bindGroup,
-                    vertexBuffer: vertexBuffer,
-                    vertexBufferSize: vertexBufferSize,
-                    indexBuffer: indexBuffer,
-                    indexBufferSize: indexBufferSize,
-                    color: Color(
-                        r: Double(0x64) / 0xFF, g: Double(0x95) / 0xFF, b: Double(0xED) / 0xFF,
-                        a: 1.0)
-                )
+                try renderer.draw(batch, background: background, to: surface)
             } catch WebGPUError.getCurrentTextureFailed {
-                _ = try? configure(
-                    surface: surface,
-                    device: device,
-                    adapter: adapter,
-                    window: window
-                )
+                _ = try? configure(surface: surface, device: device, adapter: adapter, window: window)
             }
 
             instance.processEvents()
             await nextFrame()
         }
 
-        withExtendedLifetime(
-            (
-                system, window, instance, adapter, device, surface, queue, texture, textureView,
-                sampler, bindGroupLayout, bindGroup, pipeline, vertexBuffer, indexBuffer,
-                squareWave, audioStream
-            )
-        ) {}
+        withExtendedLifetime((system, window, instance, adapter, device, surface, renderer, sound)) {}
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Float {
+        let (seconds, attoseconds) = duration.components
+        return Float(seconds) * 1000 + Float(attoseconds) / 1e15
     }
 
     private static func configure(
@@ -323,28 +183,28 @@ struct SwiftGame {
     ) throws -> TextureFormat {
         let capabilities = try surface.getCapabilities(adapter: adapter)
         guard capabilities.usages.contains(.renderAttachment) else {
-            throw DemoError.renderAttachmentUnsupported
+            throw SetupError.renderAttachmentUnsupported
         }
         guard let format = capabilities.formats.first else {
-            throw DemoError.surfaceFormatUnavailable
+            throw SetupError.surfaceFormatUnavailable
         }
         guard
             let alphaMode = capabilities.alphaModes.contains(.auto)
                 ? CompositeAlphaMode.auto
                 : capabilities.alphaModes.first
         else {
-            throw DemoError.surfaceAlphaModeUnavailable
+            throw SetupError.surfaceAlphaModeUnavailable
         }
         guard
             let presentMode = capabilities.presentModes.contains(.fifo)
                 ? PresentMode.fifo
                 : capabilities.presentModes.first
         else {
-            throw DemoError.surfacePresentModeUnavailable
+            throw SetupError.surfacePresentModeUnavailable
         }
         let size = try getWindowSizeInPixels(window: window)
         guard size.w > 0, size.h > 0 else {
-            throw DemoError.invalidWindowPixelSize
+            throw SetupError.invalidWindowPixelSize
         }
 
         try surface.configure(
@@ -360,135 +220,5 @@ struct SwiftGame {
             )
         )
         return format
-    }
-
-    private static func createTexturedPipeline(
-        device: Device,
-        format: TextureFormat,
-        bindGroupLayout: BindGroupLayout
-    ) throws -> RenderPipeline {
-        let shaderModule = try device.createShaderModule(
-            descriptor: ShaderModuleDescriptor(
-                nextInChain: ShaderSourceWGSL(
-                    code: """
-                        struct VertexOutput {
-                            @builtin(position) position: vec4f,
-                            @location(0) uv: vec2f,
-                        }
-
-                        @group(0) @binding(0) var imageSampler: sampler;
-                        @group(0) @binding(1) var imageTexture: texture_2d<f32>;
-
-                        @vertex
-                        fn vertexMain(
-                            @location(0) position: vec2f,
-                            @location(1) uv: vec2f
-                        ) -> VertexOutput {
-                            var output: VertexOutput;
-                            output.position = vec4f(position, 0.0, 1.0);
-                            output.uv = uv;
-                            return output;
-                        }
-
-                        @fragment
-                        fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {
-                            return textureSample(imageTexture, imageSampler, uv);
-                        }
-                        """
-                ),
-                label: "triangle"
-            )
-        )
-        let layout = try device.createPipelineLayout(
-            descriptor: PipelineLayoutDescriptor(bindGroupLayouts: [bindGroupLayout])
-        )
-        return try device.createRenderPipeline(
-            descriptor: RenderPipelineDescriptor(
-                label: "triangle",
-                layout: layout,
-                vertex: VertexState(
-                    module: shaderModule,
-                    entryPoint: "vertexMain",
-                    buffers: [
-                        VertexBufferLayout(
-                            stepMode: .vertex,
-                            arrayStride: 4 * UInt64(MemoryLayout<Float>.stride),
-                            attributes: [
-                                VertexAttribute(
-                                    format: .float32x2,
-                                    offset: 0,
-                                    shaderLocation: 0
-                                ),
-                                VertexAttribute(
-                                    format: .float32x2,
-                                    offset: 2 * UInt64(MemoryLayout<Float>.stride),
-                                    shaderLocation: 1
-                                ),
-                            ]
-                        )
-                    ]
-                ),
-                primitive: PrimitiveState(topology: .triangleList),
-                fragment: FragmentState(
-                    module: shaderModule,
-                    entryPoint: "fragmentMain",
-                    targets: [ColorTargetState(format: format)]
-                )
-            )
-        )
-    }
-
-    private static func drawTexturedQuad(
-        surface: Surface,
-        device: Device,
-        queue: Queue,
-        pipeline: RenderPipeline,
-        bindGroup: BindGroup,
-        vertexBuffer: Buffer,
-        vertexBufferSize: UInt64,
-        indexBuffer: Buffer,
-        indexBufferSize: UInt64,
-        color: Color
-    ) throws {
-        let texture = try surface.getCurrentTexture()
-        let view = try texture.createView()
-        let commandEncoder = try device.createCommandEncoder()
-        let renderPass = try commandEncoder.beginRenderPass(
-            descriptor: RenderPassDescriptor(
-                colorAttachments: [
-                    RenderPassColorAttachment(
-                        view: view,
-                        loadOp: .clear,
-                        storeOp: .store,
-                        clearValue: color
-                    )
-                ]
-            )
-        )
-        renderPass.setPipeline(pipeline)
-        renderPass.setBindGroup(groupIndex: 0, group: bindGroup)
-        renderPass.setVertexBuffer(
-            slot: 0,
-            buffer: vertexBuffer,
-            offset: 0,
-            size: vertexBufferSize
-        )
-        renderPass.setIndexBuffer(
-            buffer: indexBuffer,
-            format: .uint16,
-            offset: 0,
-            size: indexBufferSize
-        )
-        renderPass.drawIndexed(
-            indexCount: 6,
-            instanceCount: 1,
-            firstIndex: 0,
-            baseVertex: 0,
-            firstInstance: 0
-        )
-        renderPass.end()
-        let commandBuffer = try commandEncoder.finish()
-        queue.submit([commandBuffer])
-        try surface.present()
     }
 }
