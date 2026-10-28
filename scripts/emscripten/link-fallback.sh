@@ -8,10 +8,11 @@ set -eu
 #
 # Emdawnwebgpu's wgpu* functions are renamed (fallback/make-emdawn.py) so that
 # it links next to dawn::native, without dawn::native's own wgpu* functions.
-# The wgpu* functions of Dawn's dawn_proc call through a table, which
-# fallback/selector.cpp points at either one before main(), as
-# fallback/pre.js chose. ?backend=webgpu or ?backend=webgl2 in the page's URL
-# forces one.
+# The wgpu* functions of Dawn's dawn_proc call through a table that
+# fallback/facade.cpp keeps: requestAdapter chooses the implementation, the
+# fork for backendType OpenGLES and otherwise the browser's WebGPU, falling
+# back to the fork when it has no adapter. ?backend=webgpu or ?backend=webgl2
+# in the page's URL forces one.
 #
 # The fork is the webgl2 branch of https://github.com/k0michi/dawn, and its
 # .github/webgl2/build.sh makes the build directory, with dawn::native and
@@ -52,11 +53,11 @@ $compile -DNDEBUG -isystem "$package/webgpu/include" -include "$work/emdawn/rena
     -c "$package/webgpu/src/webgpu.cpp" -o "$work/emdawn/webgpu.o"
 $compile $dawn_includes -include "$work/emdawn/rename.h" \
     -c "$work/emdawn/emdawn_procs.cpp" -o "$work/emdawn/emdawn_procs.o"
-$compile $dawn_includes -c "$script_directory/fallback/selector.cpp" -o "$work/selector.o"
+$compile $dawn_includes -c "$script_directory/fallback/facade.cpp" -o "$work/facade.o"
 
 # link.sh passes paths to swiftc as inputs, so options take their paths after =.
 printf '%s\n' \
-    "$work/selector.o" \
+    "$work/facade.o" \
     "$work/emdawn/emdawn_procs.o" \
     "$work/emdawn/webgpu.o" \
     "$proc" \
@@ -65,7 +66,6 @@ printf '%s\n' \
     "--js-library=$work/emdawn/js/library_webgpu_generated_struct_info.js" \
     "--js-library=$work/emdawn/js/library_webgpu_generated_sig_info.js" \
     "--js-library=$work/emdawn/js/library_webgpu.js" \
-    "--pre-js=$script_directory/fallback/pre.js" \
     -sMIN_WEBGL_VERSION=2 \
     -sMAX_WEBGL_VERSION=2 \
     -sGL_ENABLE_GET_PROC_ADDRESS \
