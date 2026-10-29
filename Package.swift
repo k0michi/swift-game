@@ -199,9 +199,12 @@ let package = Package(
             name: "VectorMathTests",
             dependencies: ["VectorMath"]
         ),
+        // Counts a thread's heap allocations, for tests of the render path,
+        // which must not allocate.
+        .target(name: "CAllocationCounter", path: "Tests/CAllocationCounter"),
         .testTarget(
             name: "EchoTests",
-            dependencies: ["Echo"]
+            dependencies: ["Echo", "CAllocationCounter", .product(name: "Atomics", package: "swift-atomics")]
         ),
         .testTarget(
             name: "EchoSDL3Tests",

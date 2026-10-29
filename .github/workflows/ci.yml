@@ -70,6 +70,13 @@ jobs:
         shell: bash
         run: ./scripts/test.sh
 
+      # Only an optimized build shows what rendering allocates, and only
+      # Darwin's allocator lets the tests count it.
+      - name: Check that rendering does not allocate on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ./scripts/test.sh -c release -Xswiftc -enable-testing --filter RenderAllocationTests
+
       - name: Test with coverage on Linux
         if: runner.os == 'Linux'
         shell: bash
