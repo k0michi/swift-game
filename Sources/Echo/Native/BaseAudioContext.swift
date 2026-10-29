@@ -57,6 +57,24 @@ public class BaseAudioContext {
         try! GainNode(context: self)
     }
 
+    public func createOscillator() -> OscillatorNode {
+        // Only invalid options throw, and none are passed.
+        try! OscillatorNode(context: self)
+    }
+
+    public func createPeriodicWave(
+        real: [Float],
+        imag: [Float],
+        constraints: PeriodicWaveConstraints = PeriodicWaveConstraints()
+    ) throws -> PeriodicWave {
+        guard real.count == imag.count else { throw WebAudioError.indexSize }
+        return try PeriodicWave(context: self, options: PeriodicWaveOptions(
+            real: real,
+            imag: imag,
+            disableNormalization: constraints.disableNormalization
+        ))
+    }
+
     public func createStereoPanner() -> StereoPannerNode {
         // Only invalid options throw, and none are passed.
         try! StereoPannerNode(context: self)

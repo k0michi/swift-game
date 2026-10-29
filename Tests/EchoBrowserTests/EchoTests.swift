@@ -14,6 +14,8 @@ let tests: [(String, @MainActor () async throws -> Void)] = [
     ("testStateChanges", testStateChanges),
     ("testAudioContext", testAudioContext),
     ("testGain", testGain),
+    ("testOscillator", testOscillator),
+    ("testOscillatorErrors", testOscillatorErrors),
     ("testStereoPanner", testStereoPanner),
     ("testWaveShaper", testWaveShaper),
     ("testWaveShaperErrors", testWaveShaperErrors),
@@ -206,6 +208,87 @@ func testGain() async throws {
         expect(isClose(samples[frame], 0.5 + Float(frame) / 128), "gain at \(frame) is \(samples[frame])")
     }
     expect(samples[128...].allSatisfy { isClose($0, 1.5) }, "gain after the ramp")
+}
+
+// Renders an oscillator at 375 Hz, a period of 128 frames, set up by
+// `configure`, and copies out the samples, which outlive the buffer.
+@MainActor
+func oscillate(_ configure: (OfflineAudioContext, OscillatorNode) throws -> Void) async throws -> [Float] {
+    let buffer = try await render(length: 256) { context in
+        let oscillator = context.createOscillator()
+        oscillator.frequency.value = 375
+        try configure(context, oscillator)
+        try oscillator.connect(context.destination)
+        try oscillator.start()
+    }
+    var samples = [Float](repeating: 0, count: 256)
+    try buffer.copyFromChannel(&samples, channelNumber: 0)
+    return samples
+}
+
+@MainActor
+func testOscillator() async throws {
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: sampleRate)
+    let oscillator = context.createOscillator()
+    expect(oscillator.type == .sine && oscillator.numberOfInputs == 0, "oscillator defaults")
+    expect(oscillator.frequency.defaultValue == 440 && oscillator.frequency.maxValue == sampleRate / 2, "frequency")
+    expect(oscillator.detune.defaultValue == 0, "detune")
+    try oscillator.setType(.triangle)
+    expect(oscillator.type == .triangle, "the type is set")
+
+    // A sine from phase 0: 0, then 1 a quarter period in, 0 at half, -1 at
+    // three quarters.
+    let sine = try await oscillate { _, _ in }
+    for (frame, expected) in [(0, Float(0)), (32, 1), (64, 0), (96, -1)] {
+        expect(isClose(sine[frame], expected, tolerance: 1e-3), "sine at \(frame) is \(sine[frame])")
+    }
+    // An octave down from 750 Hz.
+    let detuned = try await oscillate { _, oscillator in
+        oscillator.frequency.value = 750
+        oscillator.detune.value = -1200
+    }
+    expect(isClose(detuned[32], 1, tolerance: 1e-3), "detuned sine at 32 is \(detuned[32])")
+    // A custom cosine at half amplitude, without normalization.
+    let cosine = try await oscillate { context, oscillator in
+        oscillator.setPeriodicWave(try PeriodicWave(
+            context: context,
+            options: PeriodicWaveOptions(real: [0, 0.5], disableNormalization: true)
+        ))
+        expect(oscillator.type == .custom, "a PeriodicWave makes the type custom")
+    }
+    for (frame, expected) in [(0, Float(0.5)), (32, 0), (64, -0.5)] {
+        expect(isClose(cosine[frame], expected, tolerance: 1e-3), "cosine at \(frame) is \(cosine[frame])")
+    }
+    // A square, positive for the first half of its period.
+    let square = try await oscillate { _, oscillator in try oscillator.setType(.square) }
+    expect(square[8 ..< 56].allSatisfy { $0 > 0.7 } && square[72 ..< 120].allSatisfy { $0 < -0.7 }, "square halves")
+}
+
+@MainActor
+func testOscillatorErrors() async throws {
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: sampleRate)
+    let oscillator = context.createOscillator()
+    expect(.invalidState, "the custom type set directly") {
+        try oscillator.setType(.custom)
+    }
+    expect(.invalidState, "stop before start") {
+        try oscillator.stop()
+    }
+    expect(.rangeError, "a negative start time") {
+        try oscillator.start(-1)
+    }
+    expect(.invalidState, "the custom type option without a PeriodicWave") {
+        _ = try OscillatorNode(context: context, options: OscillatorOptions(type: .custom))
+    }
+    expect(.rangeError, "a frequency option that is not finite") {
+        _ = try OscillatorNode(context: context, options: OscillatorOptions(frequency: .nan))
+    }
+    expect(.indexSize, "real and imag of different lengths") {
+        _ = try context.createPeriodicWave(real: [0, 1], imag: [0, 1, 0])
+    }
+    expect(.indexSize, "a PeriodicWave of one coefficient") {
+        _ = try PeriodicWave(context: context, options: PeriodicWaveOptions(real: [1]))
+    }
 }
 
 @MainActor

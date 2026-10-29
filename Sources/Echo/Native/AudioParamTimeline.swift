@@ -145,10 +145,16 @@ struct AudioParamTimeline: Sendable {
     }
 
     func computedValue(at frame: UInt64, quantumStart: UInt64, modulation: Float) -> Float {
+        min(max(paramComputedValue(at: frame, quantumStart: quantumStart, modulation: modulation), minValue), maxValue)
+    }
+
+    // The value before clamping, which a compound parameter clamps only once
+    // combined with the others.
+    func paramComputedValue(at frame: UInt64, quantumStart: UInt64, modulation: Float) -> Float {
         let selectedFrame = automationRate == .kRate ? quantumStart : frame
         let intrinsic = intrinsicValue(at: Double(selectedFrame) / Double(sampleRate))
         let sum = intrinsic + modulation
-        return min(max(sum.isNaN ? defaultValue : sum, minValue), maxValue)
+        return sum.isNaN ? defaultValue : sum
     }
 
     func intrinsicValue(at time: Double) -> Float {

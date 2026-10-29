@@ -1,6 +1,8 @@
 // Echo renders the audio itself, except in the browser, where Web/ hands it
 // to the browser's Web Audio.
 #if !os(Emscripten)
+import Foundation
+
 // Prepared on the control actor, then used exclusively by one rendering thread.
 final class AudioRenderPlan: @unchecked Sendable {
     enum Processor: Sendable {
@@ -19,6 +21,17 @@ final class AudioRenderPlan: @unchecked Sendable {
         case gain(parameter: AudioParamTimeline, paramSources: [Int])
         case mediaStream(state: MediaStreamRenderState)
         case stereoPanner(parameter: AudioParamTimeline, paramSources: [Int])
+        // `paramSources` are those of frequency and of detune.
+        case oscillator(
+            state: OscillatorRenderState,
+            wave: WaveTable,
+            sampleRate: Float,
+            startTime: Double?,
+            stopTime: Double?,
+            frequency: AudioParamTimeline,
+            detune: AudioParamTimeline,
+            paramSources: [[Int]]
+        )
         case waveShaper(state: WaveShaperRenderState, curve: [Float]?, oversample: OverSampleType)
     }
 
@@ -38,7 +51,10 @@ final class AudioRenderPlan: @unchecked Sendable {
         let configuration: NodeConfiguration
         let input: AudioRenderQuantum?
         let output: AudioRenderQuantum
-        let paramInput: AudioRenderQuantum?
+        // What is connected to each of the node's parameters, mixed to mono,
+        // or nil for a parameter nothing is connected to.
+        let paramInputs: [AudioRenderQuantum?]
+        var paramInput: AudioRenderQuantum? { paramInputs.first ?? nil }
 
         init(configuration: NodeConfiguration, frameCount: Int) {
             self.configuration = configuration
@@ -53,12 +69,21 @@ final class AudioRenderPlan: @unchecked Sendable {
                     ? Int(AudioBuffer.maximumNumberOfChannels) : configuration.outputChannelCount,
                 frameCount: frameCount, channelCount: configuration.outputChannelCount
             )
-            switch configuration.processor {
+            paramInputs = Self.paramSources(configuration.processor).map { sources in
+                sources.isEmpty ? nil : AudioRenderQuantum(channelCapacity: 1, frameCount: frameCount)
+            }
+        }
+
+        // The sources connected to each of the node's parameters.
+        static func paramSources(_ processor: Processor) -> [[Int]] {
+            switch processor {
             case let .constant(_, _, _, sources), let .delay(_, _, sources), let .gain(_, sources),
                  let .stereoPanner(_, sources):
-                paramInput = sources.isEmpty ? nil : AudioRenderQuantum(channelCapacity: 1, frameCount: frameCount)
+                [sources]
+            case let .oscillator(_, _, _, _, _, _, _, sources):
+                sources
             case .passThrough, .mediaStream, .waveShaper:
-                paramInput = nil
+                []
             }
         }
 
@@ -66,7 +91,7 @@ final class AudioRenderPlan: @unchecked Sendable {
         private static func outputFollowsInput(_ processor: Processor) -> Bool {
             switch processor {
             case .delay, .gain, .waveShaper: true
-            case .passThrough, .constant, .mediaStream, .stereoPanner: false
+            case .passThrough, .constant, .mediaStream, .stereoPanner, .oscillator: false
             }
         }
 
@@ -75,7 +100,7 @@ final class AudioRenderPlan: @unchecked Sendable {
             switch processor {
             case .passThrough, .delay, .gain, .waveShaper: Int(AudioBuffer.maximumNumberOfChannels)
             case .stereoPanner: 2
-            case .constant, .mediaStream: nil
+            case .constant, .mediaStream, .oscillator: nil
             }
         }
     }
@@ -119,13 +144,8 @@ final class AudioRenderPlan: @unchecked Sendable {
                 }
             case let .mediaStream(state):
                 state.render(into: slot.output)
-            case let .gain(parameter, paramSources):
-                slot.paramInput?.clear()
-                if let paramInput = slot.paramInput {
-                    for sourceIndex in paramSources {
-                        ChannelMixer.mix(slots[sourceIndex].output, into: paramInput, interpretation: .speakers)
-                    }
-                }
+            case let .gain(parameter, _):
+                mixParamInputs(of: slot)
                 guard let input = slot.input else { continue }
                 slot.output.setChannelCount(input.channelCount)
                 for index in 0 ..< input.frameCount {
@@ -140,13 +160,8 @@ final class AudioRenderPlan: @unchecked Sendable {
                         slot.output.channelData(channel)[index] = input.channelData(channel)[index] * gain
                     }
                 }
-            case let .stereoPanner(parameter, paramSources):
-                slot.paramInput?.clear()
-                if let paramInput = slot.paramInput {
-                    for sourceIndex in paramSources {
-                        ChannelMixer.mix(slots[sourceIndex].output, into: paramInput, interpretation: .speakers)
-                    }
-                }
+            case let .stereoPanner(parameter, _):
+                mixParamInputs(of: slot)
                 guard let input = slot.input else { continue }
                 StereoPanning.render(input: input, output: slot.output, frame: frame) { index in
                     let modulationIndex = parameter.automationRate == .kRate ? 0 : index
@@ -157,18 +172,27 @@ final class AudioRenderPlan: @unchecked Sendable {
                         modulation: modulation
                     )
                 }
+            case let .oscillator(state, wave, sampleRate, startTime, stopTime, frequency, detune, _):
+                mixParamInputs(of: slot)
+                let nyquist = sampleRate / 2
+                state.render(
+                    into: slot.output, frame: frame, sampleRate: sampleRate, wave: wave,
+                    startTime: startTime, stopTime: stopTime
+                ) { index in
+                    // A compound parameter: each value is clamped only once
+                    // combined.
+                    let frequency = Self.paramComputedValue(frequency, slot.paramInputs[0], index: index, frame: frame)
+                    let detune = Self.paramComputedValue(detune, slot.paramInputs[1], index: index, frame: frame)
+                    let computed = frequency * exp2(detune / 1200)
+                    return computed.isNaN ? 0 : min(max(computed, -nyquist), nyquist)
+                }
             case let .waveShaper(state, curve, oversample):
                 if let input = slot.input {
                     state.render(input: input, output: slot.output, curve: curve, oversample: oversample)
                 }
-            case let .constant(startFrame, stopFrame, parameter, paramSources):
+            case let .constant(startFrame, stopFrame, parameter, _):
                 guard let startFrame else { continue }
-                slot.paramInput?.clear()
-                if let paramInput = slot.paramInput {
-                    for sourceIndex in paramSources {
-                        ChannelMixer.mix(slots[sourceIndex].output, into: paramInput, interpretation: .speakers)
-                    }
-                }
+                mixParamInputs(of: slot)
 
                 let samples = slot.output.channelData(0)
                 for index in samples.indices {
@@ -184,13 +208,8 @@ final class AudioRenderPlan: @unchecked Sendable {
                         modulation: modulation
                     )
                 }
-            case let .delay(state, parameter, paramSources):
-                slot.paramInput?.clear()
-                if let paramInput = slot.paramInput {
-                    for sourceIndex in paramSources {
-                        ChannelMixer.mix(slots[sourceIndex].output, into: paramInput, interpretation: .speakers)
-                    }
-                }
+            case let .delay(state, parameter, _):
+                mixParamInputs(of: slot)
                 if let input = slot.input {
                     if configuration.isCycleBreaker {
                         state.read(output: slot.output, parameter: parameter,
@@ -224,6 +243,29 @@ final class AudioRenderPlan: @unchecked Sendable {
                 channelTarget[offset + sample] = source[sample]
             }
         }
+    }
+
+    // Mixes what is connected to each of the slot's parameters into its
+    // parameter inputs.
+    private func mixParamInputs(of slot: Slot) {
+        for (paramInput, sources) in zip(slot.paramInputs, Slot.paramSources(slot.configuration.processor)) {
+            guard let paramInput else { continue }
+            paramInput.clear()
+            for sourceIndex in sources {
+                ChannelMixer.mix(slots[sourceIndex].output, into: paramInput, interpretation: .speakers)
+            }
+        }
+    }
+
+    private static func paramComputedValue(
+        _ parameter: AudioParamTimeline,
+        _ input: AudioRenderQuantum?,
+        index: Int,
+        frame: UInt64
+    ) -> Float {
+        let modulationIndex = parameter.automationRate == .kRate ? 0 : index
+        let modulation = input.map { $0.channelData(0)[modulationIndex] } ?? 0
+        return parameter.paramComputedValue(at: frame + UInt64(index), quantumStart: frame, modulation: modulation)
     }
 
     private func configureInput(_ input: AudioRenderQuantum, for configuration: NodeConfiguration) {

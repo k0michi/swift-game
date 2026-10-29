@@ -129,6 +129,7 @@ private func check(_ error: Int32) throws {
 
 // Options passed to constructors.
 enum JSONValue {
+    case bool(Bool)
     case number(Double)
     case string(String)
     case array([JSONValue])
@@ -136,6 +137,8 @@ enum JSONValue {
 
     var text: String {
         switch self {
+        case let .bool(bool):
+            bool ? "true" : "false"
         case let .number(number):
             number.isFinite ? "\(number)" : "null"
         case let .string(string):

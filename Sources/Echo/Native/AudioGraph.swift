@@ -186,6 +186,20 @@ final class AudioGraph {
                     parameter: gain.renderTimeline,
                     paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
                 )
+            } else if let oscillator = slot.node as? OscillatorNode {
+                let sources = [oscillator.frequency, oscillator.detune].map { param in
+                    (slot.paramSources.first { $0.0 === param }?.1 ?? []).map { indices[ObjectIdentifier($0)]! }
+                }
+                processor = .oscillator(
+                    state: oscillator.renderState,
+                    wave: oscillator.waveTable,
+                    sampleRate: oscillator.context.sampleRate,
+                    startTime: oscillator.startTime,
+                    stopTime: oscillator.stopTime,
+                    frequency: oscillator.frequency.renderTimeline,
+                    detune: oscillator.detune.renderTimeline,
+                    paramSources: sources
+                )
             } else if let panner = slot.node as? StereoPannerNode {
                 let pan = panner.pan
                 let paramSources = slot.paramSources.first { $0.0 === pan }?.1 ?? []
