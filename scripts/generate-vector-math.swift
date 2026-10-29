@@ -419,15 +419,15 @@ func generateVectorFunctions(_ source: Source, size: Int) {
             "clamp", "Comparable", ["e", "low", "high"], "Each component of `e`, limited to the range from `low` to `high`.",
             { "clamp(e.\($0), low.\($0), high.\($0))" }
         ),
-        ("floor", "FloatingPoint", ["e"], "Each component rounded down.", { "e.\($0).rounded(.down)" }),
-        ("ceil", "FloatingPoint", ["e"], "Each component rounded up.", { "e.\($0).rounded(.up)" }),
+        ("floor", "FloatingPoint", ["e"], "Each component rounded down.", { "floor(e.\($0))" }),
+        ("ceil", "FloatingPoint", ["e"], "Each component rounded up.", { "ceil(e.\($0))" }),
         (
             "round", "FloatingPoint", ["e"], "Each component rounded to the nearest integer, ties to even.",
-            { "e.\($0).rounded(.toNearestOrEven)" }
+            { "round(e.\($0))" }
         ),
-        ("trunc", "FloatingPoint", ["e"], "Each component rounded toward zero.", { "e.\($0).rounded(.towardZero)" }),
+        ("trunc", "FloatingPoint", ["e"], "Each component rounded toward zero.", { "trunc(e.\($0))" }),
         ("fract", "FloatingPoint", ["e"], "The fractional part of each component, `e - floor(e)`.", { "fract(e.\($0))" }),
-        ("sqrt", "FloatingPoint", ["e"], "The square root of each component.", { "e.\($0).squareRoot()" }),
+        ("sqrt", "FloatingPoint", ["e"], "The square root of each component.", { "sqrt(e.\($0))" }),
         ("inverseSqrt", "FloatingPoint", ["e"], "The reciprocal of the square root of each component.", { "inverseSqrt(e.\($0))" }),
         ("saturate", "FloatingPoint", ["e"], "Each component limited to the range from 0 to 1.", { "saturate(e.\($0))" }),
         ("degrees", "FloatingPoint", ["e"], "Each component converted from radians to degrees.", { "degrees(e.\($0))" }),

@@ -160,6 +160,16 @@ struct VectorTests {
     }
 
     @Test
+    func moduleNameSelectsTheWGSLRound() {
+        // This file imports Foundation, whose round rounds halves away from zero.
+        #expect(round(2.5) == 3)
+        #expect(VectorMath.round(2.5) == 2)
+        #expect(round(Vector2<Double>(2.5, 3.5)) == Vector2(2, 4))
+        #expect(VectorMath.floor(-1.5) == -2)
+        #expect(VectorMath.sqrt(Float(9)) == 3)
+    }
+
+    @Test
     func descriptionListsComponents() {
         #expect(Vector3(1, 2, 3).description == "Vector3(1, 2, 3)")
     }

@@ -654,25 +654,25 @@ public func clamp<Scalar: Comparable>(_ e: Vector2<Scalar>, _ low: Vector2<Scala
 /// Each component rounded down.
 @inlinable
 public func floor<Scalar: FloatingPoint>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(e.x.rounded(.down), e.y.rounded(.down))
+    Vector2(floor(e.x), floor(e.y))
 }
 
 /// Each component rounded up.
 @inlinable
 public func ceil<Scalar: FloatingPoint>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(e.x.rounded(.up), e.y.rounded(.up))
+    Vector2(ceil(e.x), ceil(e.y))
 }
 
 /// Each component rounded to the nearest integer, ties to even.
 @inlinable
 public func round<Scalar: FloatingPoint>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(e.x.rounded(.toNearestOrEven), e.y.rounded(.toNearestOrEven))
+    Vector2(round(e.x), round(e.y))
 }
 
 /// Each component rounded toward zero.
 @inlinable
 public func trunc<Scalar: FloatingPoint>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(e.x.rounded(.towardZero), e.y.rounded(.towardZero))
+    Vector2(trunc(e.x), trunc(e.y))
 }
 
 /// The fractional part of each component, `e - floor(e)`.
@@ -684,7 +684,7 @@ public func fract<Scalar: FloatingPoint>(_ e: Vector2<Scalar>) -> Vector2<Scalar
 /// The square root of each component.
 @inlinable
 public func sqrt<Scalar: FloatingPoint>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(e.x.squareRoot(), e.y.squareRoot())
+    Vector2(sqrt(e.x), sqrt(e.y))
 }
 
 /// The reciprocal of the square root of each component.
