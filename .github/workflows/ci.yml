@@ -240,11 +240,6 @@ jobs:
           path: .build/dependencies/emscripten
           key: ${{ steps.dependencies-cache.outputs.cache-primary-key }}
 
-      # The game does not use VectorMath yet, so the build above leaves it out.
-      - name: Build VectorMath for the browser
-        shell: bash
-        run: ./scripts/emscripten/swift-build.sh --target VectorMath
-
       - name: Install Playwright
         shell: bash
         run: |

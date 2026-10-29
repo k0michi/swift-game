@@ -2,6 +2,7 @@ import Dawn
 @_spi(ExperimentalCustomExecutors) import MainLoop
 import SDL3
 import SDL3Dawn
+import VectorMath
 
 private enum SetupError: Error {
     case surfaceFormatUnavailable
@@ -97,8 +98,7 @@ struct SwiftGame {
             while let event = pollEvent() {
                 switch event {
                 case let event as MouseMotionEvent:
-                    game.playerX = min(max(event.x, 0), fieldWidth)
-                    game.playerY = min(max(event.y, 0), fieldHeight)
+                    game.player = clamp(Vector2(event.x, event.y), .zero, fieldSize)
                 case let event as MouseButtonEvent where event.down && game.isOver:
                     game.restart()
                     sound?.restart()
@@ -151,13 +151,12 @@ struct SwiftGame {
             var batch = Batch()
             for bullet in game.bullets {
                 batch.appendBall(
-                    x: bullet.previousX + (bullet.x - bullet.previousX) * blend,
-                    y: bullet.previousY + (bullet.y - bullet.previousY) * blend,
-                    radius: bulletRadius, color: RGBA(r: 1, g: 0.85, b: 0.2, a: 1))
+                    center: mix(bullet.previousPosition, bullet.position, blend), radius: bulletRadius,
+                    color: Vector4(1, 0.85, 0.2, 1))
             }
             batch.appendBall(
-                x: game.playerX, y: game.playerY, radius: playerRadius,
-                color: game.isOver ? RGBA(r: 1, g: 0.3, b: 0.3, a: 1) : RGBA(r: 1, g: 1, b: 1, a: 1))
+                center: game.player, radius: playerRadius,
+                color: game.isOver ? Vector4(1, 0.3, 0.3, 1) : Vector4(1, 1, 1, 1))
             if showsOverlay {
                 frameGraph.append(to: &batch)
                 fpsCounter.append(to: &batch)
@@ -165,8 +164,8 @@ struct SwiftGame {
 
             let background =
                 game.isOver
-                ? RGBA(r: 0.45, g: 0.1, b: 0.1, a: 1)
-                : RGBA(r: 100.0 / 255, g: 149.0 / 255, b: 237.0 / 255, a: 1)
+                ? Vector4<Float>(0.45, 0.1, 0.1, 1)
+                : Vector4<Float>(100.0 / 255, 149.0 / 255, 237.0 / 255, 1)
             do {
                 try renderer.draw(batch, background: background, to: surface)
             } catch WebGPUError.getCurrentTextureFailed {

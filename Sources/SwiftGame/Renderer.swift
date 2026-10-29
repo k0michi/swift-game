@@ -1,9 +1,5 @@
 import Dawn
-
-/// A color with each component from 0 to 1, not premultiplied.
-struct RGBA {
-    var r, g, b, a: Float
-}
+import VectorMath
 
 /// The triangles of a frame, in field coordinates with the origin at the top
 /// left, drawn in the order they are appended.
@@ -18,32 +14,35 @@ struct Batch {
         vertices.count / Self.floatsPerVertex
     }
 
-    mutating func appendRect(left: Float, top: Float, right: Float, bottom: Float, color: RGBA) {
-        appendQuad(left: left, top: top, right: right, bottom: bottom, local: 0, color: color)
+    /// A rectangle from its top-left corner to its bottom-right one, in a
+    /// color with each component from 0 to 1, not premultiplied.
+    mutating func appendRect(from topLeft: Vector2<Float>, to bottomRight: Vector2<Float>, color: Vector4<Float>) {
+        appendQuad(from: topLeft, to: bottomRight, local: 0, color: color)
     }
 
     /// A ball is a square whose corners the fragment shader discards.
-    mutating func appendBall(x: Float, y: Float, radius: Float, color: RGBA) {
-        appendQuad(
-            left: x - radius, top: y - radius, right: x + radius, bottom: y + radius, local: 1,
-            color: color)
+    mutating func appendBall(center: Vector2<Float>, radius: Float, color: Vector4<Float>) {
+        appendQuad(from: center - radius, to: center + radius, local: 1, color: color)
     }
 
     // Rectangles stay at 0 in their own space; balls span -1...1.
     private mutating func appendQuad(
-        left: Float, top: Float, right: Float, bottom: Float, local: Float, color: RGBA
+        from topLeft: Vector2<Float>, to bottomRight: Vector2<Float>, local: Float, color: Vector4<Float>
     ) {
-        let left = left / fieldWidth * 2 - 1
-        let right = right / fieldWidth * 2 - 1
-        let top = 1 - top / fieldHeight * 2
-        let bottom = 1 - bottom / fieldHeight * 2
-        let corners: [(Float, Float, Float, Float)] = [
-            (left, top, -local, local), (right, top, local, local),
-            (left, bottom, -local, -local), (right, top, local, local),
-            (right, bottom, local, -local), (left, bottom, -local, -local),
+        // Clip space has y up.
+        let topLeft = topLeft / fieldSize * Vector2(2, -2) + Vector2(-1, 1)
+        let bottomRight = bottomRight / fieldSize * Vector2(2, -2) + Vector2(-1, 1)
+        let corners: [(position: Vector2<Float>, local: Vector2<Float>)] = [
+            (topLeft, Vector2(-local, local)),
+            (Vector2(bottomRight.x, topLeft.y), Vector2(local, local)),
+            (Vector2(topLeft.x, bottomRight.y), Vector2(-local, -local)),
+            (Vector2(bottomRight.x, topLeft.y), Vector2(local, local)),
+            (bottomRight, Vector2(local, -local)),
+            (Vector2(topLeft.x, bottomRight.y), Vector2(-local, -local)),
         ]
-        for (x, y, localX, localY) in corners {
-            vertices += [x, y, localX, localY, color.r, color.g, color.b, color.a]
+        for corner in corners {
+            vertices += [corner.position.x, corner.position.y, corner.local.x, corner.local.y]
+            vertices += [color.r, color.g, color.b, color.a]
         }
     }
 }
@@ -144,7 +143,7 @@ final class Renderer {
 
     /// Clears the surface's current texture to `background`, draws `batch` and
     /// presents it.
-    func draw(_ batch: Batch, background: RGBA, to surface: Surface) throws {
+    func draw(_ batch: Batch, background: Vector4<Float>, to surface: Surface) throws {
         let byteCount = UInt64(batch.vertices.count * MemoryLayout<Float>.stride)
         if byteCount > vertexBufferSize {
             // Grow by powers of two, so that a growing batch reallocates rarely.

@@ -1,3 +1,5 @@
+import VectorMath
+
 /// A 5×7 dot font for printable ASCII, drawn as rectangles with no texture.
 ///
 /// Each glyph's shape is a string of seven rows of five characters, separated
@@ -133,28 +135,28 @@ enum BitmapFont {
         return count == 0 ? 0 : Float(count * advance - 1) * scale
     }
 
-    /// Appends rectangles drawing `text` with its top-left corner at (`x`, `y`),
+    /// Appends rectangles drawing `text` with its top-left corner at `origin`,
     /// each dot `scale` pixels square. Characters outside printable ASCII
     /// draw as `?`.
     static func appendText(
-        _ text: String, x: Float, y: Float, scale: Float, color: RGBA, to batch: inout Batch
+        _ text: String, at origin: Vector2<Float>, scale: Float, color: Vector4<Float>, to batch: inout Batch
     ) {
-        var left = x
+        var glyphOrigin = origin
         for scalar in text.unicodeScalars {
             let code = scalar.isASCII ? Int(scalar.value) : 0
             if let rows = glyphs[code] ?? glyphs[Int(Character("?").asciiValue!)] {
-                appendGlyph(rows, x: left, y: y, scale: scale, color: color, to: &batch)
+                appendGlyph(rows, at: glyphOrigin, scale: scale, color: color, to: &batch)
             }
-            left += Float(advance) * scale
+            glyphOrigin.x += Float(advance) * scale
         }
     }
 
     /// One rectangle per run of lit dots in a row.
     private static func appendGlyph(
-        _ rows: [UInt8], x: Float, y: Float, scale: Float, color: RGBA, to batch: inout Batch
+        _ rows: [UInt8], at origin: Vector2<Float>, scale: Float, color: Vector4<Float>, to batch: inout Batch
     ) {
         for (rowIndex, bits) in rows.enumerated() {
-            let top = y + Float(rowIndex) * scale
+            let top = origin.y + Float(rowIndex) * scale
             var column = 0
             while column < glyphWidth {
                 guard bits & (1 << (glyphWidth - 1 - column)) != 0 else {
@@ -166,9 +168,8 @@ enum BitmapFont {
                     column += 1
                 }
                 batch.appendRect(
-                    left: x + Float(start) * scale, top: top,
-                    right: x + Float(column) * scale, bottom: top + scale, color: color
-                )
+                    from: Vector2(origin.x + Float(start) * scale, top),
+                    to: Vector2(origin.x + Float(column) * scale, top + scale), color: color)
             }
         }
     }

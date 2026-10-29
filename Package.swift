@@ -165,7 +165,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "SwiftGame",
-            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "CBuildInfo"] + foundation,
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "CBuildInfo", "VectorMath"] + foundation,
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
             ] + customExecutorSettings

@@ -1,8 +1,10 @@
 import Foundation
+import VectorMath
 
 // Game coordinates are window points with the origin at the top left.
 let fieldWidth: Float = 800
 let fieldHeight: Float = 480
+let fieldSize = Vector2(fieldWidth, fieldHeight)
 let playerRadius: Float = 7
 let bulletRadius: Float = 6
 
@@ -11,14 +13,13 @@ let ticksPerSecond: Float = 60
 let tickDuration = 1 / ticksPerSecond
 
 struct Bullet {
-    var x, y, vx, vy: Float
+    var position, velocity: Vector2<Float>
     // Position at the previous tick, for interpolating between ticks when drawing.
-    var previousX, previousY: Float
+    var previousPosition: Vector2<Float>
 }
 
 struct Game {
-    var playerX = fieldWidth / 2
-    var playerY = fieldHeight / 2
+    var player = fieldSize / 2
     var bullets: [Bullet] = []
     var elapsed: Float = 0
     var untilNextSpawn: Float = 1
@@ -38,20 +39,20 @@ struct Game {
     // Bullets enter from a random edge, aimed roughly at the player.
     // They come faster and more often the longer the player survives.
     mutating func spawnBullet() {
-        let x, y: Float
-        switch Int.random(in: 0..<4) {
-        case 0: (x, y) = (Float.random(in: 0...fieldWidth), -bulletRadius)
-        case 1: (x, y) = (Float.random(in: 0...fieldWidth), fieldHeight + bulletRadius)
-        case 2: (x, y) = (-bulletRadius, Float.random(in: 0...fieldHeight))
-        default: (x, y) = (fieldWidth + bulletRadius, Float.random(in: 0...fieldHeight))
-        }
-        let angle = atan2(playerY - y, playerX - x) + Float.random(in: -0.35...0.35)
+        let position =
+            switch Int.random(in: 0..<4) {
+            case 0: Vector2(Float.random(in: 0...fieldWidth), -bulletRadius)
+            case 1: Vector2(Float.random(in: 0...fieldWidth), fieldHeight + bulletRadius)
+            case 2: Vector2(-bulletRadius, Float.random(in: 0...fieldHeight))
+            default: Vector2(fieldWidth + bulletRadius, Float.random(in: 0...fieldHeight))
+            }
+        let toPlayer = player - position
+        let angle = atan2(toPlayer.y, toPlayer.x) + Float.random(in: -0.35...0.35)
         let speed = Float.random(in: 120...(180 + elapsed * 6))
         bullets.append(
             Bullet(
-                x: x, y: y, vx: cos(angle) * speed, vy: sin(angle) * speed, previousX: x,
-                previousY: y
-            ))
+                position: position, velocity: Vector2(cos(angle), sin(angle)) * speed,
+                previousPosition: position))
     }
 
     // Equal-mass elastic collisions: overlapping balls are pushed apart and
@@ -60,29 +61,22 @@ struct Game {
         let minimumDistance = bulletRadius * 2
         for i in bullets.indices {
             for j in (i + 1)..<bullets.count {
-                let dx = bullets[j].x - bullets[i].x
-                let dy = bullets[j].y - bullets[i].y
-                let distanceSquared = dx * dx + dy * dy
+                let offset = bullets[j].position - bullets[i].position
+                let distanceSquared = dot(offset, offset)
                 guard distanceSquared < minimumDistance * minimumDistance, distanceSquared > 0
                 else { continue }
                 let distance = distanceSquared.squareRoot()
-                let nx = dx / distance
-                let ny = dy / distance
-                let push = (minimumDistance - distance) / 2
-                bullets[i].x -= nx * push
-                bullets[i].y -= ny * push
-                bullets[j].x += nx * push
-                bullets[j].y += ny * push
-                let approach =
-                    (bullets[j].vx - bullets[i].vx) * nx + (bullets[j].vy - bullets[i].vy) * ny
+                let normal = offset / distance
+                let push = normal * (minimumDistance - distance) / 2
+                bullets[i].position -= push
+                bullets[j].position += push
+                let approach = dot(bullets[j].velocity - bullets[i].velocity, normal)
                 if approach < 0 {
                     if -approach > strongestBounce?.speed ?? 0 {
-                        strongestBounce = (-approach, (bullets[i].x + bullets[j].x) / 2)
+                        strongestBounce = (-approach, (bullets[i].position.x + bullets[j].position.x) / 2)
                     }
-                    bullets[i].vx += approach * nx
-                    bullets[i].vy += approach * ny
-                    bullets[j].vx -= approach * nx
-                    bullets[j].vy -= approach * ny
+                    bullets[i].velocity += normal * approach
+                    bullets[j].velocity -= normal * approach
                 }
             }
         }
@@ -98,25 +92,21 @@ struct Game {
         }
 
         for index in bullets.indices {
-            bullets[index].previousX = bullets[index].x
-            bullets[index].previousY = bullets[index].y
-            bullets[index].x += bullets[index].vx * tickDuration
-            bullets[index].y += bullets[index].vy * tickDuration
+            bullets[index].previousPosition = bullets[index].position
+            bullets[index].position += bullets[index].velocity * tickDuration
         }
         collideBullets()
 
         let margin = bulletRadius * 2
         let hitDistance = playerRadius + bulletRadius - 2
         for bullet in bullets {
-            let dx = bullet.x - playerX
-            let dy = bullet.y - playerY
-            if dx * dx + dy * dy < hitDistance * hitDistance {
+            let offset = bullet.position - player
+            if dot(offset, offset) < hitDistance * hitDistance {
                 isOver = true
             }
         }
         bullets.removeAll {
-            $0.x < -margin || $0.x > fieldWidth + margin || $0.y < -margin
-                || $0.y > fieldHeight + margin
+            any(($0.position < Vector2(repeating: -margin)) | ($0.position > fieldSize + margin))
         }
 
         if isOver {

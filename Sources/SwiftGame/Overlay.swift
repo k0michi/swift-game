@@ -1,3 +1,5 @@
+import VectorMath
+
 /// Recent frame intervals for the profiler-style graph, oldest first from `next`.
 struct FrameGraph {
     static let capacity = 240
@@ -23,8 +25,7 @@ struct FrameGraph {
         let height = Self.maxMilliseconds * Self.pixelsPerMillisecond
 
         batch.appendRect(
-            left: left, top: bottom - height, right: left + width, bottom: bottom,
-            color: RGBA(r: 0, g: 0, b: 0, a: 0.45))
+            from: Vector2(left, bottom - height), to: Vector2(left + width, bottom), color: Vector4(0, 0, 0, 0.45))
 
         for offset in 0..<Self.capacity {
             let milliseconds = samples[(next + offset) % Self.capacity]
@@ -33,22 +34,21 @@ struct FrameGraph {
             let barHeight = min(milliseconds, Self.maxMilliseconds) * Self.pixelsPerMillisecond
             let color =
                 if milliseconds <= 1000.0 / 60 + 1 {
-                    RGBA(r: 0.3, g: 0.9, b: 0.3, a: 1)
+                    Vector4<Float>(0.3, 0.9, 0.3, 1)
                 } else if milliseconds <= 1000.0 / 30 + 1 {
-                    RGBA(r: 0.95, g: 0.85, b: 0.2, a: 1)
+                    Vector4<Float>(0.95, 0.85, 0.2, 1)
                 } else {
-                    RGBA(r: 0.95, g: 0.25, b: 0.2, a: 1)
+                    Vector4<Float>(0.95, 0.25, 0.2, 1)
                 }
             batch.appendRect(
-                left: barLeft, top: bottom - barHeight, right: barLeft + Self.barWidth,
-                bottom: bottom, color: color)
+                from: Vector2(barLeft, bottom - barHeight), to: Vector2(barLeft + Self.barWidth, bottom),
+                color: color)
         }
 
         for milliseconds: Float in [1000.0 / 60, 1000.0 / 30] {
             let y = bottom - milliseconds * Self.pixelsPerMillisecond
             batch.appendRect(
-                left: left, top: y - 0.5, right: left + width, bottom: y + 0.5,
-                color: RGBA(r: 1, g: 1, b: 1, a: 0.6))
+                from: Vector2(left, y - 0.5), to: Vector2(left + width, y + 0.5), color: Vector4(1, 1, 1, 0.6))
         }
     }
 }
@@ -83,16 +83,13 @@ struct FPSCounter {
         let height = lines.map { Float(BitmapFont.glyphHeight) * $0.scale }.reduce(0, +)
             + lineSpacing * Float(lines.count - 1)
         batch.appendRect(
-            left: 0, top: 0, right: width + padding * 2, bottom: height + padding * 2,
-            color: RGBA(r: 0, g: 0, b: 0, a: 0.45))
-        var top = padding
+            from: .zero, to: Vector2(width, height) + padding * 2, color: Vector4(0, 0, 0, 0.45))
+        var origin = Vector2<Float>(repeating: padding)
         for (text, scale) in lines {
             BitmapFont.appendText(
-                text, x: padding + scale / 2, y: top + scale / 2, scale: scale,
-                color: RGBA(r: 0, g: 0, b: 0, a: 0.8), to: &batch)
-            BitmapFont.appendText(
-                text, x: padding, y: top, scale: scale, color: RGBA(r: 1, g: 1, b: 1, a: 1), to: &batch)
-            top += Float(BitmapFont.glyphHeight) * scale + lineSpacing
+                text, at: origin + scale / 2, scale: scale, color: Vector4(0, 0, 0, 0.8), to: &batch)
+            BitmapFont.appendText(text, at: origin, scale: scale, color: Vector4(1, 1, 1, 1), to: &batch)
+            origin.y += Float(BitmapFont.glyphHeight) * scale + lineSpacing
         }
     }
 }
