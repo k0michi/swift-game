@@ -96,12 +96,16 @@ let package = Package(
         .library(name: "Echo", targets: ["Echo"]),
         .library(name: "EchoSDL3", targets: ["EchoSDL3"]),
         .library(name: "MainLoop", targets: ["MainLoop"]),
+        .library(name: "VectorMath", targets: ["VectorMath"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
     ] + foundationDependencies,
     targets: [
         .target(name: "Interop"),
+        // Depends on nothing but the standard library, so that it can move to a
+        // package of its own. scripts/generate-vector-math.swift writes most of it.
+        .target(name: "VectorMath"),
         .target(name: "CEmscripten"),
         .target(name: "MainLoop", dependencies: ["CEmscripten"]),
         .target(name: "CEchoWeb"),
@@ -180,6 +184,10 @@ let package = Package(
         .testTarget(
             name: "InteropTests",
             dependencies: ["Interop"]
+        ),
+        .testTarget(
+            name: "VectorMathTests",
+            dependencies: ["VectorMath"]
         ),
         .testTarget(
             name: "EchoTests",

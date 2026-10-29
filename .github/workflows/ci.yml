@@ -96,6 +96,23 @@ jobs:
         shell: pwsh
         run: ./scripts/test.ps1
 
+  generated-sources:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-swift
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+
+      - name: Check that the generated VectorMath sources are up to date
+        shell: bash
+        run: |
+          swift scripts/generate-vector-math.swift
+          git add --intent-to-add Sources/VectorMath/Generated
+          git diff --exit-code -- Sources/VectorMath/Generated
+
   web:
     runs-on: ubuntu-24.04
     env:
@@ -144,6 +161,11 @@ jobs:
       - name: Build for the browser
         shell: bash
         run: ./scripts/emscripten/build.sh
+
+      # The game does not use VectorMath yet, so the build above leaves it out.
+      - name: Build VectorMath for the browser
+        shell: bash
+        run: ./scripts/emscripten/swift-build.sh --target VectorMath
 
       - name: Install Playwright
         shell: bash
