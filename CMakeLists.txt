@@ -12,6 +12,11 @@ set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 set(SDL_TESTS OFF CACHE BOOL "" FORCE)
 set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SDL_INSTALL_DOCS OFF CACHE BOOL "" FORCE)
+if(APPLE)
+    # HIDAPI uses IOKit on macOS. With libusb found, from Homebrew say, the
+    # game would link it and not start where it is missing.
+    set(SDL_HIDAPI_LIBUSB OFF CACHE BOOL "" FORCE)
+endif()
 
 FetchContent_Declare(
     SDL
