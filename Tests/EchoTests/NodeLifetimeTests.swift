@@ -179,9 +179,9 @@ private final class PulledAudioBackend: AudioOutputBackend, @unchecked Sendable 
 }
 
 // An impulse into an echo, a delay feeding itself back through a gain of
-// one half, with nothing kept but what is returned.
+// one half, with no node kept. Returns their handlers.
 @MainActor
-private func echo(on context: OfflineAudioContext) throws -> (delay: DelayNode, gain: GainNode) {
+private func echo(on context: OfflineAudioContext) throws -> (delay: AudioHandler, gain: AudioHandler) {
     let impulse = try AudioBuffer(options: AudioBufferOptions(numberOfChannels: 1, length: 1, sampleRate: sampleRate))
     try impulse.copyToChannel([1], channelNumber: 0)
     let source = try AudioBufferSourceNode(context: context, options: AudioBufferSourceOptions(buffer: impulse))
@@ -194,7 +194,7 @@ private func echo(on context: OfflineAudioContext) throws -> (delay: DelayNode, 
     try source.connect(delay).connect(gain).connect(delay)
     try delay.connect(context.destination)
     try source.start()
-    return (delay, gain)
+    return (delay.handler, gain.handler)
 }
 
 @MainActor
@@ -202,8 +202,9 @@ private func echo(on context: OfflineAudioContext) throws -> (delay: DelayNode, 
     // The loop keeps neither of its nodes: they go once the echoes fade
     // below 2^-126, though they still lead to each other.
     let context = try OfflineAudioContext(numberOfChannels: 1, length: 128 * 300, sampleRate: sampleRate)
-    weak var delay: DelayNode?
-    weak var gain: GainNode?
+    // The handlers, which the context keeps while they may sound.
+    weak var delay: AudioHandler?
+    weak var gain: AudioHandler?
     (delay, gain) = try echo(on: context)
     let (rendered, counts) = try await renderByQuantum(context, quanta: 300)
     // Echoes a quantum apart, each half the last.
@@ -260,11 +261,11 @@ private func echo(on context: OfflineAudioContext) throws -> (delay: DelayNode, 
     // gain later plays through both.
     let context = try OfflineAudioContext(numberOfChannels: 1, length: 128 * 4, sampleRate: sampleRate)
     let gain = try GainNode(context: context, options: GainOptions(gain: 0.5))
-    weak var panner: StereoPannerNode?
+    weak var panner: AudioHandler?
     func connect() throws {
         let made = context.createStereoPanner()
         try gain.connect(made).connect(context.destination)
-        panner = made
+        panner = made.handler
     }
     try connect()
     var pannerStayed = false
@@ -290,11 +291,11 @@ private func echo(on context: OfflineAudioContext) throws -> (delay: DelayNode, 
     // Once the caller lets go of the gain, it and the panner after it go.
     let context = try OfflineAudioContext(numberOfChannels: 1, length: 128 * 3, sampleRate: sampleRate)
     var gain: GainNode? = context.createGain()
-    weak var panner: StereoPannerNode?
+    weak var panner: AudioHandler?
     func connect() throws {
         let made = context.createStereoPanner()
         try gain!.connect(made).connect(context.destination)
-        panner = made
+        panner = made.handler
     }
     try connect()
     let (_, counts) = try await renderByQuantum(context, quanta: 3) { quantum in
@@ -311,8 +312,8 @@ private func echo(on context: OfflineAudioContext) throws -> (delay: DelayNode, 
     // A loop that never ends, through a gain, keeps the context while it
     // renders; once rendered, the context is closed and lets go of them all.
     weak var weakContext: OfflineAudioContext?
-    weak var weakSource: AudioBufferSourceNode?
-    weak var weakGain: GainNode?
+    weak var weakSource: AudioHandler?
+    weak var weakGain: AudioHandler?
     func render() async throws {
         let context = try OfflineAudioContext(numberOfChannels: 1, length: 256, sampleRate: sampleRate)
         let buffer = try AudioBuffer(options: AudioBufferOptions(numberOfChannels: 1, length: 64, sampleRate: sampleRate))
@@ -320,7 +321,7 @@ private func echo(on context: OfflineAudioContext) throws -> (delay: DelayNode, 
         let gain = context.createGain()
         try source.connect(gain).connect(context.destination)
         try source.start()
-        (weakContext, weakSource, weakGain) = (context, source, gain)
+        (weakContext, weakSource, weakGain) = (context, source.handler, gain.handler)
         _ = try await context.startRendering()
         #expect(context.state == .closed)
     }
@@ -331,18 +332,83 @@ private func echo(on context: OfflineAudioContext) throws -> (delay: DelayNode, 
 @MainActor
 @Test func aClosedContextGoesWithItsNodes() async throws {
     weak var weakContext: AudioContext?
-    weak var weakSource: ConstantSourceNode?
+    weak var weakSource: AudioHandler?
     func play() async throws {
         let context = try AudioContext(backend: PulledAudioBackend())
         try await context.resume()
         let source = context.createConstantSource()
         try source.connect(context.destination)
         try source.start()
-        (weakContext, weakSource) = (context, source)
+        (weakContext, weakSource) = (context, source.handler)
     }
     try await play()
-    // Playing, the source keeps the context, which keeps the source.
+    // Running, the context keeps itself, and its source's handler.
     #expect(weakContext != nil && weakSource != nil)
     try await weakContext?.close()
     #expect(weakContext == nil && weakSource == nil)
+}
+
+@MainActor
+@Test func aParameterTheCallerKeepsKeepsItsNode() async throws {
+    // Holding only a gain's parameter keeps the gain, and what it leads to,
+    // as it does in the browser; letting go of it lets the gain go.
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128 * 4, sampleRate: sampleRate)
+    var parameter: AudioParam?
+    weak var gain: AudioHandler?
+    func connect() throws {
+        let made = context.createGain()
+        try made.connect(context.destination)
+        (parameter, gain) = (made.gain, made.handler)
+    }
+    try connect()
+    let (_, counts) = try await renderByQuantum(context, quanta: 4) { quantum in
+        if quantum == 2 {
+            parameter = nil
+        }
+    }
+    #expect(counts == [1, 1, 1, 0], "\(counts)")
+    #expect(gain == nil)
+}
+
+@MainActor
+@Test func aRunningContextKeepsItselfUntilClosed() async throws {
+    // A running context plays on with nothing else keeping it, as in the
+    // browser, and goes once closed.
+    let backend = PulledAudioBackend()
+    weak var weakContext: AudioContext?
+    func play() async throws {
+        let context = try AudioContext(backend: backend)
+        let source = context.createConstantSource()
+        try source.connect(context.destination)
+        try source.start()
+        try await context.resume()
+        weakContext = context
+    }
+    try await play()
+    #expect(weakContext != nil)
+    #expect(backend.pull(frames: 128).allSatisfy { $0 == 1 })
+    try await weakContext?.close()
+    #expect(weakContext == nil)
+}
+
+@MainActor
+@Test func aTrackPlaysOnItsOwnWhileLive() async throws {
+    // A media stream source nothing keeps stays while its track is live,
+    // and goes once the track ends.
+    let backend = PulledAudioBackend()
+    let context = try AudioContext(backend: backend)
+    let track = try MediaStreamTrack(id: "a", sampleRate: sampleRate, channelCount: 1)
+    weak var weakSource: AudioHandler?
+    func connect() throws {
+        let source = try context.createMediaStreamSource(MediaStream(tracks: [track]))
+        try source.connect(context.destination)
+        weakSource = source.handler
+    }
+    try connect()
+    context.updateNodeLifetimes()
+    #expect(weakSource != nil && context.graph.connectionCount == 1)
+    track.stop()
+    context.updateNodeLifetimes()
+    #expect(weakSource == nil && context.graph.connectionCount == 0)
+    try await context.close()
 }

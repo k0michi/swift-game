@@ -2,8 +2,8 @@
 // to the browser's Web Audio.
 #if !os(Emscripten)
 @MainActor
-public final class GainNode: AudioNode {
-    public private(set) lazy var gain = AudioParam(
+final class GainHandler: AudioHandler {
+    private(set) lazy var gain = AudioParamHandler(
         owner: self,
         defaultValue: 1,
         minValue: -.greatestFiniteMagnitude,
@@ -11,7 +11,7 @@ public final class GainNode: AudioNode {
         automationRate: .aRate
     )
 
-    public init(context: BaseAudioContext, options: GainOptions = GainOptions()) throws {
+    init(context: BaseAudioContext, options: GainOptions = GainOptions()) throws {
         guard (1 ... AudioBuffer.maximumNumberOfChannels).contains(options.channelCount ?? 2) else {
             throw WebAudioError.notSupported
         }
@@ -28,6 +28,17 @@ public final class GainNode: AudioNode {
         gain.value = options.gain
     }
 
-    override var audioParams: [AudioParam] { [gain] }
+    override var audioParams: [AudioParamHandler] { [gain] }
+}
+
+@MainActor
+public final class GainNode: AudioNode {
+    public let gain: AudioParam
+
+    public init(context: BaseAudioContext, options: GainOptions = GainOptions()) throws {
+        let handler = try GainHandler(context: context, options: options)
+        gain = AudioParam(handler.gain)
+        super.init(handler: handler)
+    }
 }
 #endif

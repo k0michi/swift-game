@@ -2,11 +2,11 @@
 // to the browser's Web Audio.
 #if !os(Emscripten)
 @MainActor
-public final class WaveShaperNode: AudioNode {
+final class WaveShaperHandler: AudioHandler {
     // nil passes the input through unchanged.
-    public private(set) var curve: [Float]?
+    private(set) var curve: [Float]?
 
-    public var oversample: OverSampleType {
+    var oversample: OverSampleType {
         didSet { context.graphDidChange() }
     }
 
@@ -14,7 +14,7 @@ public final class WaveShaperNode: AudioNode {
     private var curveSet = false
     let renderState: WaveShaperRenderState
 
-    public init(context: BaseAudioContext, options: WaveShaperOptions = WaveShaperOptions()) throws {
+    init(context: BaseAudioContext, options: WaveShaperOptions = WaveShaperOptions()) throws {
         guard (1 ... AudioBuffer.maximumNumberOfChannels).contains(options.channelCount ?? 2) else {
             throw WebAudioError.notSupported
         }
@@ -42,13 +42,36 @@ public final class WaveShaperNode: AudioNode {
 
     // Sets the curve attribute. The array is a value, so later changes to the
     // caller's copy have no effect, as the attribute's internal copy has none.
-    public func setCurve(_ curve: [Float]?) throws {
+    func setCurve(_ curve: [Float]?) throws {
         if let curve {
             guard curve.count >= 2, !curveSet else { throw WebAudioError.invalidState }
             curveSet = true
         }
         self.curve = curve
         context.graphDidChange()
+    }
+}
+
+@MainActor
+public final class WaveShaperNode: AudioNode {
+    // nil passes the input through unchanged.
+    public var curve: [Float]? { shaperHandler.curve }
+
+    public var oversample: OverSampleType {
+        get { shaperHandler.oversample }
+        set { shaperHandler.oversample = newValue }
+    }
+
+    private var shaperHandler: WaveShaperHandler { unsafeDowncast(handler, to: WaveShaperHandler.self) }
+
+    public init(context: BaseAudioContext, options: WaveShaperOptions = WaveShaperOptions()) throws {
+        super.init(handler: try WaveShaperHandler(context: context, options: options))
+    }
+
+    // Sets the curve attribute. The array is a value, so later changes to the
+    // caller's copy have no effect, as the attribute's internal copy has none.
+    public func setCurve(_ curve: [Float]?) throws {
+        try shaperHandler.setCurve(curve)
     }
 }
 #endif

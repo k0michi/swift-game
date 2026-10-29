@@ -2,8 +2,8 @@
 // to the browser's Web Audio.
 #if !os(Emscripten)
 @MainActor
-public final class StereoPannerNode: AudioNode {
-    public private(set) lazy var pan = AudioParam(
+final class StereoPannerHandler: AudioHandler {
+    private(set) lazy var pan = AudioParamHandler(
         owner: self,
         defaultValue: 0,
         minValue: -1,
@@ -11,7 +11,7 @@ public final class StereoPannerNode: AudioNode {
         automationRate: .aRate
     )
 
-    public init(context: BaseAudioContext, options: StereoPannerOptions = StereoPannerOptions()) throws {
+    init(context: BaseAudioContext, options: StereoPannerOptions = StereoPannerOptions()) throws {
         let channelCount = options.channelCount ?? 2
         guard (1 ... AudioBuffer.maximumNumberOfChannels).contains(channelCount) else {
             throw WebAudioError.notSupported
@@ -32,17 +32,17 @@ public final class StereoPannerNode: AudioNode {
         pan.value = options.pan
     }
 
-    public override func setChannelCount(_ channelCount: UInt32) throws {
+    override func setChannelCount(_ channelCount: UInt32) throws {
         try Self.check(channelCount: channelCount)
         try super.setChannelCount(channelCount)
     }
 
-    public override func setChannelCountMode(_ channelCountMode: ChannelCountMode) throws {
+    override func setChannelCountMode(_ channelCountMode: ChannelCountMode) throws {
         try Self.check(channelCountMode: channelCountMode)
         try super.setChannelCountMode(channelCountMode)
     }
 
-    override var audioParams: [AudioParam] { [pan] }
+    override var audioParams: [AudioParamHandler] { [pan] }
 
     // The input is at most stereo.
     private static func check(channelCount: UInt32) throws {
@@ -51,6 +51,17 @@ public final class StereoPannerNode: AudioNode {
 
     private static func check(channelCountMode: ChannelCountMode) throws {
         guard channelCountMode != .max else { throw WebAudioError.notSupported }
+    }
+}
+
+@MainActor
+public final class StereoPannerNode: AudioNode {
+    public let pan: AudioParam
+
+    public init(context: BaseAudioContext, options: StereoPannerOptions = StereoPannerOptions()) throws {
+        let handler = try StereoPannerHandler(context: context, options: options)
+        pan = AudioParam(handler.pan)
+        super.init(handler: handler)
     }
 }
 #endif

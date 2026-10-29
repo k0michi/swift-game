@@ -41,7 +41,6 @@ public final class OfflineAudioContext: BaseAudioContext {
             renderQuantumSize: renderQuantumSize,
             destinationChannelCount: options.numberOfChannels
         )
-        _ = destination
     }
 
     public convenience init(
@@ -77,7 +76,7 @@ public final class OfflineAudioContext: BaseAudioContext {
             length: bufferLength,
             sampleRate: sampleRate
         ))
-        let plan = try graph.makeRenderPlan(destination: destination, frameCount: Int(renderQuantumSize))
+        let plan = try graph.makeRenderPlan(destination: destinationHandler, frameCount: Int(renderQuantumSize))
         let controlQueue = RenderControlQueue(initialPlan: plan)
 
         renderingStarted = true
@@ -188,7 +187,7 @@ public final class OfflineAudioContext: BaseAudioContext {
     override func graphDidChange() {
         guard isRendering, state != .closed, let activeControlQueue else { return }
         do {
-            let plan = try graph.makeRenderPlan(destination: destination, frameCount: Int(renderQuantumSize))
+            let plan = try graph.makeRenderPlan(destination: destinationHandler, frameCount: Int(renderQuantumSize))
             activeControlQueue.enqueue(plan)
         } catch {
             renderControlError = error

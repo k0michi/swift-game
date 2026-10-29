@@ -4,20 +4,20 @@
 import Foundation
 
 @MainActor
-public final class OscillatorNode: AudioScheduledSourceNode {
+final class OscillatorHandler: AudioScheduledSourceHandler {
     // "custom" comes only from a PeriodicWave.
-    public private(set) var type: OscillatorType
+    private(set) var type: OscillatorType
 
     // With detune, a compound parameter: the oscillator's frequency is
     // frequency · 2^(detune / 1200), clamped to the Nyquist frequency.
-    public private(set) lazy var frequency = AudioParam(
+    private(set) lazy var frequency = AudioParamHandler(
         owner: self,
         defaultValue: 440,
         minValue: -context.sampleRate / 2,
         maxValue: context.sampleRate / 2,
         automationRate: .aRate
     )
-    public private(set) lazy var detune = AudioParam(
+    private(set) lazy var detune = AudioParamHandler(
         owner: self,
         defaultValue: 0,
         minValue: -Self.maximumDetune,
@@ -31,7 +31,7 @@ public final class OscillatorNode: AudioScheduledSourceNode {
     private var periodicWave: PeriodicWave?
     let renderState = OscillatorRenderState()
 
-    public init(context: BaseAudioContext, options: OscillatorOptions = OscillatorOptions()) throws {
+    init(context: BaseAudioContext, options: OscillatorOptions = OscillatorOptions()) throws {
         guard (1 ... AudioBuffer.maximumNumberOfChannels).contains(options.channelCount ?? 2) else {
             throw WebAudioError.notSupported
         }
@@ -52,14 +52,14 @@ public final class OscillatorNode: AudioScheduledSourceNode {
 
     // Sets the type attribute, keeping the phase. "custom" is set with a
     // PeriodicWave instead.
-    public func setType(_ type: OscillatorType) throws {
+    func setType(_ type: OscillatorType) throws {
         guard type != .custom else { throw WebAudioError.invalidState }
         self.type = type
         periodicWave = nil
         context.graphDidChange()
     }
 
-    public func setPeriodicWave(_ periodicWave: PeriodicWave) {
+    func setPeriodicWave(_ periodicWave: PeriodicWave) {
         self.periodicWave = periodicWave
         type = .custom
         context.graphDidChange()
@@ -69,6 +69,36 @@ public final class OscillatorNode: AudioScheduledSourceNode {
         periodicWave?.waveTable ?? .builtIn(type)
     }
 
-    override var audioParams: [AudioParam] { [frequency, detune] }
+    override var audioParams: [AudioParamHandler] { [frequency, detune] }
+}
+
+@MainActor
+public final class OscillatorNode: AudioScheduledSourceNode {
+    // "custom" comes only from a PeriodicWave.
+    public var type: OscillatorType { oscillatorHandler.type }
+
+    // With detune, a compound parameter: the oscillator's frequency is
+    // frequency · 2^(detune / 1200), clamped to the Nyquist frequency.
+    public let frequency: AudioParam
+    public let detune: AudioParam
+
+    private var oscillatorHandler: OscillatorHandler { unsafeDowncast(handler, to: OscillatorHandler.self) }
+
+    public init(context: BaseAudioContext, options: OscillatorOptions = OscillatorOptions()) throws {
+        let handler = try OscillatorHandler(context: context, options: options)
+        frequency = AudioParam(handler.frequency)
+        detune = AudioParam(handler.detune)
+        super.init(handler: handler)
+    }
+
+    // Sets the type attribute, keeping the phase. "custom" is set with a
+    // PeriodicWave instead.
+    public func setType(_ type: OscillatorType) throws {
+        try oscillatorHandler.setType(type)
+    }
+
+    public func setPeriodicWave(_ periodicWave: PeriodicWave) {
+        oscillatorHandler.setPeriodicWave(periodicWave)
+    }
 }
 #endif

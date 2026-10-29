@@ -4,29 +4,29 @@
 import Foundation
 
 @MainActor
-public final class BiquadFilterNode: AudioNode {
-    public var type: BiquadFilterType {
+final class BiquadFilterHandler: AudioHandler {
+    var type: BiquadFilterType {
         didSet { context.graphDidChange() }
     }
 
     // With detune, a compound parameter: the filter's frequency is
     // frequency · 2^(detune / 1200), clamped to [0, Nyquist].
-    public private(set) lazy var frequency = AudioParam(
+    private(set) lazy var frequency = AudioParamHandler(
         owner: self,
         defaultValue: 350,
         minValue: 0,
         maxValue: context.sampleRate / 2,
         automationRate: .aRate
     )
-    public private(set) lazy var detune = AudioParam(
+    private(set) lazy var detune = AudioParamHandler(
         owner: self,
         defaultValue: 0,
-        minValue: -OscillatorNode.maximumDetune,
-        maxValue: OscillatorNode.maximumDetune,
+        minValue: -OscillatorHandler.maximumDetune,
+        maxValue: OscillatorHandler.maximumDetune,
         automationRate: .aRate
     )
     // Each type clamps it further to its own nominal range.
-    public private(set) lazy var Q = AudioParam(
+    private(set) lazy var Q = AudioParamHandler(
         owner: self,
         defaultValue: 1,
         minValue: -.greatestFiniteMagnitude,
@@ -34,7 +34,7 @@ public final class BiquadFilterNode: AudioNode {
         automationRate: .aRate
     )
     // In dB, up to about 1541: 40 log10 of the largest float.
-    public private(set) lazy var gain = AudioParam(
+    private(set) lazy var gain = AudioParamHandler(
         owner: self,
         defaultValue: 0,
         minValue: -.greatestFiniteMagnitude,
@@ -47,7 +47,7 @@ public final class BiquadFilterNode: AudioNode {
     private let sounding = SoundingSignal()
     override var soundingSignal: SoundingSignal? { sounding }
 
-    public init(context: BaseAudioContext, options: BiquadFilterOptions = BiquadFilterOptions()) throws {
+    init(context: BaseAudioContext, options: BiquadFilterOptions = BiquadFilterOptions()) throws {
         guard (1 ... AudioBuffer.maximumNumberOfChannels).contains(options.channelCount ?? 2) else {
             throw WebAudioError.notSupported
         }
@@ -70,7 +70,7 @@ public final class BiquadFilterNode: AudioNode {
     // The response at each of `frequencyHz`, from the parameters' current
     // values: its linear magnitude and its phase in radians, or NaN for a
     // frequency outside [0, Nyquist].
-    public func getFrequencyResponse(
+    func getFrequencyResponse(
         _ frequencyHz: [Float],
         _ magResponse: inout [Float],
         _ phaseResponse: inout [Float]
@@ -100,6 +100,45 @@ public final class BiquadFilterNode: AudioNode {
         }
     }
 
-    override var audioParams: [AudioParam] { [frequency, detune, Q, gain] }
+    override var audioParams: [AudioParamHandler] { [frequency, detune, Q, gain] }
+}
+
+@MainActor
+public final class BiquadFilterNode: AudioNode {
+    public var type: BiquadFilterType {
+        get { filterHandler.type }
+        set { filterHandler.type = newValue }
+    }
+
+    // With detune, a compound parameter: the filter's frequency is
+    // frequency · 2^(detune / 1200), clamped to [0, Nyquist].
+    public let frequency: AudioParam
+    public let detune: AudioParam
+    // Each type clamps it further to its own nominal range.
+    public let Q: AudioParam
+    // In dB.
+    public let gain: AudioParam
+
+    private var filterHandler: BiquadFilterHandler { unsafeDowncast(handler, to: BiquadFilterHandler.self) }
+
+    public init(context: BaseAudioContext, options: BiquadFilterOptions = BiquadFilterOptions()) throws {
+        let handler = try BiquadFilterHandler(context: context, options: options)
+        frequency = AudioParam(handler.frequency)
+        detune = AudioParam(handler.detune)
+        Q = AudioParam(handler.Q)
+        gain = AudioParam(handler.gain)
+        super.init(handler: handler)
+    }
+
+    // The response at each of `frequencyHz`, from the parameters' current
+    // values: its linear magnitude and its phase in radians, or NaN for a
+    // frequency outside [0, Nyquist].
+    public func getFrequencyResponse(
+        _ frequencyHz: [Float],
+        _ magResponse: inout [Float],
+        _ phaseResponse: inout [Float]
+    ) throws {
+        try filterHandler.getFrequencyResponse(frequencyHz, &magResponse, &phaseResponse)
+    }
 }
 #endif

@@ -48,24 +48,29 @@ final class SoundingSignal: @unchecked Sendable {
     }
 }
 
-// The sources that a start and a stop time schedule. The context keeps a
-// started source until it ends, then calls onended.
+// The sources that a start and a stop time schedule. A started source plays
+// on its own until it ends, which keeps it in its context; then the context
+// calls its onended.
 @MainActor
-public class AudioScheduledSourceNode: AudioNode {
-    public var onended: (() -> Void)?
+class AudioScheduledSourceHandler: AudioHandler {
+    var onended: (() -> Void)?
 
     // [[source started]] is whether there is a start time.
     private(set) var startTime: Double?
     private(set) var stopTime: Double?
     let endedSignal = EndedSignal()
+    // Whether onended has been called for the end.
+    var endedIsDispatched = false
 
-    public func start(_ when: Double = 0) throws {
+    override var playsOnItsOwn: Bool { startTime != nil && !endedSignal.hasEnded }
+
+    func start(_ when: Double) throws {
         try scheduleStart(when)
     }
 
     // If called again, the last time applies, unless the source has already
     // stopped.
-    public func stop(_ when: Double = 0) throws {
+    func stop(_ when: Double) throws {
         guard startTime != nil else { throw WebAudioError.invalidState }
         stopTime = try scheduledTime(when)
         context.graphDidChange()
@@ -75,7 +80,6 @@ public class AudioScheduledSourceNode: AudioNode {
     func scheduleStart(_ when: Double) throws {
         guard startTime == nil else { throw WebAudioError.invalidState }
         startTime = try scheduledTime(when)
-        context.sourceDidStart(self)
         context.graphDidChange()
     }
 
@@ -84,6 +88,27 @@ public class AudioScheduledSourceNode: AudioNode {
     func scheduledTime(_ when: Double) throws -> Double {
         guard when.isFinite, when >= 0 else { throw WebAudioError.rangeError }
         return max(when, context.currentTime)
+    }
+}
+
+@MainActor
+public class AudioScheduledSourceNode: AudioNode {
+    private var sourceHandler: AudioScheduledSourceHandler {
+        unsafeDowncast(handler, to: AudioScheduledSourceHandler.self)
+    }
+
+    // Kept with the source, which may end after the caller lets go of it.
+    public var onended: (() -> Void)? {
+        get { sourceHandler.onended }
+        set { sourceHandler.onended = newValue }
+    }
+
+    public func start(_ when: Double = 0) throws {
+        try sourceHandler.start(when)
+    }
+
+    public func stop(_ when: Double = 0) throws {
+        try sourceHandler.stop(when)
     }
 }
 #endif

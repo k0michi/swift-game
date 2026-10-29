@@ -2,12 +2,12 @@
 // to the browser's Web Audio.
 #if !os(Emscripten)
 @MainActor
-public final class AudioBufferSourceNode: AudioScheduledSourceNode {
-    public private(set) var buffer: AudioBuffer?
+final class AudioBufferSourceHandler: AudioScheduledSourceHandler {
+    private(set) var buffer: AudioBuffer?
 
     // With detune, a compound parameter of unbounded range: the playback
     // rate is playbackRate · 2^(detune / 1200). Both are k-rate only.
-    public private(set) lazy var playbackRate = AudioParam(
+    private(set) lazy var playbackRate = AudioParamHandler(
         owner: self,
         defaultValue: 1,
         minValue: -.greatestFiniteMagnitude,
@@ -15,7 +15,7 @@ public final class AudioBufferSourceNode: AudioScheduledSourceNode {
         automationRate: .kRate,
         isAutomationRateFixed: true
     )
-    public private(set) lazy var detune = AudioParam(
+    private(set) lazy var detune = AudioParamHandler(
         owner: self,
         defaultValue: 0,
         minValue: -.greatestFiniteMagnitude,
@@ -24,15 +24,15 @@ public final class AudioBufferSourceNode: AudioScheduledSourceNode {
         isAutomationRateFixed: true
     )
 
-    public var loop: Bool {
+    var loop: Bool {
         didSet { context.graphDidChange() }
     }
     // Playhead positions, in seconds of the buffer.
     // TODO: A Swift property setter cannot surface the TypeError for values that are not finite.
-    public var loopStart: Double {
+    var loopStart: Double {
         didSet { context.graphDidChange() }
     }
-    public var loopEnd: Double {
+    var loopEnd: Double {
         didSet { context.graphDidChange() }
     }
 
@@ -45,7 +45,7 @@ public final class AudioBufferSourceNode: AudioScheduledSourceNode {
     private(set) var duration: Double?
     let renderState = BufferSourceRenderState()
 
-    public init(context: BaseAudioContext, options: AudioBufferSourceOptions = AudioBufferSourceOptions()) throws {
+    init(context: BaseAudioContext, options: AudioBufferSourceOptions = AudioBufferSourceOptions()) throws {
         try options.validate()
         loop = options.loop
         loopStart = options.loopStart
@@ -66,7 +66,7 @@ public final class AudioBufferSourceNode: AudioScheduledSourceNode {
     }
 
     // Sets the buffer attribute.
-    public func setBuffer(_ buffer: AudioBuffer?) throws {
+    func setBuffer(_ buffer: AudioBuffer?) throws {
         if buffer != nil {
             guard !bufferSet else { throw WebAudioError.invalidState }
             bufferSet = true
@@ -78,13 +78,13 @@ public final class AudioBufferSourceNode: AudioScheduledSourceNode {
         context.graphDidChange()
     }
 
-    public override func start(_ when: Double = 0) throws {
+    override func start(_ when: Double) throws {
         try start(when, offset: 0)
     }
 
     // Plays from the playhead position `offset` for `duration` seconds of
     // the buffer, however fast, or until stopped when there is none.
-    public func start(_ when: Double, offset: Double, duration: Double? = nil) throws {
+    func start(_ when: Double, offset: Double, duration: Double? = nil) throws {
         guard startTime == nil else { throw WebAudioError.invalidState }
         _ = try scheduledTime(when)
         // Doubles, which take only finite values.
@@ -97,7 +97,7 @@ public final class AudioBufferSourceNode: AudioScheduledSourceNode {
         try scheduleStart(when)
     }
 
-    override var audioParams: [AudioParam] { [playbackRate, detune] }
+    override var audioParams: [AudioParamHandler] { [playbackRate, detune] }
 }
 
 // A copy of an AudioBuffer's samples, which the rendering thread reads while
@@ -119,6 +119,52 @@ final class BufferSourceContent: Sendable {
         }
         sampleRate = Double(buffer.sampleRate)
         length = Int(buffer.length)
+    }
+}
+
+@MainActor
+public final class AudioBufferSourceNode: AudioScheduledSourceNode {
+    public var buffer: AudioBuffer? { sourceHandler.buffer }
+
+    // With detune, a compound parameter of unbounded range: the playback
+    // rate is playbackRate · 2^(detune / 1200). Both are k-rate only.
+    public let playbackRate: AudioParam
+    public let detune: AudioParam
+
+    public var loop: Bool {
+        get { sourceHandler.loop }
+        set { sourceHandler.loop = newValue }
+    }
+    // Playhead positions, in seconds of the buffer.
+    public var loopStart: Double {
+        get { sourceHandler.loopStart }
+        set { sourceHandler.loopStart = newValue }
+    }
+    public var loopEnd: Double {
+        get { sourceHandler.loopEnd }
+        set { sourceHandler.loopEnd = newValue }
+    }
+
+    private var sourceHandler: AudioBufferSourceHandler {
+        unsafeDowncast(handler, to: AudioBufferSourceHandler.self)
+    }
+
+    public init(context: BaseAudioContext, options: AudioBufferSourceOptions = AudioBufferSourceOptions()) throws {
+        let handler = try AudioBufferSourceHandler(context: context, options: options)
+        playbackRate = AudioParam(handler.playbackRate)
+        detune = AudioParam(handler.detune)
+        super.init(handler: handler)
+    }
+
+    // Sets the buffer attribute.
+    public func setBuffer(_ buffer: AudioBuffer?) throws {
+        try sourceHandler.setBuffer(buffer)
+    }
+
+    // Plays from the playhead position `offset` for `duration` seconds of
+    // the buffer, however fast, or until stopped when there is none.
+    public func start(_ when: Double, offset: Double, duration: Double? = nil) throws {
+        try sourceHandler.start(when, offset: offset, duration: duration)
     }
 }
 #endif

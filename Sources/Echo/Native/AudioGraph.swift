@@ -1,151 +1,119 @@
 // Echo renders the audio itself, except in the browser, where Web/ hands it
 // to the browser's Web Audio.
 #if !os(Emscripten)
-// The connections between a context's nodes. They keep neither end: the
-// context keeps what sounds or may sound, the caller keeps what it uses, and
-// a connection whose end has gone goes too.
+// The connections between a context's node handlers, which keep both ends.
+// Handlers refer to no other handler, so nothing here makes a reference
+// cycle; the context removes what can no longer sound.
 @MainActor
 final class AudioGraph {
     private struct Connection {
-        // A connection from or to the destination is from or to the
-        // context's output, which outlives any one destination node.
-        weak var source: AudioNode?
-        let fromOutput: Bool
-        weak var destination: AudioNode?
-        let toOutput: Bool
+        let source: AudioHandler
+        let destination: AudioHandler
         let output: UInt32
         let input: UInt32
-
-        init(source: AudioNode, destination: AudioNode, output: UInt32, input: UInt32) {
-            fromOutput = source is AudioDestinationNode
-            toOutput = destination is AudioDestinationNode
-            self.source = fromOutput ? nil : source
-            self.destination = toOutput ? nil : destination
-            self.output = output
-            self.input = input
-        }
-
-        var isLive: Bool { (fromOutput || source != nil) && (toOutput || destination != nil) }
-
-        func comes(from node: AudioNode) -> Bool {
-            node is AudioDestinationNode ? fromOutput : source === node
-        }
-
-        func leads(to node: AudioNode) -> Bool {
-            node is AudioDestinationNode ? toOutput : destination === node
-        }
     }
 
     private struct ParamConnection {
-        weak var source: AudioNode?
-        let fromOutput: Bool
-        weak var destination: AudioParam?
-        // The parameter's node.
-        weak var owner: AudioNode?
+        let source: AudioHandler
+        let destination: AudioParamHandler
         let output: UInt32
-
-        @MainActor
-        init(source: AudioNode, destination: AudioParam, output: UInt32) {
-            fromOutput = source is AudioDestinationNode
-            self.source = fromOutput ? nil : source
-            self.destination = destination
-            owner = destination.owner
-            self.output = output
-        }
-
-        var isLive: Bool { (fromOutput || source != nil) && destination != nil && owner != nil }
-
-        func comes(from node: AudioNode) -> Bool {
-            node is AudioDestinationNode ? fromOutput : source === node
-        }
     }
 
     @MainActor
     private final class RenderSlot {
-        let node: AudioNode
+        let node: AudioHandler
         var inputChannelCount: Int?
         var outputChannelCount: Int
         var sources: [RenderSlot] = []
-        var paramSources: [(AudioParam, [RenderSlot])] = []
+        var paramSources: [(AudioParamHandler, [RenderSlot])] = []
         var isMuted = false
         var isCycleBreaker = false
 
-        init(node: AudioNode) {
+        init(node: AudioHandler) {
             self.node = node
             inputChannelCount = node.numberOfInputs == 0 ? nil
-                : node is AudioDestinationNode ? Int(node.channelCount) : 1
-            outputChannelCount = (node as? AudioDestinationNode).map { Int($0.maxChannelCount) }
-                ?? (node as? MediaStreamAudioSourceNode).map { Int($0.renderState.track.channelCount) }
-                ?? (node is StereoPannerNode ? 2 : 1)
+                : node is AudioDestinationHandler ? Int(node.channelCount) : 1
+            outputChannelCount = (node as? AudioDestinationHandler).map { Int($0.maxChannelCount) }
+                ?? (node as? MediaStreamAudioSourceHandler).map { Int($0.renderState.track.channelCount) }
+                ?? (node is StereoPannerHandler ? 2 : 1)
         }
     }
 
     private var connections: [Connection] = []
     private var paramConnections: [ParamConnection] = []
-    // The destination node a plan is being made for, which stands for the
-    // context's output.
-    private weak var output: AudioDestinationNode?
 
     var connectionCount: Int { connections.count + paramConnections.count }
 
-    func connect(_ source: AudioNode, to destination: AudioNode, output: UInt32, input: UInt32) throws {
+    func connect(_ source: AudioHandler, to destination: AudioHandler, output: UInt32, input: UInt32) {
         if connections.contains(where: {
-            $0.comes(from: source) && $0.leads(to: destination) && $0.output == output && $0.input == input
+            $0.source === source && $0.destination === destination && $0.output == output && $0.input == input
         }) { return }
         connections.append(Connection(source: source, destination: destination, output: output, input: input))
     }
 
-    func connect(_ source: AudioNode, to destination: AudioParam, output: UInt32) {
+    func connect(_ source: AudioHandler, to destination: AudioParamHandler, output: UInt32) {
         guard !paramConnections.contains(where: {
-            $0.comes(from: source) && $0.destination === destination && $0.output == output
+            $0.source === source && $0.destination === destination && $0.output == output
         }) else { return }
         paramConnections.append(ParamConnection(source: source, destination: destination, output: output))
     }
 
-    func disconnect(_ source: AudioNode) {
-        connections.removeAll { $0.comes(from: source) }
-        paramConnections.removeAll { $0.comes(from: source) }
+    func disconnect(_ source: AudioHandler) {
+        connections.removeAll { $0.source === source }
+        paramConnections.removeAll { $0.source === source }
     }
 
-    func disconnect(_ source: AudioNode, output: UInt32) {
-        connections.removeAll { $0.comes(from: source) && $0.output == output }
-        paramConnections.removeAll { $0.comes(from: source) && $0.output == output }
+    func disconnect(_ source: AudioHandler, output: UInt32) {
+        connections.removeAll { $0.source === source && $0.output == output }
+        paramConnections.removeAll { $0.source === source && $0.output == output }
     }
 
     @discardableResult
-    func disconnect(_ source: AudioNode, from destination: AudioNode) -> Bool {
+    func disconnect(_ source: AudioHandler, from destination: AudioHandler) -> Bool {
         let originalCount = connections.count
-        connections.removeAll { $0.comes(from: source) && $0.leads(to: destination) }
+        connections.removeAll { $0.source === source && $0.destination === destination }
         return connections.count != originalCount
     }
 
     @discardableResult
-    func disconnect(_ source: AudioNode, from destination: AudioParam) -> Bool {
+    func disconnect(_ source: AudioHandler, from destination: AudioParamHandler) -> Bool {
         let originalCount = paramConnections.count
-        paramConnections.removeAll { $0.comes(from: source) && $0.destination === destination }
+        paramConnections.removeAll { $0.source === source && $0.destination === destination }
         return paramConnections.count != originalCount
     }
 
-    // Removes the connections one of whose ends has gone. Returns whether
-    // any went.
-    func removeDeadConnections() -> Bool {
-        let count = connectionCount
-        connections.removeAll { !$0.isLive }
-        paramConnections.removeAll { !$0.isLive }
-        return connectionCount != count
+    // Removes the handlers' connections, either way.
+    func remove(_ handlers: Set<ObjectIdentifier>) {
+        connections.removeAll {
+            handlers.contains(ObjectIdentifier($0.source)) || handlers.contains(ObjectIdentifier($0.destination))
+        }
+        paramConnections.removeAll {
+            handlers.contains(ObjectIdentifier($0.source)) || handlers.contains(ObjectIdentifier($0.destination.owner))
+        }
     }
 
-    // The nodes that `roots` lead to, through connections to nodes and to
-    // parameters, without the roots unless one leads to another. The
-    // context's output is not one.
-    func nodes(downstreamOf roots: [AudioNode]) -> [AudioNode] {
-        var reached: [ObjectIdentifier: AudioNode] = [:]
+    func removeAll() {
+        connections.removeAll()
+        paramConnections.removeAll()
+    }
+
+    // The handlers that `roots` lead to, through connections to nodes and to
+    // parameters, without the roots unless one leads to another.
+    func handlers(downstreamOf roots: [AudioHandler]) -> [AudioHandler] {
+        var outgoing: [ObjectIdentifier: [AudioHandler]] = [:]
+        for connection in connections {
+            outgoing[ObjectIdentifier(connection.source), default: []].append(connection.destination)
+        }
+        for connection in paramConnections {
+            outgoing[ObjectIdentifier(connection.source), default: []].append(connection.destination.owner)
+        }
+        var reached: [ObjectIdentifier: AudioHandler] = [:]
         var pending = roots
-        while let node = pending.popLast() {
-            let next = connections.compactMap { $0.comes(from: node) ? $0.destination : nil }
-                + paramConnections.compactMap { $0.comes(from: node) ? $0.owner : nil }
-            for node in next where reached.updateValue(node, forKey: ObjectIdentifier(node)) == nil {
-                pending.append(node)
+        while let handler = pending.popLast() {
+            for next in outgoing[ObjectIdentifier(handler)] ?? []
+                where reached.updateValue(next, forKey: ObjectIdentifier(next)) == nil
+            {
+                pending.append(next)
             }
         }
         return Array(reached.values)
@@ -155,25 +123,20 @@ final class AudioGraph {
     // from. Made again for each plan, as keeping them would keep the nodes;
     // the caller clears what each is connected from once done, as a cycle
     // would otherwise keep them anyway.
-    private func prepare(destination: AudioDestinationNode) -> [RenderSlot] {
-        output = destination
-        defer { output = nil }
+    private func prepare(destination: AudioDestinationHandler) -> [RenderSlot] {
         var slots: [ObjectIdentifier: RenderSlot] = [:]
         var order: [RenderSlot] = []
 
-        func visit(_ node: AudioNode) -> RenderSlot {
+        func visit(_ node: AudioHandler) -> RenderSlot {
             let identifier = ObjectIdentifier(node)
             if let slot = slots[identifier] { return slot }
             let slot = RenderSlot(node: node)
             slots[identifier] = slot
-            for connection in connections where connection.leads(to: node) {
-                if let source = connection.fromOutput ? output : connection.source {
-                    slot.sources.append(visit(source))
-                }
+            for connection in connections where connection.destination === node {
+                slot.sources.append(visit(connection.source))
             }
             for param in node.audioParams {
-                let sources = paramConnections.filter { $0.destination === param }
-                    .compactMap { $0.fromOutput ? output : $0.source }.map(visit)
+                let sources = paramConnections.filter { $0.destination === param }.map { visit($0.source) }
                 if !sources.isEmpty {
                     slot.paramSources.append((param, sources))
                 }
@@ -185,7 +148,7 @@ final class AudioGraph {
         let destinationSlot = visit(destination)
         let noCycleBreakers: Set<ObjectIdentifier> = []
         let cycleBreakers = Set(order.compactMap { slot -> ObjectIdentifier? in
-            guard slot.node is DelayNode,
+            guard slot.node is DelayHandler,
                   outgoingNodes(from: slot.node, ignoringInputsOf: noCycleBreakers).contains(where: { next in
                       next === slot.node || hasPath(
                           from: next, to: slot.node, ignoringInputsOf: noCycleBreakers
@@ -226,6 +189,10 @@ final class AudioGraph {
     }
 
     func makeRenderPlan(destination: AudioDestinationNode, frameCount: Int) throws -> AudioRenderPlan {
+        try makeRenderPlan(destination: destination.destinationHandler, frameCount: frameCount)
+    }
+
+    func makeRenderPlan(destination: AudioDestinationHandler, frameCount: Int) throws -> AudioRenderPlan {
         let orderedSlots = prepare(destination: destination)
         defer {
             for slot in orderedSlots {
@@ -239,7 +206,7 @@ final class AudioGraph {
 
         let configurations = try orderedSlots.map { slot throws -> AudioRenderPlan.NodeConfiguration in
             let processor: AudioRenderPlan.Processor
-            if let source = slot.node as? ConstantSourceNode {
+            if let source = slot.node as? ConstantSourceHandler {
                 let offset = source.offset
                 let paramSources = slot.paramSources.first { $0.0 === offset }?.1 ?? []
                 processor = .constant(
@@ -249,7 +216,7 @@ final class AudioGraph {
                     parameter: offset.renderTimeline,
                     paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
                 )
-            } else if let delay = slot.node as? DelayNode {
+            } else if let delay = slot.node as? DelayHandler {
                 let delayTime = delay.delayTime
                 let paramSources = slot.paramSources.first { $0.0 === delayTime }?.1 ?? []
                 processor = .delay(
@@ -257,14 +224,14 @@ final class AudioGraph {
                     parameter: delayTime.renderTimeline,
                     paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
                 )
-            } else if let node = slot.node as? GainNode {
+            } else if let node = slot.node as? GainHandler {
                 let gain = node.gain
                 let paramSources = slot.paramSources.first { $0.0 === gain }?.1 ?? []
                 processor = .gain(
                     parameter: gain.renderTimeline,
                     paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
                 )
-            } else if let filter = slot.node as? BiquadFilterNode {
+            } else if let filter = slot.node as? BiquadFilterHandler {
                 let parameters = [filter.frequency, filter.detune, filter.Q, filter.gain]
                 processor = .biquad(
                     state: filter.renderState,
@@ -275,7 +242,7 @@ final class AudioGraph {
                         (slot.paramSources.first { $0.0 === param }?.1 ?? []).map { indices[ObjectIdentifier($0)]! }
                     }
                 )
-            } else if let source = slot.node as? AudioBufferSourceNode {
+            } else if let source = slot.node as? AudioBufferSourceHandler {
                 processor = .bufferSource(
                     state: source.renderState,
                     ended: source.endedSignal,
@@ -296,7 +263,7 @@ final class AudioGraph {
                         (slot.paramSources.first { $0.0 === param }?.1 ?? []).map { indices[ObjectIdentifier($0)]! }
                     }
                 )
-            } else if let oscillator = slot.node as? OscillatorNode {
+            } else if let oscillator = slot.node as? OscillatorHandler {
                 let sources = [oscillator.frequency, oscillator.detune].map { param in
                     (slot.paramSources.first { $0.0 === param }?.1 ?? []).map { indices[ObjectIdentifier($0)]! }
                 }
@@ -311,18 +278,18 @@ final class AudioGraph {
                     detune: oscillator.detune.renderTimeline,
                     paramSources: sources
                 )
-            } else if let panner = slot.node as? StereoPannerNode {
+            } else if let panner = slot.node as? StereoPannerHandler {
                 let pan = panner.pan
                 let paramSources = slot.paramSources.first { $0.0 === pan }?.1 ?? []
                 processor = .stereoPanner(
                     parameter: pan.renderTimeline,
                     paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
                 )
-            } else if let shaper = slot.node as? WaveShaperNode {
+            } else if let shaper = slot.node as? WaveShaperHandler {
                 processor = .waveShaper(state: shaper.renderState, curve: shaper.curve, oversample: shaper.oversample)
-            } else if let source = slot.node as? MediaStreamAudioSourceNode {
+            } else if let source = slot.node as? MediaStreamAudioSourceHandler {
                 processor = .mediaStream(state: source.renderState)
-            } else if slot.node is AudioDestinationNode {
+            } else if slot.node is AudioDestinationHandler {
                 processor = .passThrough
             } else {
                 throw WebAudioError.notSupported
@@ -349,8 +316,8 @@ final class AudioGraph {
     }
 
     private func hasPath(
-        from start: AudioNode,
-        to target: AudioNode,
+        from start: AudioHandler,
+        to target: AudioHandler,
         ignoringInputsOf cycleBreakers: Set<ObjectIdentifier>
     ) -> Bool {
         var visited: Set<ObjectIdentifier> = []
@@ -364,17 +331,13 @@ final class AudioGraph {
     }
 
     private func outgoingNodes(
-        from node: AudioNode,
+        from node: AudioHandler,
         ignoringInputsOf cycleBreakers: Set<ObjectIdentifier>
-    ) -> [AudioNode] {
-        connections.compactMap { connection -> AudioNode? in
-            guard connection.comes(from: node),
-                  let destination = connection.toOutput ? output : connection.destination,
-                  !cycleBreakers.contains(ObjectIdentifier(destination))
-            else { return nil }
-            return destination
-        }
-            + paramConnections.compactMap { $0.comes(from: node) ? $0.owner : nil }
+    ) -> [AudioHandler] {
+        connections.filter {
+            $0.source === node && !cycleBreakers.contains(ObjectIdentifier($0.destination))
+        }.map(\.destination)
+            + paramConnections.compactMap { $0.source === node ? $0.destination.owner : nil }
     }
 
 }

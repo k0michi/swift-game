@@ -1,8 +1,9 @@
 // Echo renders the audio itself, except in the browser, where Web/ hands it
 // to the browser's Web Audio.
 #if !os(Emscripten)
-public final class ConstantSourceNode: AudioScheduledSourceNode {
-    public private(set) lazy var offset = AudioParam(
+@MainActor
+final class ConstantSourceHandler: AudioScheduledSourceHandler {
+    private(set) lazy var offset = AudioParamHandler(
         owner: self,
         defaultValue: 1,
         minValue: -.greatestFiniteMagnitude,
@@ -13,7 +14,7 @@ public final class ConstantSourceNode: AudioScheduledSourceNode {
     var scheduledStartFrame: UInt64? { startTime.map(frame) }
     var scheduledStopFrame: UInt64? { stopTime.map(frame) }
 
-    public init(context: BaseAudioContext) {
+    init(context: BaseAudioContext) {
         super.init(
             context: context,
             numberOfInputs: 0,
@@ -24,10 +25,21 @@ public final class ConstantSourceNode: AudioScheduledSourceNode {
         )
     }
 
-    override var audioParams: [AudioParam] { [offset] }
+    override var audioParams: [AudioParamHandler] { [offset] }
 
     private func frame(_ time: Double) -> UInt64 {
         UInt64(min((time * Double(context.sampleRate)).rounded(.up), Double(UInt64.max)))
+    }
+}
+
+@MainActor
+public final class ConstantSourceNode: AudioScheduledSourceNode {
+    public let offset: AudioParam
+
+    public init(context: BaseAudioContext) {
+        let handler = ConstantSourceHandler(context: context)
+        offset = AudioParam(handler.offset)
+        super.init(handler: handler)
     }
 }
 #endif

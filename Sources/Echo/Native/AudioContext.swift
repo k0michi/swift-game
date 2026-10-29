@@ -12,6 +12,9 @@ public final class AudioContext: BaseAudioContext {
     private var engine: RealtimeRenderEngine?
     private let backendFailed = ManagedAtomic(false)
     private var errorMonitor: Task<Void, Never>?
+    // A running context plays on whoever keeps it, so it keeps itself until
+    // suspended or closed.
+    private var keptWhileRunning: AudioContext?
 
     public init(
         options: AudioContextOptions = AudioContextOptions(),
@@ -42,7 +45,6 @@ public final class AudioContext: BaseAudioContext {
             renderQuantumSize: quantumSize,
             destinationChannelCount: backend.channelCount
         )
-        _ = destination
     }
 
     public func createMediaStreamSource(_ mediaStream: MediaStream) throws -> MediaStreamAudioSourceNode {
@@ -52,12 +54,12 @@ public final class AudioContext: BaseAudioContext {
     public func resume() async throws {
         guard state != .closed else { throw WebAudioError.invalidState }
         guard state != .running else { return }
-        let plan = try graph.makeRenderPlan(destination: destination, frameCount: Int(renderQuantumSize))
+        let plan = try graph.makeRenderPlan(destination: destinationHandler, frameCount: Int(renderQuantumSize))
         let queue = RenderControlQueue(initialPlan: plan)
         let engine = try RealtimeRenderEngine(
             controlQueue: queue,
             sampleRate: sampleRate,
-            channelCount: destination.maxChannelCount,
+            channelCount: destinationHandler.maxChannelCount,
             currentFrame: currentFrame
         )
         backendFailed.store(false, ordering: .relaxed)
@@ -67,6 +69,7 @@ public final class AudioContext: BaseAudioContext {
         controlQueue = queue
         self.engine = engine
         setState(.running)
+        keptWhileRunning = self
         errorMonitor = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000)
@@ -101,10 +104,17 @@ public final class AudioContext: BaseAudioContext {
         setState(.closed)
     }
 
+    override func setState(_ state: AudioContextState) {
+        if state != .running {
+            keptWhileRunning = nil
+        }
+        super.setState(state)
+    }
+
     override func graphDidChange() {
         guard state == .running, let controlQueue else { return }
         do {
-            let plan = try graph.makeRenderPlan(destination: destination, frameCount: Int(renderQuantumSize))
+            let plan = try graph.makeRenderPlan(destination: destinationHandler, frameCount: Int(renderQuantumSize))
             controlQueue.enqueue(plan)
         } catch {
             try? backend.stop()

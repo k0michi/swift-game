@@ -4,10 +4,10 @@ import Testing
 @MainActor
 private final class UnsupportedAudioNode: AudioNode {
     init(context: BaseAudioContext) {
-        super.init(
+        super.init(handler: AudioHandler(
             context: context, numberOfInputs: 0, numberOfOutputs: 1,
             channelCount: 1, channelCountMode: .max, channelInterpretation: .speakers
-        )
+        ))
     }
 }
 
