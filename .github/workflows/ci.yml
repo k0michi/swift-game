@@ -39,7 +39,7 @@ jobs:
             libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
             libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev libusb-1.0-0-dev \
             libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
-          sudo apt-get install --yes libx11-xcb-dev
+          sudo apt-get install --yes libx11-xcb-dev patchelf
 
       - name: Compute build cache context
         id: build-cache-context
@@ -95,6 +95,103 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test.ps1
+
+      # The debug build, which the steps above made. SDL and Dawn are linked
+      # statically, so the game needs at most the Swift runtime beside it:
+      # macOS has its own, Linux gets the toolchain's in lib, found through
+      # the executable's run path, and Windows gets it and the Visual C++
+      # runtime beside the executable. macOS and Linux are archived with tar,
+      # which keeps the executable bit that an artifact's zip would drop.
+      - name: Package the game on macOS or Linux
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          name="swift-game-$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')"
+          package="$RUNNER_TEMP/$name"
+          mkdir -p "$package"
+          cp "$(swift build --show-bin-path)/swift-game" "$package/"
+          if [ "$RUNNER_OS" = Linux ]; then
+            mkdir -p "$package/lib"
+            ldd "$package/swift-game" |
+              awk -v toolchain="$GITHUB_WORKSPACE/.swift-toolchain/" 'index($3, toolchain) == 1 { print $3 }' |
+              xargs -r cp -t "$package/lib"
+            patchelf --set-rpath '$ORIGIN/lib' "$package/swift-game"
+          fi
+          tar -czf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP" "$name"
+          echo "SWIFT_GAME_PACKAGE=$package" >> "$GITHUB_ENV"
+          echo "SWIFT_GAME_ARTIFACT_NAME=$name" >> "$GITHUB_ENV"
+          echo "SWIFT_GAME_ARTIFACT=$RUNNER_TEMP/$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Package the game on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:RUNNER_TEMP "swift-game-windows"
+          New-Item -ItemType Directory -Force $package | Out-Null
+          $bin = swift build --show-bin-path
+          Copy-Item (Join-Path $bin "swift-game.exe") $package
+          $swiftRuntime = Split-Path -Parent (Get-Command swiftCore.dll).Source
+          Copy-Item (Join-Path $swiftRuntime "*.dll") $package
+          foreach ($library in "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
+            Copy-Item (Join-Path $env:SystemRoot "System32\$library") $package
+          }
+          "SWIFT_GAME_PACKAGE=$package" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SWIFT_GAME_ARTIFACT_NAME=swift-game-windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SWIFT_GAME_ARTIFACT=$package" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # Catches a library the package needs but leaves out: on macOS any
+      # outside the system, and on Linux any of the toolchain's, with the
+      # toolchain moved away. Libraries a Linux desktop has, such as X11's,
+      # are listed but not checked.
+      - name: Check the packaged game's libraries on macOS or Linux
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            otool -L "$SWIFT_GAME_PACKAGE/swift-game"
+            outside=$(otool -L "$SWIFT_GAME_PACKAGE/swift-game" | tail -n +2 | grep -vE '^\s*/(usr/lib|System/Library)/' || true)
+            if [ -n "$outside" ]; then
+              echo "The game links libraries outside the system:" >&2
+              echo "$outside" >&2
+              exit 1
+            fi
+          else
+            mv .swift-toolchain "$RUNNER_TEMP/swift-toolchain-moved"
+            trap 'mv "$RUNNER_TEMP/swift-toolchain-moved" .swift-toolchain' EXIT
+            ldd "$SWIFT_GAME_PACKAGE/swift-game"
+            if ldd "$SWIFT_GAME_PACKAGE/swift-game" | grep -q 'not found'; then
+              echo "The game needs libraries the package leaves out." >&2
+              exit 1
+            fi
+          fi
+
+      # Starts the packaged game with nothing but Windows on the path, to
+      # catch a library left out. Without a GPU it may stop later, which is
+      # fine; failing to load a library is not.
+      - name: Check that the packaged game loads on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $game = Start-Process (Join-Path $env:SWIFT_GAME_PACKAGE "swift-game.exe") -PassThru `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\game-out.txt" -RedirectStandardError "$env:RUNNER_TEMP\game-err.txt"
+          if (-not $game.WaitForExit(10000)) {
+            $game.Kill()
+            Write-Host "The game was still running after 10 seconds."
+            exit 0
+          }
+          Get-Content "$env:RUNNER_TEMP\game-out.txt", "$env:RUNNER_TEMP\game-err.txt"
+          # STATUS_DLL_NOT_FOUND and STATUS_ENTRYPOINT_NOT_FOUND
+          if ($game.ExitCode -in -1073741515, -1073741511) {
+            throw "The packaged game failed to load a library: exit code $($game.ExitCode)"
+          }
+          Write-Host "The game loaded and exited with code $($game.ExitCode)."
+
+      - name: Upload the game
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SWIFT_GAME_ARTIFACT_NAME }}
+          path: ${{ env.SWIFT_GAME_ARTIFACT }}
 
   generated-sources:
     runs-on: ubuntu-24.04
