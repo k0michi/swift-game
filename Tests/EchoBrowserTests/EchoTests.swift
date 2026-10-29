@@ -14,6 +14,7 @@ let tests: [(String, @MainActor () async throws -> Void)] = [
     ("testStateChanges", testStateChanges),
     ("testAudioContext", testAudioContext),
     ("testGain", testGain),
+    ("testStereoPanner", testStereoPanner),
     ("testWaveShaper", testWaveShaper),
     ("testWaveShaperErrors", testWaveShaperErrors),
 ]
@@ -205,6 +206,53 @@ func testGain() async throws {
         expect(isClose(samples[frame], 0.5 + Float(frame) / 128), "gain at \(frame) is \(samples[frame])")
     }
     expect(samples[128...].allSatisfy { isClose($0, 1.5) }, "gain after the ramp")
+}
+
+@MainActor
+func testStereoPanner() async throws {
+    let context = try OfflineAudioContext(numberOfChannels: 2, length: 128, sampleRate: sampleRate)
+    let panner = context.createStereoPanner()
+    expect(panner.channelCount == 2 && panner.channelCountMode == .clampedMax, "channel defaults")
+    expect(panner.pan.minValue == -1 && panner.pan.maxValue == 1 && panner.pan.defaultValue == 0, "pan's range")
+    expect(.notSupported, "three channels") {
+        try panner.setChannelCount(3)
+    }
+    expect(.notSupported, "the max channel count mode") {
+        try panner.setChannelCountMode(.max)
+    }
+    expect(.rangeError, "a pan option that is not finite") {
+        _ = try StereoPannerNode(context: context, options: StereoPannerOptions(pan: .nan))
+    }
+
+    // Mono panned to 0.5, which takes cos and sin of 3π/8, and stereo (1 on
+    // the left, from a first panner hard left) panned to 0.5, which moves
+    // cos π/4 of it to the right, and to -0.5, which keeps it left.
+    for (pan, stereo, expectedLeft, expectedRight) in [
+        (Float(0.5), false, Float(0.38268343), Float(0.9238795)),
+        (0.5, true, 0.70710677, 0.70710677),
+        (-0.5, true, 1, 0),
+    ] {
+        let buffer = try await render(length: 128, channels: 2) { context in
+            let source = context.createConstantSource()
+            let panner = try StereoPannerNode(context: context, options: StereoPannerOptions(pan: pan))
+            if stereo {
+                try source.connect(StereoPannerNode(context: context, options: StereoPannerOptions(pan: -1)))
+                    .connect(panner)
+            } else {
+                try source.connect(panner)
+            }
+            try panner.connect(context.destination)
+            try source.start()
+        }
+        var left = [Float](repeating: 0, count: 128)
+        var right = left
+        try buffer.copyFromChannel(&left, channelNumber: 0)
+        try buffer.copyFromChannel(&right, channelNumber: 1)
+        expect(
+            left.allSatisfy { isClose($0, expectedLeft) } && right.allSatisfy { isClose($0, expectedRight) },
+            "\(stereo ? "stereo" : "mono") at \(pan) is \(left[0]), \(right[0])"
+        )
+    }
 }
 
 // Renders a constant `input` through a WaveShaperNode set up by `configure`,

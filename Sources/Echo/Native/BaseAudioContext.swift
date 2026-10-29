@@ -57,6 +57,11 @@ public class BaseAudioContext {
         try! GainNode(context: self)
     }
 
+    public func createStereoPanner() -> StereoPannerNode {
+        // Only invalid options throw, and none are passed.
+        try! StereoPannerNode(context: self)
+    }
+
     public func createWaveShaper() -> WaveShaperNode {
         // Only invalid options throw, and none are passed.
         try! WaveShaperNode(context: self)

@@ -32,7 +32,7 @@ final class AudioGraph {
                 : node is AudioDestinationNode ? Int(node.channelCount) : 1
             outputChannelCount = (node as? AudioDestinationNode).map { Int($0.maxChannelCount) }
                 ?? (node as? MediaStreamAudioSourceNode).map { Int($0.renderState.track.channelCount) }
-                ?? 1
+                ?? (node is StereoPannerNode ? 2 : 1)
         }
     }
 
@@ -184,6 +184,13 @@ final class AudioGraph {
                 let paramSources = slot.paramSources.first { $0.0 === gain }?.1 ?? []
                 processor = .gain(
                     parameter: gain.renderTimeline,
+                    paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
+                )
+            } else if let panner = slot.node as? StereoPannerNode {
+                let pan = panner.pan
+                let paramSources = slot.paramSources.first { $0.0 === pan }?.1 ?? []
+                processor = .stereoPanner(
+                    parameter: pan.renderTimeline,
                     paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
                 )
             } else if let shaper = slot.node as? WaveShaperNode {

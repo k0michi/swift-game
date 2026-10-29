@@ -18,6 +18,7 @@ final class AudioRenderPlan: @unchecked Sendable {
         )
         case gain(parameter: AudioParamTimeline, paramSources: [Int])
         case mediaStream(state: MediaStreamRenderState)
+        case stereoPanner(parameter: AudioParamTimeline, paramSources: [Int])
         case waveShaper(state: WaveShaperRenderState, curve: [Float]?, oversample: OverSampleType)
     }
 
@@ -43,9 +44,7 @@ final class AudioRenderPlan: @unchecked Sendable {
             self.configuration = configuration
             input = configuration.inputChannelCount.map {
                 AudioRenderQuantum(
-                    channelCapacity: Self.outputFollowsInput(configuration.processor)
-                        || Self.isDestination(configuration.processor)
-                        ? Int(AudioBuffer.maximumNumberOfChannels) : $0,
+                    channelCapacity: Self.inputChannelCapacity(configuration.processor) ?? $0,
                     frameCount: frameCount, channelCount: $0
                 )
             }
@@ -55,7 +54,8 @@ final class AudioRenderPlan: @unchecked Sendable {
                 frameCount: frameCount, channelCount: configuration.outputChannelCount
             )
             switch configuration.processor {
-            case let .constant(_, _, _, sources), let .delay(_, _, sources), let .gain(_, sources):
+            case let .constant(_, _, _, sources), let .delay(_, _, sources), let .gain(_, sources),
+                 let .stereoPanner(_, sources):
                 paramInput = sources.isEmpty ? nil : AudioRenderQuantum(channelCapacity: 1, frameCount: frameCount)
             case .passThrough, .mediaStream, .waveShaper:
                 paramInput = nil
@@ -66,13 +66,17 @@ final class AudioRenderPlan: @unchecked Sendable {
         private static func outputFollowsInput(_ processor: Processor) -> Bool {
             switch processor {
             case .delay, .gain, .waveShaper: true
-            case .passThrough, .constant, .mediaStream: false
+            case .passThrough, .constant, .mediaStream, .stereoPanner: false
             }
         }
 
-        private static func isDestination(_ processor: Processor) -> Bool {
-            if case .passThrough = processor { return true }
-            return false
+        // The most channels the input can have, when its first count is not.
+        private static func inputChannelCapacity(_ processor: Processor) -> Int? {
+            switch processor {
+            case .passThrough, .delay, .gain, .waveShaper: Int(AudioBuffer.maximumNumberOfChannels)
+            case .stereoPanner: 2
+            case .constant, .mediaStream: nil
+            }
         }
     }
 
@@ -135,6 +139,23 @@ final class AudioRenderPlan: @unchecked Sendable {
                     for channel in 0 ..< input.channelCount {
                         slot.output.channelData(channel)[index] = input.channelData(channel)[index] * gain
                     }
+                }
+            case let .stereoPanner(parameter, paramSources):
+                slot.paramInput?.clear()
+                if let paramInput = slot.paramInput {
+                    for sourceIndex in paramSources {
+                        ChannelMixer.mix(slots[sourceIndex].output, into: paramInput, interpretation: .speakers)
+                    }
+                }
+                guard let input = slot.input else { continue }
+                StereoPanning.render(input: input, output: slot.output, frame: frame) { index in
+                    let modulationIndex = parameter.automationRate == .kRate ? 0 : index
+                    let modulation = slot.paramInput.map { $0.channelData(0)[modulationIndex] } ?? 0
+                    return parameter.computedValue(
+                        at: frame + UInt64(index),
+                        quantumStart: frame,
+                        modulation: modulation
+                    )
                 }
             case let .waveShaper(state, curve, oversample):
                 if let input = slot.input {
