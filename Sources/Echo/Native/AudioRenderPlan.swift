@@ -76,6 +76,9 @@ final class AudioRenderPlan: @unchecked Sendable {
         // What is connected to each of the node's parameters, mixed to mono,
         // or nil for a parameter nothing is connected to.
         let paramInputs: [AudioRenderQuantum?]
+        // The sources connected to each of the node's parameters, kept so
+        // that rendering need not build them.
+        let paramSources: [[Int]]
         var paramInput: AudioRenderQuantum? { paramInputs.first ?? nil }
 
         init(configuration: NodeConfiguration, frameCount: Int) {
@@ -91,13 +94,14 @@ final class AudioRenderPlan: @unchecked Sendable {
                     ? Int(AudioBuffer.maximumNumberOfChannels) : configuration.outputChannelCount,
                 frameCount: frameCount, channelCount: configuration.outputChannelCount
             )
-            paramInputs = Self.paramSources(configuration.processor).map { sources in
+            paramSources = Self.paramSources(configuration.processor)
+            paramInputs = paramSources.map { sources in
                 sources.isEmpty ? nil : AudioRenderQuantum(channelCapacity: 1, frameCount: frameCount)
             }
         }
 
         // The sources connected to each of the node's parameters.
-        static func paramSources(_ processor: Processor) -> [[Int]] {
+        private static func paramSources(_ processor: Processor) -> [[Int]] {
             switch processor {
             case let .constant(_, _, _, _, sources), let .delay(_, _, sources), let .gain(_, sources),
                  let .stereoPanner(_, sources):
@@ -309,7 +313,7 @@ final class AudioRenderPlan: @unchecked Sendable {
     // Mixes what is connected to each of the slot's parameters into its
     // parameter inputs.
     private func mixParamInputs(of slot: Slot) {
-        for (paramInput, sources) in zip(slot.paramInputs, Slot.paramSources(slot.configuration.processor)) {
+        for (paramInput, sources) in zip(slot.paramInputs, slot.paramSources) {
             guard let paramInput else { continue }
             paramInput.clear()
             for sourceIndex in sources {
