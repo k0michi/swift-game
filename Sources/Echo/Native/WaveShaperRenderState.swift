@@ -52,7 +52,11 @@ final class WaveShaperRenderState: @unchecked Sendable {
             return
         }
         if oversample != filtered {
-            [upTo2x, upTo4x, downFrom4x, downFrom2x].forEach { $0.reset() }
+            // One at a time, as an array of them would be allocated.
+            upTo2x.reset()
+            upTo4x.reset()
+            downFrom4x.reset()
+            downFrom2x.reset()
             filtered = oversample
         }
         let frameCount = input.frameCount
