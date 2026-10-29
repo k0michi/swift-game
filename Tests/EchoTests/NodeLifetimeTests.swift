@@ -267,14 +267,17 @@ private func echo(on context: OfflineAudioContext) throws -> (delay: DelayNode, 
         panner = made
     }
     try connect()
+    var pannerStayed = false
     let (rendered, counts) = try await renderByQuantum(context, quanta: 4) { quantum in
         if quantum == 2 {
             let source = context.createConstantSource()
             try source.connect(gain)
             try source.start()
         }
+        pannerStayed = panner != nil
     }
-    #expect(panner != nil)
+    // Until the context closes, once rendered, and lets go of everything.
+    #expect(pannerStayed && panner == nil)
     #expect(counts == [2, 2, 3, 3], "\(counts)")
     // Half of 1 through the panner's center, cos π/4.
     #expect(rendered[..<256].allSatisfy { $0 == 0 })
@@ -301,4 +304,45 @@ private func echo(on context: OfflineAudioContext) throws -> (delay: DelayNode, 
     }
     #expect(counts == [2, 2, 0], "\(counts)")
     #expect(panner == nil)
+}
+
+@MainActor
+@Test func aFinishedOfflineContextGoesWithItsNodes() async throws {
+    // A loop that never ends, through a gain, keeps the context while it
+    // renders; once rendered, the context is closed and lets go of them all.
+    weak var weakContext: OfflineAudioContext?
+    weak var weakSource: AudioBufferSourceNode?
+    weak var weakGain: GainNode?
+    func render() async throws {
+        let context = try OfflineAudioContext(numberOfChannels: 1, length: 256, sampleRate: sampleRate)
+        let buffer = try AudioBuffer(options: AudioBufferOptions(numberOfChannels: 1, length: 64, sampleRate: sampleRate))
+        let source = try AudioBufferSourceNode(context: context, options: AudioBufferSourceOptions(buffer: buffer, loop: true))
+        let gain = context.createGain()
+        try source.connect(gain).connect(context.destination)
+        try source.start()
+        (weakContext, weakSource, weakGain) = (context, source, gain)
+        _ = try await context.startRendering()
+        #expect(context.state == .closed)
+    }
+    try await render()
+    #expect(weakContext == nil && weakSource == nil && weakGain == nil)
+}
+
+@MainActor
+@Test func aClosedContextGoesWithItsNodes() async throws {
+    weak var weakContext: AudioContext?
+    weak var weakSource: ConstantSourceNode?
+    func play() async throws {
+        let context = try AudioContext(backend: PulledAudioBackend())
+        try await context.resume()
+        let source = context.createConstantSource()
+        try source.connect(context.destination)
+        try source.start()
+        (weakContext, weakSource) = (context, source)
+    }
+    try await play()
+    // Playing, the source keeps the context, which keeps the source.
+    #expect(weakContext != nil && weakSource != nil)
+    try await weakContext?.close()
+    #expect(weakContext == nil && weakSource == nil)
 }

@@ -110,6 +110,13 @@ public class BaseAudioContext {
         guard self.state != state else { return }
 
         self.state = state
+        // A closed context renders no more, so nothing in it can sound again:
+        // it lets go of every node, which would otherwise keep it in turn.
+        if state == .closed {
+            playingSources.removeAll()
+            keptNodes.removeAll()
+            heldNodes.removeAll()
+        }
         onstatechange?(state)
     }
 
