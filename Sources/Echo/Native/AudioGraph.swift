@@ -186,6 +186,17 @@ final class AudioGraph {
                     parameter: gain.renderTimeline,
                     paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
                 )
+            } else if let filter = slot.node as? BiquadFilterNode {
+                let parameters = [filter.frequency, filter.detune, filter.Q, filter.gain]
+                processor = .biquad(
+                    state: filter.renderState,
+                    type: filter.type,
+                    sampleRate: filter.context.sampleRate,
+                    parameters: parameters.map(\.renderTimeline),
+                    paramSources: parameters.map { param in
+                        (slot.paramSources.first { $0.0 === param }?.1 ?? []).map { indices[ObjectIdentifier($0)]! }
+                    }
+                )
             } else if let oscillator = slot.node as? OscillatorNode {
                 let sources = [oscillator.frequency, oscillator.detune].map { param in
                     (slot.paramSources.first { $0.0 === param }?.1 ?? []).map { indices[ObjectIdentifier($0)]! }

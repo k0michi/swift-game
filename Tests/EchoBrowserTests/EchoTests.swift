@@ -13,6 +13,7 @@ let tests: [(String, @MainActor () async throws -> Void)] = [
     ("testSuspendAndResume", testSuspendAndResume),
     ("testStateChanges", testStateChanges),
     ("testAudioContext", testAudioContext),
+    ("testBiquadFilter", testBiquadFilter),
     ("testGain", testGain),
     ("testOscillator", testOscillator),
     ("testOscillatorErrors", testOscillatorErrors),
@@ -171,6 +172,50 @@ func testAudioContext() async throws {
         fail("resume after close: no error")
     } catch let error as WebAudioError {
         expect(error == .invalidState, "resume after close: \(error)")
+    }
+}
+
+@MainActor
+func testBiquadFilter() async throws {
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: sampleRate)
+    let filter = context.createBiquadFilter()
+    expect(filter.type == .lowpass && filter.frequency.defaultValue == 350 && filter.Q.defaultValue == 1, "defaults")
+    expect(filter.frequency.maxValue == sampleRate / 2 && filter.gain.defaultValue == 0, "parameter ranges")
+    filter.type = .notch
+    expect(filter.type == .notch, "the type is set")
+    expect(.rangeError, "a Q option that is not finite") {
+        _ = try BiquadFilterNode(context: context, options: BiquadFilterOptions(Q: .nan))
+    }
+
+    // A peak of A² = 10^(6/20) at the center, none at 0, and NaN outside
+    // [0, Nyquist].
+    let peaking = try BiquadFilterNode(
+        context: context,
+        options: BiquadFilterOptions(type: .peaking, Q: 2, frequency: 1000, gain: 6)
+    )
+    var magnitudes = [Float](repeating: 0, count: 3)
+    var phases = [Float](repeating: 0, count: 3)
+    try peaking.getFrequencyResponse([0, 1000, 30_000], &magnitudes, &phases)
+    expect(isClose(magnitudes[0], 1, tolerance: 1e-4), "magnitude at 0 is \(magnitudes[0])")
+    expect(isClose(magnitudes[1], 1.9952623, tolerance: 1e-3), "magnitude at the center is \(magnitudes[1])")
+    expect(magnitudes[2].isNaN && phases[2].isNaN, "NaN beyond Nyquist")
+    var short = [Float](repeating: 0, count: 2)
+    expect(.invalidAccess, "arrays of different lengths") {
+        try peaking.getFrequencyResponse([0, 1000, 30_000], &short, &phases)
+    }
+
+    // A lowpass passes a constant once it settles; a bandpass with a Q of 0
+    // passes everything.
+    for (type, q) in [(BiquadFilterType.lowpass, Float(1)), (.bandpass, 0)] {
+        let buffer = try await render(length: 256) { context in
+            let source = context.createConstantSource()
+            let filter = try BiquadFilterNode(context: context, options: BiquadFilterOptions(type: type, Q: q, frequency: 1000))
+            try source.connect(filter).connect(context.destination)
+            try source.start()
+        }
+        var samples = [Float](repeating: 0, count: 256)
+        try buffer.copyFromChannel(&samples, channelNumber: 0)
+        expect(samples[128...].allSatisfy { isClose($0, 1, tolerance: 1e-3) }, "\(type) passes 1: \(samples[128])")
     }
 }
 

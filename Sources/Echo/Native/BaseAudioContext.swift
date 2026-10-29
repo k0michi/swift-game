@@ -52,6 +52,11 @@ public class BaseAudioContext {
         try DelayNode(context: self, options: DelayOptions(maxDelayTime: maxDelayTime))
     }
 
+    public func createBiquadFilter() -> BiquadFilterNode {
+        // Only invalid options throw, and none are passed.
+        try! BiquadFilterNode(context: self)
+    }
+
     public func createGain() -> GainNode {
         // Only invalid options throw, and none are passed.
         try! GainNode(context: self)

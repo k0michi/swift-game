@@ -66,6 +66,23 @@ final class JSObjectReference {
         })
     }
 
+    // getFrequencyResponse, which writes into the last two arrays, all of
+    // the same length.
+    func getFrequencyResponse(_ frequencies: [Float], _ magnitudes: inout [Float], _ phases: inout [Float]) throws {
+        precondition(magnitudes.count == frequencies.count && phases.count == frequencies.count)
+        guard !frequencies.isEmpty else { return }
+        try check(frequencies.withUnsafeBufferPointer { frequencies in
+            magnitudes.withUnsafeMutableBufferPointer { magnitudes in
+                phases.withUnsafeMutableBufferPointer { phases in
+                    echo_web_get_frequency_response(
+                        handle, frequencies.baseAddress, magnitudes.baseAddress, phases.baseAddress,
+                        Int32(frequencies.count)
+                    )
+                }
+            }
+        })
+    }
+
     func object(_ property: String) -> JSObjectReference? {
         let handle = echo_web_get_object(handle, property)
         return handle == 0 ? nil : JSObjectReference(handle: handle)

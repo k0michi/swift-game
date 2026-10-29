@@ -133,6 +133,21 @@ EM_JS(int, echo_web_set_floats, (int object, const char *property, const float *
     }
 });
 
+EM_JS(int, echo_web_get_frequency_response, (
+    int object, const float *frequencies, float *magnitudes, float *phases, int count), {
+    const frequencyHz = HEAPF32.slice(frequencies >> 2, (frequencies >> 2) + count);
+    const magResponse = new Float32Array(count);
+    const phaseResponse = new Float32Array(count);
+    try {
+        Module.echoWeb.objects[object].getFrequencyResponse(frequencyHz, magResponse, phaseResponse);
+    } catch (e) {
+        return Module.echoWeb.error(e);
+    }
+    HEAPF32.set(magResponse, magnitudes >> 2);
+    HEAPF32.set(phaseResponse, phases >> 2);
+    return 0;
+});
+
 EM_JS(void, echo_web_call_async, (
     int object, const char *method, const double *arguments, int count,
     echo_web_settle settle, void *user_data), {

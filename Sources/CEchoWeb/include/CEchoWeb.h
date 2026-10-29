@@ -41,6 +41,11 @@ int echo_web_call_with_floats(
 // object[property] = new Float32Array(values), or null when values is NULL.
 int echo_web_set_floats(int object, const char *property, const float *values, int value_count);
 
+// object.getFrequencyResponse with Float32Arrays of `count` values each,
+// copying the magnitudes and phases it writes back.
+int echo_web_get_frequency_response(
+    int object, const float *frequencies, float *magnitudes, float *phases, int count);
+
 // Calls a method that returns a promise. When it settles, settle gets the
 // error, or a handle to the value if it is an object.
 typedef void (*echo_web_settle)(void *user_data, int error, int value);

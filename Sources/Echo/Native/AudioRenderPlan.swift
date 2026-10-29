@@ -21,6 +21,15 @@ final class AudioRenderPlan: @unchecked Sendable {
         case gain(parameter: AudioParamTimeline, paramSources: [Int])
         case mediaStream(state: MediaStreamRenderState)
         case stereoPanner(parameter: AudioParamTimeline, paramSources: [Int])
+        // `parameters` and `paramSources` are those of frequency, detune, Q
+        // and gain.
+        case biquad(
+            state: BiquadRenderState,
+            type: BiquadFilterType,
+            sampleRate: Float,
+            parameters: [AudioParamTimeline],
+            paramSources: [[Int]]
+        )
         // `paramSources` are those of frequency and of detune.
         case oscillator(
             state: OscillatorRenderState,
@@ -80,7 +89,7 @@ final class AudioRenderPlan: @unchecked Sendable {
             case let .constant(_, _, _, sources), let .delay(_, _, sources), let .gain(_, sources),
                  let .stereoPanner(_, sources):
                 [sources]
-            case let .oscillator(_, _, _, _, _, _, _, sources):
+            case let .oscillator(_, _, _, _, _, _, _, sources), let .biquad(_, _, _, _, sources):
                 sources
             case .passThrough, .mediaStream, .waveShaper:
                 []
@@ -90,7 +99,7 @@ final class AudioRenderPlan: @unchecked Sendable {
         // Whether the output has as many channels as the input, however many.
         private static func outputFollowsInput(_ processor: Processor) -> Bool {
             switch processor {
-            case .delay, .gain, .waveShaper: true
+            case .delay, .gain, .waveShaper, .biquad: true
             case .passThrough, .constant, .mediaStream, .stereoPanner, .oscillator: false
             }
         }
@@ -98,7 +107,7 @@ final class AudioRenderPlan: @unchecked Sendable {
         // The most channels the input can have, when its first count is not.
         private static func inputChannelCapacity(_ processor: Processor) -> Int? {
             switch processor {
-            case .passThrough, .delay, .gain, .waveShaper: Int(AudioBuffer.maximumNumberOfChannels)
+            case .passThrough, .delay, .gain, .waveShaper, .biquad: Int(AudioBuffer.maximumNumberOfChannels)
             case .stereoPanner: 2
             case .constant, .mediaStream, .oscillator: nil
             }
@@ -186,6 +195,20 @@ final class AudioRenderPlan: @unchecked Sendable {
                     let computed = frequency * exp2(detune / 1200)
                     return computed.isNaN ? 0 : min(max(computed, -nyquist), nyquist)
                 }
+            case let .biquad(state, type, sampleRate, parameters, _):
+                mixParamInputs(of: slot)
+                guard let input = slot.input else { continue }
+                let nyquist = Double(sampleRate) / 2
+                state.render(input: input, output: slot.output, type: type, sampleRate: sampleRate) { index in
+                    // Frequency and detune are a compound parameter, clamped
+                    // only once combined; Q and gain are simple ones.
+                    let frequency = Self.paramComputedValue(parameters[0], slot.paramInputs[0], index: index, frame: frame)
+                    let detune = Self.paramComputedValue(parameters[1], slot.paramInputs[1], index: index, frame: frame)
+                    let computed = Double(frequency) * exp2(Double(detune) / 1200)
+                    let q = Self.computedValue(parameters[2], slot.paramInputs[2], index: index, frame: frame)
+                    let gain = Self.computedValue(parameters[3], slot.paramInputs[3], index: index, frame: frame)
+                    return (computed.isNaN ? 0 : min(max(computed, 0), nyquist), Double(q), Double(gain))
+                }
             case let .waveShaper(state, curve, oversample):
                 if let input = slot.input {
                     state.render(input: input, output: slot.output, curve: curve, oversample: oversample)
@@ -255,6 +278,17 @@ final class AudioRenderPlan: @unchecked Sendable {
                 ChannelMixer.mix(slots[sourceIndex].output, into: paramInput, interpretation: .speakers)
             }
         }
+    }
+
+    private static func computedValue(
+        _ parameter: AudioParamTimeline,
+        _ input: AudioRenderQuantum?,
+        index: Int,
+        frame: UInt64
+    ) -> Float {
+        let modulationIndex = parameter.automationRate == .kRate ? 0 : index
+        let modulation = input.map { $0.channelData(0)[modulationIndex] } ?? 0
+        return parameter.computedValue(at: frame + UInt64(index), quantumStart: frame, modulation: modulation)
     }
 
     private static func paramComputedValue(
