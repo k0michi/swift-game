@@ -133,7 +133,7 @@ func replacingThePlanDoesNotAllocate() async throws {
 private func countAllocations(filling output: UnsafeMutableBufferPointer<Float>, from engine: RealtimeRenderEngine) -> Int {
     allocation_counter_begin()
     engine.fill(output)
-    return allocation_counter_end()
+    return Int(allocation_counter_end())
 }
 
 // Apart from the test, whose own values the optimizer may free at any point.
@@ -143,5 +143,5 @@ private func countAllocations(rendering plan: AudioRenderPlan, into target: Offl
     for quantum in quanta {
         plan.render(at: UInt64(quantum * plan.frameCount), into: target, offset: quantum * plan.frameCount)
     }
-    return allocation_counter_end()
+    return Int(allocation_counter_end())
 }
