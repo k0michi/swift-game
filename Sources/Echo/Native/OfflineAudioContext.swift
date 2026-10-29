@@ -159,12 +159,7 @@ public final class OfflineAudioContext: BaseAudioContext {
         let frame = UInt64(quantizedFrame)
         guard !suspensions.contains(frame: frame) else { throw WebAudioError.invalidState }
         let suspension = suspensions.schedule(at: frame)
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                suspension.reached.wait()
-                continuation.resume()
-            }
-        }
+        await suspension.waitUntilReached()
         guard state != .closed,
               suspension.state.load(ordering: .acquiring) == OfflineRenderSuspension.Status.reached
         else {

@@ -14,12 +14,40 @@ final class OfflineRenderSuspension: @unchecked Sendable {
 
     let frame: UInt64
     let next = ManagedAtomic<UnsafeMutableRawPointer?>(nil)
-    let reached = DispatchSemaphore(value: 0)
     let resumed = DispatchSemaphore(value: 0)
     let state = ManagedAtomic<Int>(Status.scheduled)
 
+    // Whether rendering reached the suspension, or it was cancelled, and who
+    // waits for that. Waiting holds no thread, as many suspensions may wait
+    // at once, more than a thread pool has threads.
+    private let lock = NSLock()
+    private var isReached = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
     init(frame: UInt64) {
         self.frame = frame
+    }
+
+    func signalReached() {
+        lock.lock()
+        isReached = true
+        let waiter = waiter
+        self.waiter = nil
+        lock.unlock()
+        waiter?.resume()
+    }
+
+    func waitUntilReached() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if isReached {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                waiter = continuation
+                lock.unlock()
+            }
+        }
     }
 }
 
@@ -52,7 +80,7 @@ final class OfflineRenderSuspensions: @unchecked Sendable {
     func cancelAll() {
         for suspension in retained.dropFirst() {
             suspension.state.store(OfflineRenderSuspension.Status.cancelled, ordering: .releasing)
-            suspension.reached.signal()
+            suspension.signalReached()
             suspension.resumed.signal()
         }
     }
@@ -67,7 +95,7 @@ final class OfflineRenderSuspensions: @unchecked Sendable {
                    desired: OfflineRenderSuspension.Status.reached,
                    ordering: .acquiringAndReleasing
                ).exchanged {
-                suspension.reached.signal()
+                suspension.signalReached()
                 suspension.resumed.wait()
                 if cancelled.load(ordering: .acquiring) { throw WebAudioError.invalidState }
                 suspension.state.store(OfflineRenderSuspension.Status.resumed, ordering: .releasing)
