@@ -117,12 +117,13 @@ struct AudioParamTimeline: Sendable {
             return false
         }
 
-        let activeCurve = activeCurveIndex.map { events[$0] }
         events.removeAll { $0.time >= time }
-        if let activeCurve,
-           let survivingIndex = events.firstIndex(where: { $0.time == activeCurve.time }),
-           case let .curve(values, duration, _) = activeCurve.kind {
-            events[survivingIndex] = Event(
+        // The events before the curve are earlier still, so it keeps its
+        // index, which another event at its time does not share.
+        if let activeCurveIndex,
+           case let .curve(values, duration, _) = events[activeCurveIndex].kind {
+            let activeCurve = events[activeCurveIndex]
+            events[activeCurveIndex] = Event(
                 time: activeCurve.time,
                 kind: .curve(values, duration: duration, cutoff: time)
             )
