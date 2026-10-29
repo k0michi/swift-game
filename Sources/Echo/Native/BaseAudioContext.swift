@@ -52,6 +52,11 @@ public class BaseAudioContext {
         try DelayNode(context: self, options: DelayOptions(maxDelayTime: maxDelayTime))
     }
 
+    public func createWaveShaper() -> WaveShaperNode {
+        // Only invalid options throw, and none are passed.
+        try! WaveShaperNode(context: self)
+    }
+
     func setState(_ state: AudioContextState) {
         guard self.state != state else { return }
 

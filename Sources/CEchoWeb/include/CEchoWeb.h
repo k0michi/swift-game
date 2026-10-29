@@ -38,6 +38,9 @@ int echo_web_call_with_floats(
     int object, const char *method, const float *values, int value_count,
     const double *arguments, int count);
 
+// object[property] = new Float32Array(values), or null when values is NULL.
+int echo_web_set_floats(int object, const char *property, const float *values, int value_count);
+
 // Calls a method that returns a promise. When it settles, settle gets the
 // error, or a handle to the value if it is an object.
 typedef void (*echo_web_settle)(void *user_data, int error, int value);

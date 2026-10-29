@@ -123,6 +123,16 @@ EM_JS(int, echo_web_call_with_floats, (
     }
 });
 
+EM_JS(int, echo_web_set_floats, (int object, const char *property, const float *values, int value_count), {
+    const floats = values ? HEAPF32.slice(values >> 2, (values >> 2) + value_count) : null;
+    try {
+        Module.echoWeb.objects[object][UTF8ToString(property)] = floats;
+        return 0;
+    } catch (e) {
+        return Module.echoWeb.error(e);
+    }
+});
+
 EM_JS(void, echo_web_call_async, (
     int object, const char *method, const double *arguments, int count,
     echo_web_settle settle, void *user_data), {

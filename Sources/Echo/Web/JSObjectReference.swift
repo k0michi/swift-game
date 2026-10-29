@@ -52,6 +52,20 @@ final class JSObjectReference {
         try check(echo_web_set_string(handle, property, value))
     }
 
+    // Sets a Float32Array, or null.
+    func set(_ property: String, floats: [Float]?) throws {
+        guard let floats else {
+            try check(echo_web_set_floats(handle, property, nil, 0))
+            return
+        }
+        try check(floats.withUnsafeBufferPointer { values in
+            // An empty array still needs an address, which is not NULL.
+            withUnsafePointer(to: Float(0)) { empty in
+                echo_web_set_floats(handle, property, values.baseAddress ?? empty, Int32(values.count))
+            }
+        })
+    }
+
     func object(_ property: String) -> JSObjectReference? {
         let handle = echo_web_get_object(handle, property)
         return handle == 0 ? nil : JSObjectReference(handle: handle)
@@ -117,6 +131,7 @@ private func check(_ error: Int32) throws {
 enum JSONValue {
     case number(Double)
     case string(String)
+    case array([JSONValue])
     case object([(String, JSONValue)])
 
     var text: String {
@@ -132,6 +147,8 @@ enum JSONValue {
                 default: String(scalar)
                 }
             }.joined() + "\""
+        case let .array(elements):
+            "[" + elements.map(\.text).joined(separator: ",") + "]"
         case let .object(fields):
             "{" + fields.map { JSONValue.string($0.0).text + ":" + $0.1.text }.joined(separator: ",") + "}"
         }

@@ -17,6 +17,7 @@ final class AudioRenderPlan: @unchecked Sendable {
             paramSources: [Int]
         )
         case mediaStream(state: MediaStreamRenderState)
+        case waveShaper(state: WaveShaperRenderState, curve: [Float]?, oversample: OverSampleType)
     }
 
     struct NodeConfiguration: Sendable {
@@ -41,27 +42,31 @@ final class AudioRenderPlan: @unchecked Sendable {
             self.configuration = configuration
             input = configuration.inputChannelCount.map {
                 AudioRenderQuantum(
-                    channelCapacity: Self.isDelay(configuration.processor) || Self.isDestination(configuration.processor)
+                    channelCapacity: Self.outputFollowsInput(configuration.processor)
+                        || Self.isDestination(configuration.processor)
                         ? Int(AudioBuffer.maximumNumberOfChannels) : $0,
                     frameCount: frameCount, channelCount: $0
                 )
             }
             output = AudioRenderQuantum(
-                channelCapacity: Self.isDelay(configuration.processor)
+                channelCapacity: Self.outputFollowsInput(configuration.processor)
                     ? Int(AudioBuffer.maximumNumberOfChannels) : configuration.outputChannelCount,
                 frameCount: frameCount, channelCount: configuration.outputChannelCount
             )
             switch configuration.processor {
             case let .constant(_, _, _, sources), let .delay(_, _, sources):
                 paramInput = sources.isEmpty ? nil : AudioRenderQuantum(channelCapacity: 1, frameCount: frameCount)
-            case .passThrough, .mediaStream:
+            case .passThrough, .mediaStream, .waveShaper:
                 paramInput = nil
             }
         }
 
-        private static func isDelay(_ processor: Processor) -> Bool {
-            if case .delay = processor { return true }
-            return false
+        // Whether the output has as many channels as the input, however many.
+        private static func outputFollowsInput(_ processor: Processor) -> Bool {
+            switch processor {
+            case .delay, .waveShaper: true
+            case .passThrough, .constant, .mediaStream: false
+            }
         }
 
         private static func isDestination(_ processor: Processor) -> Bool {
@@ -109,6 +114,10 @@ final class AudioRenderPlan: @unchecked Sendable {
                 }
             case let .mediaStream(state):
                 state.render(into: slot.output)
+            case let .waveShaper(state, curve, oversample):
+                if let input = slot.input {
+                    state.render(input: input, output: slot.output, curve: curve, oversample: oversample)
+                }
             case let .constant(startFrame, stopFrame, parameter, paramSources):
                 guard let startFrame else { continue }
                 slot.paramInput?.clear()

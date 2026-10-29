@@ -13,6 +13,8 @@ let tests: [(String, @MainActor () async throws -> Void)] = [
     ("testSuspendAndResume", testSuspendAndResume),
     ("testStateChanges", testStateChanges),
     ("testAudioContext", testAudioContext),
+    ("testWaveShaper", testWaveShaper),
+    ("testWaveShaperErrors", testWaveShaperErrors),
 ]
 
 @MainActor
@@ -165,6 +167,86 @@ func testAudioContext() async throws {
         fail("resume after close: no error")
     } catch let error as WebAudioError {
         expect(error == .invalidState, "resume after close: \(error)")
+    }
+}
+
+// Renders a constant `input` through a WaveShaperNode set up by `configure`,
+// and copies out the samples, which outlive the buffer.
+@MainActor
+func shaped(_ input: Float, length: UInt32 = 128, _ configure: (WaveShaperNode) throws -> Void) async throws -> [Float] {
+    let buffer = try await render(length: length) { context in
+        let source = context.createConstantSource()
+        source.offset.value = input
+        let shaper = context.createWaveShaper()
+        try configure(shaper)
+        try source.connect(shaper).connect(context.destination)
+        try source.start()
+    }
+    var samples = [Float](repeating: 0, count: Int(buffer.length))
+    try buffer.copyFromChannel(&samples, channelNumber: 0)
+    return samples
+}
+
+@MainActor
+func testWaveShaper() async throws {
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: sampleRate)
+    let shaper = context.createWaveShaper()
+    expect(shaper.curve == nil && shaper.oversample == .none, "curve and oversample default to null and none")
+    expect(
+        shaper.channelCount == 2 && shaper.channelCountMode == .max && shaper.channelInterpretation == .speakers,
+        "channel defaults"
+    )
+    shaper.oversample = .`2x`
+    expect(shaper.oversample == .`2x`, "oversample is set")
+
+    let passed = try await shaped(0.3) { _ in }
+    expect(passed.allSatisfy { isClose($0, 0.3) }, "no curve passes the input through")
+    // v = (N - 1) / 2 * (x + 1) over [0, 1, 4], and the first or last value
+    // beyond [-1, 1].
+    for (input, expected) in [(Float(-0.5), Float(0.5)), (0, 1), (0.5, 2.5), (-2, 0), (3, 4)] {
+        let samples = try await shaped(input) { try $0.setCurve([0, 1, 4]) }
+        expect(samples.allSatisfy { isClose($0, expected) }, "\(input) shapes to \(samples[0]), not \(expected)")
+    }
+    let even = try await shaped(0) { try $0.setCurve([0, 1, 3, 7]) }
+    expect(even.allSatisfy { isClose($0, 2) }, "0 falls between an even curve's middle values: \(even[0])")
+
+    let fromOptions = try WaveShaperNode(context: context, options: WaveShaperOptions(curve: [-1, 3], oversample: .`4x`))
+    expect(fromOptions.curve == [-1, 3] && fromOptions.oversample == .`4x`, "options are applied")
+
+    for oversample in [OverSampleType.`2x`, .`4x`] {
+        let samples = try await shaped(0.5, length: 512) { shaper in
+            try shaper.setCurve([1, 0, 1])
+            shaper.oversample = oversample
+        }
+        expect(samples[256...].allSatisfy { isClose($0, 0.5, tolerance: 1e-3) }, "\(oversample) settles: \(samples[256])")
+    }
+}
+
+@MainActor
+func testWaveShaperErrors() async throws {
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: sampleRate)
+    let shaper = context.createWaveShaper()
+    expect(.invalidState, "a curve of one value") {
+        try shaper.setCurve([1])
+    }
+    try shaper.setCurve([0, 1])
+    expect(.invalidState, "a second curve") {
+        try shaper.setCurve([1, 0])
+    }
+    try shaper.setCurve(nil)
+    expect(shaper.curve == nil, "the curve is cleared")
+    expect(.invalidState, "a curve after clearing one") {
+        try shaper.setCurve([1, 0])
+    }
+    expect(.invalidState, "a curve option of one value") {
+        _ = try WaveShaperNode(context: context, options: WaveShaperOptions(curve: [1]))
+    }
+    expect(.rangeError, "a curve option that is not finite") {
+        _ = try WaveShaperNode(context: context, options: WaveShaperOptions(curve: [0, .nan]))
+    }
+    let fromOptions = try WaveShaperNode(context: context, options: WaveShaperOptions(curve: [0, 1]))
+    expect(.invalidState, "a curve after the option's") {
+        try fromOptions.setCurve([1, 0])
     }
 }
 
