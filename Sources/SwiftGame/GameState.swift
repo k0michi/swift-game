@@ -18,7 +18,7 @@ struct Bullet {
     var previousPosition: Vector2<Float>
 }
 
-struct Game {
+struct GameState {
     var player = fieldSize / 2
     var bullets: [Bullet] = []
     var elapsed: Float = 0

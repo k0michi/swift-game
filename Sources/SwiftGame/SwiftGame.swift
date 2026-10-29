@@ -84,7 +84,7 @@ struct SwiftGame {
             print("Click or press a key to turn on sound.")
         #endif
 
-        var game = Game()
+        var game = GameState()
         var frameGraph = FrameGraph()
         var fpsCounter = FPSCounter()
         var showsOverlay = true
