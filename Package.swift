@@ -134,10 +134,15 @@ let package = Package(
                 .unsafeFlags(sdlLinkerFlags),
             ]
         ),
+        // Dawn is C++, and nothing else links the C++ standard library on
+        // macOS.
         .target(
             name: "CDawn",
             cSettings: [.unsafeFlags(dawnCompilerFlags)],
-            linkerSettings: [.unsafeFlags(dawnLinkerFlags)]
+            linkerSettings: [
+                .unsafeFlags(dawnLinkerFlags),
+                .linkedLibrary("c++", .when(platforms: [.macOS])),
+            ]
         ),
         .target(
             name: "Dawn",
