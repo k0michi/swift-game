@@ -34,15 +34,26 @@ public final class System {
     fileprivate init(flags: InitFlags) {
         self.flags = flags
         Self.initializationCount += 1
-        Self.activeSystems.removeAll { $0.value == nil }
+        Self.prune()
         Self.activeSystems.append(WeakSystem(self))
     }
 
     isolated deinit {
         SDL_QuitSubSystem(flags.rawValue)
         Self.initializationCount -= 1
-        Self.activeSystems.removeAll { $0.value == nil || $0.value === self }
+        Self.prune(removing: self)
         Self.quitIfUnused()
+    }
+
+    // Leaves out the systems gone, and `system`. Reading an entry can let go
+    // of the last reference to its system, whose deinit then prunes the list
+    // too, so the list is not being changed while the entries are read.
+    private static func prune(removing system: System? = nil) {
+        let remaining = activeSystems.filter { entry in
+            guard let value = entry.value else { return false }
+            return value !== system
+        }
+        activeSystems = remaining
     }
 
     fileprivate static func quitIfUnused() {
