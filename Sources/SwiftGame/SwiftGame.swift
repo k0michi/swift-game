@@ -22,13 +22,13 @@ struct SwiftGame {
     typealias DefaultExecutorFactory = BrowserExecutorFactory
     #endif
 
-    #if os(macOS)
-    static func main() {
-        runMain(run)
-    }
-    #else
+    #if os(Emscripten)
     static func main() async throws {
         try await run()
+    }
+    #else
+    static func main() {
+        runMain(run)
     }
     #endif
 
