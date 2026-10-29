@@ -794,115 +794,114 @@ public func mix<Scalar: FloatingPoint>(_ e1: Vector4<Scalar>, _ e2: Vector4<Scal
 // MARK: - Transcendental built-in functions
 //
 // These take any `Real` from swift-numerics, which Float, Double and Float16
-// are. They apply to vectors only: Foundation and `Real` itself already have
-// them for scalars.
+// are.
 
 /// The sine of each component, in radians.
 @inlinable
 public func sin<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.sin(e.x), Scalar.sin(e.y), Scalar.sin(e.z), Scalar.sin(e.w))
+    Vector4(sin(e.x), sin(e.y), sin(e.z), sin(e.w))
 }
 
 /// The cosine of each component, in radians.
 @inlinable
 public func cos<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.cos(e.x), Scalar.cos(e.y), Scalar.cos(e.z), Scalar.cos(e.w))
+    Vector4(cos(e.x), cos(e.y), cos(e.z), cos(e.w))
 }
 
 /// The tangent of each component, in radians.
 @inlinable
 public func tan<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.tan(e.x), Scalar.tan(e.y), Scalar.tan(e.z), Scalar.tan(e.w))
+    Vector4(tan(e.x), tan(e.y), tan(e.z), tan(e.w))
 }
 
 /// The arcsine of each component, in radians.
 @inlinable
 public func asin<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.asin(e.x), Scalar.asin(e.y), Scalar.asin(e.z), Scalar.asin(e.w))
+    Vector4(asin(e.x), asin(e.y), asin(e.z), asin(e.w))
 }
 
 /// The arccosine of each component, in radians.
 @inlinable
 public func acos<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.acos(e.x), Scalar.acos(e.y), Scalar.acos(e.z), Scalar.acos(e.w))
+    Vector4(acos(e.x), acos(e.y), acos(e.z), acos(e.w))
 }
 
 /// The arctangent of each component, in radians.
 @inlinable
 public func atan<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.atan(e.x), Scalar.atan(e.y), Scalar.atan(e.z), Scalar.atan(e.w))
+    Vector4(atan(e.x), atan(e.y), atan(e.z), atan(e.w))
 }
 
 /// The angle of each point (`x`, `y`) from the positive x axis, in radians.
 @inlinable
 public func atan2<Scalar: Real>(_ y: Vector4<Scalar>, _ x: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.atan2(y: y.x, x: x.x), Scalar.atan2(y: y.y, x: x.y), Scalar.atan2(y: y.z, x: x.z), Scalar.atan2(y: y.w, x: x.w))
+    Vector4(atan2(y.x, x.x), atan2(y.y, x.y), atan2(y.z, x.z), atan2(y.w, x.w))
 }
 
 /// The hyperbolic sine of each component.
 @inlinable
 public func sinh<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.sinh(e.x), Scalar.sinh(e.y), Scalar.sinh(e.z), Scalar.sinh(e.w))
+    Vector4(sinh(e.x), sinh(e.y), sinh(e.z), sinh(e.w))
 }
 
 /// The hyperbolic cosine of each component.
 @inlinable
 public func cosh<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.cosh(e.x), Scalar.cosh(e.y), Scalar.cosh(e.z), Scalar.cosh(e.w))
+    Vector4(cosh(e.x), cosh(e.y), cosh(e.z), cosh(e.w))
 }
 
 /// The hyperbolic tangent of each component.
 @inlinable
 public func tanh<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.tanh(e.x), Scalar.tanh(e.y), Scalar.tanh(e.z), Scalar.tanh(e.w))
+    Vector4(tanh(e.x), tanh(e.y), tanh(e.z), tanh(e.w))
 }
 
 /// The inverse hyperbolic sine of each component.
 @inlinable
 public func asinh<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.asinh(e.x), Scalar.asinh(e.y), Scalar.asinh(e.z), Scalar.asinh(e.w))
+    Vector4(asinh(e.x), asinh(e.y), asinh(e.z), asinh(e.w))
 }
 
 /// The inverse hyperbolic cosine of each component.
 @inlinable
 public func acosh<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.acosh(e.x), Scalar.acosh(e.y), Scalar.acosh(e.z), Scalar.acosh(e.w))
+    Vector4(acosh(e.x), acosh(e.y), acosh(e.z), acosh(e.w))
 }
 
 /// The inverse hyperbolic tangent of each component.
 @inlinable
 public func atanh<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.atanh(e.x), Scalar.atanh(e.y), Scalar.atanh(e.z), Scalar.atanh(e.w))
+    Vector4(atanh(e.x), atanh(e.y), atanh(e.z), atanh(e.w))
 }
 
 /// Euler's number raised to each component.
 @inlinable
 public func exp<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.exp(e.x), Scalar.exp(e.y), Scalar.exp(e.z), Scalar.exp(e.w))
+    Vector4(exp(e.x), exp(e.y), exp(e.z), exp(e.w))
 }
 
 /// 2 raised to each component.
 @inlinable
 public func exp2<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.exp2(e.x), Scalar.exp2(e.y), Scalar.exp2(e.z), Scalar.exp2(e.w))
+    Vector4(exp2(e.x), exp2(e.y), exp2(e.z), exp2(e.w))
 }
 
 /// The natural logarithm of each component.
 @inlinable
 public func log<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.log(e.x), Scalar.log(e.y), Scalar.log(e.z), Scalar.log(e.w))
+    Vector4(log(e.x), log(e.y), log(e.z), log(e.w))
 }
 
 /// The base-2 logarithm of each component.
 @inlinable
 public func log2<Scalar: Real>(_ e: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.log2(e.x), Scalar.log2(e.y), Scalar.log2(e.z), Scalar.log2(e.w))
+    Vector4(log2(e.x), log2(e.y), log2(e.z), log2(e.w))
 }
 
 /// Each component of `e1` raised to that of `e2`.
 @inlinable
 public func pow<Scalar: Real>(_ e1: Vector4<Scalar>, _ e2: Vector4<Scalar>) -> Vector4<Scalar> {
-    Vector4(Scalar.pow(e1.x, e2.x), Scalar.pow(e1.y, e2.y), Scalar.pow(e1.z, e2.z), Scalar.pow(e1.w, e2.w))
+    Vector4(pow(e1.x, e2.x), pow(e1.y, e2.y), pow(e1.z, e2.z), pow(e1.w, e2.w))
 }
 
 // MARK: - Geometric built-in functions

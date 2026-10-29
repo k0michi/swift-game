@@ -471,32 +471,31 @@ func generateVectorFunctions(_ source: Source, size: Int) {
     source.line("// MARK: - Transcendental built-in functions")
     source.line("//")
     source.line("// These take any `Real` from swift-numerics, which Float, Double and Float16")
-    source.line("// are. They apply to vectors only: Foundation and `Real` itself already have")
-    source.line("// them for scalars.")
+    source.line("// are.")
 
     // name, parameters, documentation and the expression for one component.
     let transcendental: [(String, [String], String, (String) -> String)] = [
-        ("sin", ["e"], "The sine of each component, in radians.", { "Scalar.sin(e.\($0))" }),
-        ("cos", ["e"], "The cosine of each component, in radians.", { "Scalar.cos(e.\($0))" }),
-        ("tan", ["e"], "The tangent of each component, in radians.", { "Scalar.tan(e.\($0))" }),
-        ("asin", ["e"], "The arcsine of each component, in radians.", { "Scalar.asin(e.\($0))" }),
-        ("acos", ["e"], "The arccosine of each component, in radians.", { "Scalar.acos(e.\($0))" }),
-        ("atan", ["e"], "The arctangent of each component, in radians.", { "Scalar.atan(e.\($0))" }),
+        ("sin", ["e"], "The sine of each component, in radians.", { "sin(e.\($0))" }),
+        ("cos", ["e"], "The cosine of each component, in radians.", { "cos(e.\($0))" }),
+        ("tan", ["e"], "The tangent of each component, in radians.", { "tan(e.\($0))" }),
+        ("asin", ["e"], "The arcsine of each component, in radians.", { "asin(e.\($0))" }),
+        ("acos", ["e"], "The arccosine of each component, in radians.", { "acos(e.\($0))" }),
+        ("atan", ["e"], "The arctangent of each component, in radians.", { "atan(e.\($0))" }),
         (
             "atan2", ["y", "x"], "The angle of each point (`x`, `y`) from the positive x axis, in radians.",
-            { "Scalar.atan2(y: y.\($0), x: x.\($0))" }
+            { "atan2(y.\($0), x.\($0))" }
         ),
-        ("sinh", ["e"], "The hyperbolic sine of each component.", { "Scalar.sinh(e.\($0))" }),
-        ("cosh", ["e"], "The hyperbolic cosine of each component.", { "Scalar.cosh(e.\($0))" }),
-        ("tanh", ["e"], "The hyperbolic tangent of each component.", { "Scalar.tanh(e.\($0))" }),
-        ("asinh", ["e"], "The inverse hyperbolic sine of each component.", { "Scalar.asinh(e.\($0))" }),
-        ("acosh", ["e"], "The inverse hyperbolic cosine of each component.", { "Scalar.acosh(e.\($0))" }),
-        ("atanh", ["e"], "The inverse hyperbolic tangent of each component.", { "Scalar.atanh(e.\($0))" }),
-        ("exp", ["e"], "Euler's number raised to each component.", { "Scalar.exp(e.\($0))" }),
-        ("exp2", ["e"], "2 raised to each component.", { "Scalar.exp2(e.\($0))" }),
-        ("log", ["e"], "The natural logarithm of each component.", { "Scalar.log(e.\($0))" }),
-        ("log2", ["e"], "The base-2 logarithm of each component.", { "Scalar.log2(e.\($0))" }),
-        ("pow", ["e1", "e2"], "Each component of `e1` raised to that of `e2`.", { "Scalar.pow(e1.\($0), e2.\($0))" }),
+        ("sinh", ["e"], "The hyperbolic sine of each component.", { "sinh(e.\($0))" }),
+        ("cosh", ["e"], "The hyperbolic cosine of each component.", { "cosh(e.\($0))" }),
+        ("tanh", ["e"], "The hyperbolic tangent of each component.", { "tanh(e.\($0))" }),
+        ("asinh", ["e"], "The inverse hyperbolic sine of each component.", { "asinh(e.\($0))" }),
+        ("acosh", ["e"], "The inverse hyperbolic cosine of each component.", { "acosh(e.\($0))" }),
+        ("atanh", ["e"], "The inverse hyperbolic tangent of each component.", { "atanh(e.\($0))" }),
+        ("exp", ["e"], "Euler's number raised to each component.", { "exp(e.\($0))" }),
+        ("exp2", ["e"], "2 raised to each component.", { "exp2(e.\($0))" }),
+        ("log", ["e"], "The natural logarithm of each component.", { "log(e.\($0))" }),
+        ("log2", ["e"], "The base-2 logarithm of each component.", { "log2(e.\($0))" }),
+        ("pow", ["e1", "e2"], "Each component of `e1` raised to that of `e2`.", { "pow(e1.\($0), e2.\($0))" }),
     ]
     for (name, parameters, documentation, expression) in transcendental {
         source.line()

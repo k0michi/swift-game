@@ -744,115 +744,114 @@ public func mix<Scalar: FloatingPoint>(_ e1: Vector2<Scalar>, _ e2: Vector2<Scal
 // MARK: - Transcendental built-in functions
 //
 // These take any `Real` from swift-numerics, which Float, Double and Float16
-// are. They apply to vectors only: Foundation and `Real` itself already have
-// them for scalars.
+// are.
 
 /// The sine of each component, in radians.
 @inlinable
 public func sin<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.sin(e.x), Scalar.sin(e.y))
+    Vector2(sin(e.x), sin(e.y))
 }
 
 /// The cosine of each component, in radians.
 @inlinable
 public func cos<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.cos(e.x), Scalar.cos(e.y))
+    Vector2(cos(e.x), cos(e.y))
 }
 
 /// The tangent of each component, in radians.
 @inlinable
 public func tan<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.tan(e.x), Scalar.tan(e.y))
+    Vector2(tan(e.x), tan(e.y))
 }
 
 /// The arcsine of each component, in radians.
 @inlinable
 public func asin<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.asin(e.x), Scalar.asin(e.y))
+    Vector2(asin(e.x), asin(e.y))
 }
 
 /// The arccosine of each component, in radians.
 @inlinable
 public func acos<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.acos(e.x), Scalar.acos(e.y))
+    Vector2(acos(e.x), acos(e.y))
 }
 
 /// The arctangent of each component, in radians.
 @inlinable
 public func atan<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.atan(e.x), Scalar.atan(e.y))
+    Vector2(atan(e.x), atan(e.y))
 }
 
 /// The angle of each point (`x`, `y`) from the positive x axis, in radians.
 @inlinable
 public func atan2<Scalar: Real>(_ y: Vector2<Scalar>, _ x: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.atan2(y: y.x, x: x.x), Scalar.atan2(y: y.y, x: x.y))
+    Vector2(atan2(y.x, x.x), atan2(y.y, x.y))
 }
 
 /// The hyperbolic sine of each component.
 @inlinable
 public func sinh<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.sinh(e.x), Scalar.sinh(e.y))
+    Vector2(sinh(e.x), sinh(e.y))
 }
 
 /// The hyperbolic cosine of each component.
 @inlinable
 public func cosh<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.cosh(e.x), Scalar.cosh(e.y))
+    Vector2(cosh(e.x), cosh(e.y))
 }
 
 /// The hyperbolic tangent of each component.
 @inlinable
 public func tanh<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.tanh(e.x), Scalar.tanh(e.y))
+    Vector2(tanh(e.x), tanh(e.y))
 }
 
 /// The inverse hyperbolic sine of each component.
 @inlinable
 public func asinh<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.asinh(e.x), Scalar.asinh(e.y))
+    Vector2(asinh(e.x), asinh(e.y))
 }
 
 /// The inverse hyperbolic cosine of each component.
 @inlinable
 public func acosh<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.acosh(e.x), Scalar.acosh(e.y))
+    Vector2(acosh(e.x), acosh(e.y))
 }
 
 /// The inverse hyperbolic tangent of each component.
 @inlinable
 public func atanh<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.atanh(e.x), Scalar.atanh(e.y))
+    Vector2(atanh(e.x), atanh(e.y))
 }
 
 /// Euler's number raised to each component.
 @inlinable
 public func exp<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.exp(e.x), Scalar.exp(e.y))
+    Vector2(exp(e.x), exp(e.y))
 }
 
 /// 2 raised to each component.
 @inlinable
 public func exp2<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.exp2(e.x), Scalar.exp2(e.y))
+    Vector2(exp2(e.x), exp2(e.y))
 }
 
 /// The natural logarithm of each component.
 @inlinable
 public func log<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.log(e.x), Scalar.log(e.y))
+    Vector2(log(e.x), log(e.y))
 }
 
 /// The base-2 logarithm of each component.
 @inlinable
 public func log2<Scalar: Real>(_ e: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.log2(e.x), Scalar.log2(e.y))
+    Vector2(log2(e.x), log2(e.y))
 }
 
 /// Each component of `e1` raised to that of `e2`.
 @inlinable
 public func pow<Scalar: Real>(_ e1: Vector2<Scalar>, _ e2: Vector2<Scalar>) -> Vector2<Scalar> {
-    Vector2(Scalar.pow(e1.x, e2.x), Scalar.pow(e1.y, e2.y))
+    Vector2(pow(e1.x, e2.x), pow(e1.y, e2.y))
 }
 
 // MARK: - Geometric built-in functions

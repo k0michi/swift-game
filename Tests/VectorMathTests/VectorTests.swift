@@ -160,13 +160,15 @@ struct VectorTests {
     }
 
     @Test
-    func moduleNameSelectsTheWGSLRound() {
-        // This file imports Foundation, whose round rounds halves away from zero.
+    func moduleNameSelectsVectorMathOverFoundation() {
+        // This file imports Foundation, whose functions win without the module name,
+        // and whose round rounds halves away from zero.
         #expect(round(2.5) == 3)
         #expect(VectorMath.round(2.5) == 2)
         #expect(round(Vector2<Double>(2.5, 3.5)) == Vector2(2, 4))
         #expect(VectorMath.floor(-1.5) == -2)
         #expect(VectorMath.sqrt(Float(9)) == 3)
+        #expect(VectorMath.pow(2.0, 10.0) == 1024)
     }
 
     @Test

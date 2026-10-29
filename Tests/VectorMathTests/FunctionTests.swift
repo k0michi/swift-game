@@ -113,6 +113,17 @@ struct TranscendentalFunctionTests {
     }
 
     @Test
+    func applyToScalars() {
+        #expect(sin(0.0) == 0)
+        #expect(cos(0.0) == 1)
+        #expect(abs(atan2(1.0, 0.0) - .pi / 2) < 1e-12)
+        #expect(exp2(Float(3)) == 8)
+        #expect(log2(8.0) == 3)
+        #expect(pow(2.0, 10.0) == 1024)
+        #expect(abs(log(exp(1.5)) - 1.5) < 1e-12)
+    }
+
+    @Test
     func takeFloatVectors() {
         let result = sin(Vector3<Float>(0, .pi / 2, .pi))
         #expect(all(abs(result - Vector3(0, 1, 0)) < Vector3(repeating: 1e-6)))
