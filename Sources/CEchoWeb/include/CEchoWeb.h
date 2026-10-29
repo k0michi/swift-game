@@ -30,6 +30,8 @@ int echo_web_set_number(int object, const char *property, double value);
 int echo_web_get_string(int object, const char *property, char *buffer, int size);
 int echo_web_set_string(int object, const char *property, const char *value);
 int echo_web_get_object(int object, const char *property);
+// object[property] = the object `value` names, or null when it is 0.
+int echo_web_set_object(int object, const char *property, int value);
 
 // object[method](target, ...arguments), leaving target out when it is 0.
 int echo_web_call(int object, const char *method, int target, const double *arguments, int count);

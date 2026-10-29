@@ -71,6 +71,7 @@ public final class AudioContext: BaseAudioContext {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000)
                 guard let self else { return }
+                dispatchEndedEvents()
                 if backendFailed.exchange(false, ordering: .acquiring) {
                     await handleBackendFailure()
                     return

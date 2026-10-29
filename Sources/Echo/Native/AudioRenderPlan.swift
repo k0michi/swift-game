@@ -10,6 +10,7 @@ final class AudioRenderPlan: @unchecked Sendable {
         case constant(
             startFrame: UInt64?,
             stopFrame: UInt64?,
+            ended: EndedSignal,
             parameter: AudioParamTimeline,
             paramSources: [Int]
         )
@@ -21,6 +22,16 @@ final class AudioRenderPlan: @unchecked Sendable {
         case gain(parameter: AudioParamTimeline, paramSources: [Int])
         case mediaStream(state: MediaStreamRenderState)
         case stereoPanner(parameter: AudioParamTimeline, paramSources: [Int])
+        // `paramSources` are those of playbackRate and of detune.
+        case bufferSource(
+            state: BufferSourceRenderState,
+            ended: EndedSignal,
+            sampleRate: Float,
+            schedule: BufferSourceRenderState.Schedule,
+            playbackRate: AudioParamTimeline,
+            detune: AudioParamTimeline,
+            paramSources: [[Int]]
+        )
         // `parameters` and `paramSources` are those of frequency, detune, Q
         // and gain.
         case biquad(
@@ -33,6 +44,7 @@ final class AudioRenderPlan: @unchecked Sendable {
         // `paramSources` are those of frequency and of detune.
         case oscillator(
             state: OscillatorRenderState,
+            ended: EndedSignal,
             wave: WaveTable,
             sampleRate: Float,
             startTime: Double?,
@@ -74,7 +86,7 @@ final class AudioRenderPlan: @unchecked Sendable {
                 )
             }
             output = AudioRenderQuantum(
-                channelCapacity: Self.outputFollowsInput(configuration.processor)
+                channelCapacity: Self.outputFollowsInput(configuration.processor) || Self.isBufferSource(configuration.processor)
                     ? Int(AudioBuffer.maximumNumberOfChannels) : configuration.outputChannelCount,
                 frameCount: frameCount, channelCount: configuration.outputChannelCount
             )
@@ -86,10 +98,11 @@ final class AudioRenderPlan: @unchecked Sendable {
         // The sources connected to each of the node's parameters.
         static func paramSources(_ processor: Processor) -> [[Int]] {
             switch processor {
-            case let .constant(_, _, _, sources), let .delay(_, _, sources), let .gain(_, sources),
+            case let .constant(_, _, _, _, sources), let .delay(_, _, sources), let .gain(_, sources),
                  let .stereoPanner(_, sources):
                 [sources]
-            case let .oscillator(_, _, _, _, _, _, _, sources), let .biquad(_, _, _, _, sources):
+            case let .oscillator(_, _, _, _, _, _, _, _, sources), let .biquad(_, _, _, _, sources),
+                 let .bufferSource(_, _, _, _, _, _, sources):
                 sources
             case .passThrough, .mediaStream, .waveShaper:
                 []
@@ -100,8 +113,14 @@ final class AudioRenderPlan: @unchecked Sendable {
         private static func outputFollowsInput(_ processor: Processor) -> Bool {
             switch processor {
             case .delay, .gain, .waveShaper, .biquad: true
-            case .passThrough, .constant, .mediaStream, .stereoPanner, .oscillator: false
+            case .passThrough, .constant, .mediaStream, .stereoPanner, .oscillator, .bufferSource: false
             }
+        }
+
+        // A buffer source's output has as many channels as its buffer.
+        private static func isBufferSource(_ processor: Processor) -> Bool {
+            if case .bufferSource = processor { return true }
+            return false
         }
 
         // The most channels the input can have, when its first count is not.
@@ -109,7 +128,7 @@ final class AudioRenderPlan: @unchecked Sendable {
             switch processor {
             case .passThrough, .delay, .gain, .waveShaper, .biquad: Int(AudioBuffer.maximumNumberOfChannels)
             case .stereoPanner: 2
-            case .constant, .mediaStream, .oscillator: nil
+            case .constant, .mediaStream, .oscillator, .bufferSource: nil
             }
         }
     }
@@ -181,12 +200,12 @@ final class AudioRenderPlan: @unchecked Sendable {
                         modulation: modulation
                     )
                 }
-            case let .oscillator(state, wave, sampleRate, startTime, stopTime, frequency, detune, _):
+            case let .oscillator(state, ended, wave, sampleRate, startTime, stopTime, frequency, detune, _):
                 mixParamInputs(of: slot)
                 let nyquist = sampleRate / 2
                 state.render(
                     into: slot.output, frame: frame, sampleRate: sampleRate, wave: wave,
-                    startTime: startTime, stopTime: stopTime
+                    startTime: startTime, stopTime: stopTime, ended: ended
                 ) { index in
                     // A compound parameter: each value is clamped only once
                     // combined.
@@ -195,6 +214,16 @@ final class AudioRenderPlan: @unchecked Sendable {
                     let computed = frequency * exp2(detune / 1200)
                     return computed.isNaN ? 0 : min(max(computed, -nyquist), nyquist)
                 }
+            case let .bufferSource(state, ended, sampleRate, schedule, playbackRate, detune, _):
+                mixParamInputs(of: slot)
+                // A compound parameter of unbounded range, k-rate.
+                let rate = Self.paramComputedValue(playbackRate, slot.paramInputs[0], index: 0, frame: frame)
+                let cents = Self.paramComputedValue(detune, slot.paramInputs[1], index: 0, frame: frame)
+                let computed = Double(rate) * exp2(Double(cents) / 1200)
+                state.render(
+                    into: slot.output, frame: frame, sampleRate: sampleRate, schedule: schedule,
+                    playbackRate: computed.isNaN ? 0 : computed, ended: ended
+                )
             case let .biquad(state, type, sampleRate, parameters, _):
                 mixParamInputs(of: slot)
                 guard let input = slot.input else { continue }
@@ -213,9 +242,12 @@ final class AudioRenderPlan: @unchecked Sendable {
                 if let input = slot.input {
                     state.render(input: input, output: slot.output, curve: curve, oversample: oversample)
                 }
-            case let .constant(startFrame, stopFrame, parameter, _):
+            case let .constant(startFrame, stopFrame, ended, parameter, _):
                 guard let startFrame else { continue }
                 mixParamInputs(of: slot)
+                if let stopFrame, frame + UInt64(slot.output.frameCount) > stopFrame {
+                    ended.signal()
+                }
 
                 let samples = slot.output.channelData(0)
                 for index in samples.indices {

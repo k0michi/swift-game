@@ -13,6 +13,9 @@ let tests: [(String, @MainActor () async throws -> Void)] = [
     ("testSuspendAndResume", testSuspendAndResume),
     ("testStateChanges", testStateChanges),
     ("testAudioContext", testAudioContext),
+    ("testBufferSource", testBufferSource),
+    ("testBufferSourceErrors", testBufferSourceErrors),
+    ("testEnded", testEnded),
     ("testBiquadFilter", testBiquadFilter),
     ("testGain", testGain),
     ("testOscillator", testOscillator),
@@ -173,6 +176,107 @@ func testAudioContext() async throws {
     } catch let error as WebAudioError {
         expect(error == .invalidState, "resume after close: \(error)")
     }
+}
+
+// A buffer whose frame n is n.
+@MainActor
+func ramp(length: UInt32, sampleRate: Float = sampleRate) throws -> AudioBuffer {
+    let buffer = try AudioBuffer(options: AudioBufferOptions(numberOfChannels: 1, length: length, sampleRate: sampleRate))
+    try buffer.copyToChannel((0 ..< length).map { Float($0) }, channelNumber: 0)
+    return buffer
+}
+
+// Plays `buffer` through a source set up by `configure`, which also starts
+// it, and copies out the samples, which outlive the rendered buffer.
+@MainActor
+func play(_ buffer: AudioBuffer, _ configure: (AudioBufferSourceNode) throws -> Void) async throws -> [Float] {
+    let rendered = try await render(length: 256) { context in
+        let source = try AudioBufferSourceNode(context: context, options: AudioBufferSourceOptions(buffer: buffer))
+        try source.connect(context.destination)
+        try configure(source)
+    }
+    var samples = [Float](repeating: 0, count: 256)
+    try rendered.copyFromChannel(&samples, channelNumber: 0)
+    return samples
+}
+
+@MainActor
+func testBufferSource() async throws {
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: sampleRate)
+    let source = context.createBufferSource()
+    expect(source.buffer == nil && !source.loop && source.playbackRate.automationRate == .kRate, "defaults")
+    source.loop = true
+    source.loopStart = 0.25
+    expect(source.loop && source.loopStart == 0.25, "loop attributes are set")
+
+    let once = try await play(try ramp(length: 100)) { try $0.start() }
+    expect(once[0 ..< 100].indices.allSatisfy { isClose(once[$0], Float($0)) } && once[100...].allSatisfy { $0 == 0 },
+           "plays once: \(once[99]), \(once[100])")
+    let looped = try await play(try ramp(length: 100)) { source in
+        source.loop = true
+        source.loopStart = 20 / Double(sampleRate)
+        source.loopEnd = 40 / Double(sampleRate)
+        try source.start(0, offset: 30 / Double(sampleRate))
+    }
+    expect(isClose(looped[0], 30) && isClose(looped[10], 20) && isClose(looped[45], 35), "loops: \(looped[10]), \(looped[45])")
+    let half = try await play(try ramp(length: 100)) { source in
+        source.playbackRate.value = 0.5
+        try source.start(16 / Double(sampleRate), offset: 0, duration: 10 / Double(sampleRate))
+    }
+    expect(isClose(half[17], 0.5) && isClose(half[34], 9) && half[40...].allSatisfy { $0 == 0 },
+           "half speed for a duration: \(half[17]), \(half[34])")
+    // The buffer's samples are acquired when started.
+    let buffer = try ramp(length: 64)
+    let acquired = try await play(buffer) { source in
+        try source.start()
+        try buffer.copyToChannel([Float](repeating: -1, count: 64), channelNumber: 0)
+    }
+    expect(isClose(acquired[10], 10), "changes after the start are not heard: \(acquired[10])")
+}
+
+@MainActor
+func testBufferSourceErrors() async throws {
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: sampleRate)
+    let source = context.createBufferSource()
+    try source.setBuffer(try ramp(length: 8))
+    expect(.invalidState, "a second buffer") {
+        try source.setBuffer(try ramp(length: 8))
+    }
+    try source.setBuffer(nil)
+    expect(.invalidState, "a buffer after clearing one") {
+        try source.setBuffer(try ramp(length: 8))
+    }
+    expect(.rangeError, "a negative offset") {
+        try source.start(0, offset: -1)
+    }
+    expect(.rangeError, "a playback rate option that is not finite") {
+        _ = try AudioBufferSourceNode(context: context, options: AudioBufferSourceOptions(playbackRate: .nan))
+    }
+}
+
+@MainActor
+func testEnded() async throws {
+    var ended: [String] = []
+    _ = try await render(length: 512) { context in
+        let buffer = try AudioBufferSourceNode(context: context, options: AudioBufferSourceOptions(buffer: try ramp(length: 64)))
+        buffer.onended = { ended.append("buffer") }
+        let oscillator = context.createOscillator()
+        oscillator.onended = { ended.append("oscillator") }
+        let constant = context.createConstantSource()
+        constant.onended = { ended.append("constant") }
+        for source: AudioScheduledSourceNode in [buffer, oscillator, constant] {
+            try source.connect(context.destination)
+        }
+        try buffer.start()
+        try oscillator.start()
+        try oscillator.stop(200 / Double(sampleRate))
+        try constant.start()
+        try constant.stop(300 / Double(sampleRate))
+        // Nothing else keeps the sources: they keep themselves until they
+        // end.
+    }
+    await nextTask()
+    expect(Set(ended) == ["buffer", "oscillator", "constant"], "ended: \(ended)")
 }
 
 @MainActor

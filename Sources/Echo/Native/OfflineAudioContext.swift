@@ -116,6 +116,7 @@ public final class OfflineAudioContext: BaseAudioContext {
         }
         guard state != .closed else { throw WebAudioError.invalidState }
         renderedFrames += UInt64(bufferLength)
+        dispatchEndedEvents()
 
         if let length, renderedFrames >= UInt64(length) {
             setState(.closed)
@@ -171,6 +172,7 @@ public final class OfflineAudioContext: BaseAudioContext {
             throw WebAudioError.invalidState
         }
         activeSuspension = suspension
+        dispatchEndedEvents()
         setState(.suspended)
     }
 

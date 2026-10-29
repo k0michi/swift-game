@@ -19,6 +19,7 @@ final class OscillatorRenderState: @unchecked Sendable {
         wave: WaveTable,
         startTime: Double?,
         stopTime: Double?,
+        ended: EndedSignal,
         frequency: (Int) -> Float
     ) {
         let samples = output.channelData(0)
@@ -29,6 +30,7 @@ final class OscillatorRenderState: @unchecked Sendable {
             // from playing.
             if !hasStopped, let stopTime, time >= stopTime {
                 hasStopped = true
+                ended.signal()
             }
             guard !hasStopped, let startTime, time >= startTime else {
                 samples[index] = 0

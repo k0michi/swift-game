@@ -1,6 +1,6 @@
 #if os(Emscripten)
 @MainActor
-public final class OscillatorNode: AudioNode {
+public final class OscillatorNode: AudioScheduledSourceNode {
     public var type: OscillatorType {
         OscillatorType(rawValue: object.string("type")) ?? .sine
     }
@@ -44,14 +44,6 @@ public final class OscillatorNode: AudioNode {
     public func setPeriodicWave(_ periodicWave: PeriodicWave) {
         // The browser throws only for what is not a PeriodicWave.
         try! object.call("setPeriodicWave", periodicWave.object)
-    }
-
-    public func start(_ when: Double = 0) throws {
-        try object.call("start", nil, [when])
-    }
-
-    public func stop(_ when: Double = 0) throws {
-        try object.call("stop", nil, [when])
     }
 }
 #endif

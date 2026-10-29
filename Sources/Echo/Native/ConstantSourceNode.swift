@@ -1,7 +1,7 @@
 // Echo renders the audio itself, except in the browser, where Web/ hands it
 // to the browser's Web Audio.
 #if !os(Emscripten)
-public final class ConstantSourceNode: AudioNode {
+public final class ConstantSourceNode: AudioScheduledSourceNode {
     public private(set) lazy var offset = AudioParam(
         owner: self,
         defaultValue: 1,
@@ -9,11 +9,9 @@ public final class ConstantSourceNode: AudioNode {
         maxValue: .greatestFiniteMagnitude,
         automationRate: .aRate
     )
-    private var startFrame: UInt64?
-    private var stopFrame: UInt64?
-
-    var scheduledStartFrame: UInt64? { startFrame }
-    var scheduledStopFrame: UInt64? { stopFrame }
+    // The first frame at or after each time.
+    var scheduledStartFrame: UInt64? { startTime.map(frame) }
+    var scheduledStopFrame: UInt64? { stopTime.map(frame) }
 
     public init(context: BaseAudioContext) {
         super.init(
@@ -26,28 +24,10 @@ public final class ConstantSourceNode: AudioNode {
         )
     }
 
-    public func start(_ when: Double = 0) throws {
-        guard startFrame == nil else { throw WebAudioError.invalidState }
-        startFrame = try scheduledFrame(for: when)
-        context.graphDidChange()
-    }
-
-    public func stop(_ when: Double = 0) throws {
-        guard startFrame != nil else { throw WebAudioError.invalidState }
-        stopFrame = try scheduledFrame(for: when)
-        context.graphDidChange()
-    }
-
     override var audioParams: [AudioParam] { [offset] }
 
-    // TODO: Enqueue parameter and scheduling changes for the rendering thread.
-
-    private func scheduledFrame(for time: Double) throws -> UInt64 {
-        let frame = (time * Double(context.sampleRate)).rounded(.up)
-        guard frame.isFinite, frame >= 0, frame < Double(UInt64.max) else {
-            throw WebAudioError.notSupported
-        }
-        return UInt64(frame)
+    private func frame(_ time: Double) -> UInt64 {
+        UInt64(min((time * Double(context.sampleRate)).rounded(.up), Double(UInt64.max)))
     }
 }
 #endif

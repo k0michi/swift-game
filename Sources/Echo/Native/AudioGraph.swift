@@ -168,6 +168,7 @@ final class AudioGraph {
                 processor = .constant(
                     startFrame: source.scheduledStartFrame,
                     stopFrame: source.scheduledStopFrame,
+                    ended: source.endedSignal,
                     parameter: offset.renderTimeline,
                     paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
                 )
@@ -197,12 +198,34 @@ final class AudioGraph {
                         (slot.paramSources.first { $0.0 === param }?.1 ?? []).map { indices[ObjectIdentifier($0)]! }
                     }
                 )
+            } else if let source = slot.node as? AudioBufferSourceNode {
+                processor = .bufferSource(
+                    state: source.renderState,
+                    ended: source.endedSignal,
+                    sampleRate: source.context.sampleRate,
+                    schedule: BufferSourceRenderState.Schedule(
+                        content: source.content,
+                        start: source.startTime,
+                        stop: source.stopTime,
+                        offset: source.offset,
+                        duration: source.duration,
+                        loop: source.loop,
+                        loopStart: source.loopStart,
+                        loopEnd: source.loopEnd
+                    ),
+                    playbackRate: source.playbackRate.renderTimeline,
+                    detune: source.detune.renderTimeline,
+                    paramSources: [source.playbackRate, source.detune].map { param in
+                        (slot.paramSources.first { $0.0 === param }?.1 ?? []).map { indices[ObjectIdentifier($0)]! }
+                    }
+                )
             } else if let oscillator = slot.node as? OscillatorNode {
                 let sources = [oscillator.frequency, oscillator.detune].map { param in
                     (slot.paramSources.first { $0.0 === param }?.1 ?? []).map { indices[ObjectIdentifier($0)]! }
                 }
                 processor = .oscillator(
                     state: oscillator.renderState,
+                    ended: oscillator.endedSignal,
                     wave: oscillator.waveTable,
                     sampleRate: oscillator.context.sampleRate,
                     startTime: oscillator.startTime,

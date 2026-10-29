@@ -97,6 +97,16 @@ EM_JS(int, echo_web_get_object, (int object, const char *property), {
     return value == null ? 0 : Module.echoWeb.keep(value);
 });
 
+EM_JS(int, echo_web_set_object, (int object, const char *property, int value), {
+    const web = Module.echoWeb;
+    try {
+        web.objects[object][UTF8ToString(property)] = value ? web.objects[value] : null;
+        return 0;
+    } catch (e) {
+        return web.error(e);
+    }
+});
+
 EM_JS(int, echo_web_call, (int object, const char *method, int target, const double *arguments, int count), {
     const web = Module.echoWeb;
     const values = Array.from(HEAPF64.subarray(arguments >> 3, (arguments >> 3) + count));

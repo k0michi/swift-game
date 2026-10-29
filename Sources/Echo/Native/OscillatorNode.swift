@@ -4,7 +4,7 @@
 import Foundation
 
 @MainActor
-public final class OscillatorNode: AudioNode {
+public final class OscillatorNode: AudioScheduledSourceNode {
     // "custom" comes only from a PeriodicWave.
     public private(set) var type: OscillatorType
 
@@ -29,8 +29,6 @@ public final class OscillatorNode: AudioNode {
     static let maximumDetune = Float(1200 * log2(Double(Float.greatestFiniteMagnitude)))
 
     private var periodicWave: PeriodicWave?
-    private(set) var startTime: Double?
-    private(set) var stopTime: Double?
     let renderState = OscillatorRenderState()
 
     public init(context: BaseAudioContext, options: OscillatorOptions = OscillatorOptions()) throws {
@@ -67,29 +65,10 @@ public final class OscillatorNode: AudioNode {
         context.graphDidChange()
     }
 
-    public func start(_ when: Double = 0) throws {
-        guard startTime == nil else { throw WebAudioError.invalidState }
-        startTime = try scheduledTime(when)
-        context.graphDidChange()
-    }
-
-    public func stop(_ when: Double = 0) throws {
-        guard startTime != nil else { throw WebAudioError.invalidState }
-        stopTime = try scheduledTime(when)
-        context.graphDidChange()
-    }
-
     var waveTable: WaveTable {
         periodicWave?.waveTable ?? .builtIn(type)
     }
 
     override var audioParams: [AudioParam] { [frequency, detune] }
-
-    // The time exactly, as the phase depends on it, or now for a time
-    // already past.
-    private func scheduledTime(_ when: Double) throws -> Double {
-        guard when.isFinite, when >= 0 else { throw WebAudioError.rangeError }
-        return max(when, context.currentTime)
-    }
 }
 #endif

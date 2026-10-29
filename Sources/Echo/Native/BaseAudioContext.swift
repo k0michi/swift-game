@@ -52,6 +52,11 @@ public class BaseAudioContext {
         try DelayNode(context: self, options: DelayOptions(maxDelayTime: maxDelayTime))
     }
 
+    public func createBufferSource() -> AudioBufferSourceNode {
+        // Only invalid options throw, and none are passed.
+        try! AudioBufferSourceNode(context: self)
+    }
+
     public func createBiquadFilter() -> BiquadFilterNode {
         // Only invalid options throw, and none are passed.
         try! BiquadFilterNode(context: self)
@@ -98,6 +103,24 @@ public class BaseAudioContext {
     }
 
     func graphDidChange() {}
+
+    // Started sources, kept until they end.
+    private var playingSources: [AudioScheduledSourceNode] = []
+
+    func sourceDidStart(_ source: AudioScheduledSourceNode) {
+        playingSources.append(source)
+    }
+
+    // Calls onended for each source that has ended since last time, as the
+    // rendering thread cannot.
+    func dispatchEndedEvents() {
+        let ended = playingSources.filter(\.endedSignal.hasEnded)
+        guard !ended.isEmpty else { return }
+        playingSources.removeAll(where: \.endedSignal.hasEnded)
+        for source in ended {
+            source.onended?()
+        }
+    }
 
 }
 #endif

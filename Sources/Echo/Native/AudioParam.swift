@@ -16,6 +16,11 @@ public final class AudioParam {
     public let maxValue: Float
     public var automationRate: AutomationRate {
         didSet {
+            // TODO: A Swift property setter cannot surface the InvalidStateError for a fixed rate, which stays.
+            guard !isAutomationRateFixed else {
+                automationRate = oldValue
+                return
+            }
             timeline.automationRate = automationRate
             context.graphDidChange()
         }
@@ -24,8 +29,19 @@ public final class AudioParam {
     weak var owner: AudioNode?
     let context: BaseAudioContext
     private var timeline: AudioParamTimeline
+    // Whether the parameter has automation rate constraints, which keep its
+    // rate from changing.
+    private let isAutomationRateFixed: Bool
 
-    init(owner: AudioNode, defaultValue: Float, minValue: Float, maxValue: Float, automationRate: AutomationRate) {
+    init(
+        owner: AudioNode,
+        defaultValue: Float,
+        minValue: Float,
+        maxValue: Float,
+        automationRate: AutomationRate,
+        isAutomationRateFixed: Bool = false
+    ) {
+        self.isAutomationRateFixed = isAutomationRateFixed
         self.owner = owner
         context = owner.context
         self.defaultValue = defaultValue

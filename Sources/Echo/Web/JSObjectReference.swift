@@ -52,6 +52,11 @@ final class JSObjectReference {
         try check(echo_web_set_string(handle, property, value))
     }
 
+    // Sets an object, or null.
+    func set(_ property: String, object value: JSObjectReference?) throws {
+        try check(echo_web_set_object(handle, property, value?.handle ?? 0))
+    }
+
     // Sets a Float32Array, or null.
     func set(_ property: String, floats: [Float]?) throws {
         guard let floats else {
