@@ -90,11 +90,7 @@ struct AudioParamTimeline: Sendable {
             if case .target = events[index].kind { return index }
             return nil
         }
-        let valueBeforeTarget = activeTargetIndex.map { index -> Float in
-            var preceding = self
-            preceding.events = Array(events[..<index])
-            return preceding.intrinsicValue(at: events[index].time)
-        }
+        let valueBeforeTarget = activeTargetIndex.map(value(before:))
         events = events.compactMap { event in
             if case let .curve(_, duration, cutoff) = event.kind {
                 return min(event.time + duration, cutoff ?? .infinity) >= time ? nil : event
@@ -143,6 +139,40 @@ struct AudioParamTimeline: Sendable {
         } else {
             events.append(Event(time: time, kind: .set(heldValue)))
         }
+    }
+
+    // Replaces the events before `time` with what later times see of them:
+    // the value they leave, and the value before the one still running,
+    // which cancelling it restores. Times from `time` on, cancellations
+    // among them, see the same values, and rendering need not go through
+    // the past.
+    mutating func discardEvents(before time: Double) {
+        guard let index = events.lastIndex(where: { $0.time < time }) else { return }
+        let event = events[index]
+        let kept: [Event]
+        switch event.kind {
+        case .set:
+            kept = [event]
+        case let .linearRamp(value), let .exponentialRamp(value):
+            kept = [Event(time: event.time, kind: .set(value))]
+        case let .curve(values, duration, cutoff):
+            let end = min(event.time + duration, cutoff ?? .infinity)
+            if end < time {
+                kept = [Event(time: end, kind: .set(curveValue(values, from: event.time, duration: duration, at: end)))]
+            } else {
+                kept = [Event(time: event.time, kind: .set(value(before: index))), event]
+            }
+        case .target:
+            kept = [Event(time: event.time, kind: .set(value(before: index))), event]
+        }
+        events.replaceSubrange(...index, with: kept)
+    }
+
+    // The value when the event at `index` starts, from the events before it.
+    private func value(before index: Int) -> Float {
+        var preceding = self
+        preceding.events = Array(events[..<index])
+        return preceding.intrinsicValue(at: events[index].time)
     }
 
     func computedValue(at frame: UInt64, quantumStart: UInt64, modulation: Float) -> Float {

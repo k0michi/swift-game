@@ -9,6 +9,7 @@ final class AudioParamHandler {
         get { timeline.intrinsicValue(at: context.currentTime) }
         set {
             // TODO: A Swift property setter cannot surface the RangeError for invalid or curve-overlapping values.
+            discardPastEvents()
             timeline.setImmediately(newValue, at: context.currentTime)
             context.graphDidChange()
         }
@@ -65,12 +66,14 @@ final class AudioParamHandler {
     var renderTimeline: AudioParamTimeline { timeline }
 
     func setValueAtTime(_ value: Float, startTime: Double) throws {
+        discardPastEvents()
         try validate(value: value, time: startTime)
         try timeline.insert(.init(time: max(startTime, context.currentTime), kind: .set(value)))
         context.graphDidChange()
     }
 
     func linearRampToValueAtTime(_ value: Float, endTime: Double) throws {
+        discardPastEvents()
         try validate(value: value, time: endTime)
         let time = max(endTime, context.currentTime)
         var updated = timeline
@@ -81,6 +84,7 @@ final class AudioParamHandler {
     }
 
     func exponentialRampToValueAtTime(_ value: Float, endTime: Double) throws {
+        discardPastEvents()
         try validate(value: value, time: endTime)
         guard value != 0 else { throw WebAudioError.rangeError }
         let time = max(endTime, context.currentTime)
@@ -92,6 +96,7 @@ final class AudioParamHandler {
     }
 
     func setTargetAtTime(_ target: Float, startTime: Double, timeConstant: Float) throws {
+        discardPastEvents()
         try validate(value: target, time: startTime)
         guard timeConstant.isFinite, timeConstant >= 0 else { throw WebAudioError.rangeError }
         try timeline.insert(.init(
@@ -102,6 +107,7 @@ final class AudioParamHandler {
     }
 
     func setValueCurveAtTime(_ values: [Float], startTime: Double, duration: Double) throws {
+        discardPastEvents()
         guard values.count >= 2 else { throw WebAudioError.invalidState }
         guard values.allSatisfy(\.isFinite),
               startTime.isFinite, startTime >= 0,
@@ -115,15 +121,23 @@ final class AudioParamHandler {
     }
 
     func cancelScheduledValues(_ cancelTime: Double) throws {
+        discardPastEvents()
         let time = try validatedTime(cancelTime)
         timeline.cancel(from: time)
         context.graphDidChange()
     }
 
     func cancelAndHoldAtTime(_ cancelTime: Double) throws {
+        discardPastEvents()
         let time = try validatedTime(cancelTime)
         timeline.cancelAndHold(at: time)
         context.graphDidChange()
+    }
+
+    // Before each change, so that the timeline holds little more than the
+    // changes still to come, however many came before.
+    private func discardPastEvents() {
+        timeline.discardEvents(before: context.currentTime)
     }
 
     private func validate(value: Float, time: Double) throws {
