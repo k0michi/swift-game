@@ -78,3 +78,44 @@ struct FunctionTests {
         #expect(smoothstep(0.0, 1.0, 0.5) == 0.5)
     }
 }
+
+@Suite("Transcendental built-in functions")
+struct TranscendentalFunctionTests {
+    @Test
+    func applyToEachComponent() {
+        let angles = Vector2<Double>(0, .pi / 2)
+        expectClose(sin(angles), Vector2(0, 1))
+        expectClose(cos(angles), Vector2(1, 0))
+        expectClose(tan(Vector2<Double>(0, .pi / 4)), Vector2(0, 1))
+        expectClose(asin(Vector2<Double>(0, 1)), angles)
+        expectClose(acos(Vector2<Double>(1, 0)), angles)
+        expectClose(atan(Vector2<Double>(0, 1)), Vector2(0, .pi / 4))
+        expectClose(atan2(Vector2<Double>(1, -1), Vector2(0, 0)), Vector2(.pi / 2, -.pi / 2))
+        expectClose(sinh(Vector2<Double>(0, 1)), Vector2(0, 1.1752011936438014))
+        expectClose(cosh(Vector2<Double>(0, 1)), Vector2(1, 1.5430806348152437))
+        expectClose(tanh(Vector2<Double>(0, 1)), Vector2(0, 0.7615941559557649))
+        expectClose(asinh(Vector2<Double>(0, 1.1752011936438014)), Vector2(0, 1))
+        expectClose(acosh(Vector2<Double>(1, 1.5430806348152437)), Vector2(0, 1))
+        expectClose(atanh(Vector2<Double>(0, 0.7615941559557649)), Vector2(0, 1))
+        expectClose(exp(Vector2<Double>(0, 1)), Vector2(1, 2.718281828459045))
+        expectClose(exp2(Vector2<Double>(3, -1)), Vector2(8, 0.5))
+        expectClose(log(Vector2<Double>(1, 2.718281828459045)), Vector2(0, 1))
+        expectClose(log2(Vector2<Double>(8, 0.5)), Vector2(3, -1))
+        expectClose(pow(Vector2<Double>(2, 9), Vector2(3, 0.5)), Vector2(8, 3))
+    }
+
+    @Test
+    func takeFloatVectors() {
+        let result = sin(Vector3<Float>(0, .pi / 2, .pi))
+        #expect(all(abs(result - Vector3(0, 1, 0)) < Vector3(repeating: 1e-6)))
+    }
+
+    private func expectClose(
+        _ actual: Vector2<Double>, _ expected: Vector2<Double>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        #expect(
+            all(abs(actual - expected) < Vector2(repeating: 1e-12)),
+            "\(actual) is not close to \(expected)", sourceLocation: sourceLocation)
+    }
+}

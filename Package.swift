@@ -100,12 +100,17 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
+        .package(url: "https://github.com/apple/swift-numerics.git", from: "1.1.0"),
     ] + foundationDependencies,
     targets: [
         .target(name: "Interop"),
-        // Depends on nothing but the standard library, so that it can move to a
-        // package of its own. scripts/generate-vector-math.swift writes most of it.
-        .target(name: "VectorMath"),
+        // Depends on nothing but the standard library and swift-numerics, so that
+        // it can move to a package of its own. scripts/generate-vector-math.swift
+        // writes most of it.
+        .target(
+            name: "VectorMath",
+            dependencies: [.product(name: "RealModule", package: "swift-numerics")]
+        ),
         .target(name: "CEmscripten"),
         .target(name: "MainLoop", dependencies: ["CEmscripten"]),
         .target(name: "CEchoWeb"),
