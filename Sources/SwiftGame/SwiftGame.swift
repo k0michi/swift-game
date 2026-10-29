@@ -22,7 +22,17 @@ struct SwiftGame {
     typealias DefaultExecutorFactory = BrowserExecutorFactory
     #endif
 
+    #if os(macOS)
+    static func main() {
+        runMain(run)
+    }
+    #else
     static func main() async throws {
+        try await run()
+    }
+    #endif
+
+    private static func run() async throws {
         let system = try `init`(flags: [.audio, .video])
 
         var windowFlags: WindowFlags = [.highPixelDensity]

@@ -6,6 +6,7 @@ import CEmscripten
 // next animation frame: the jobs it resumes run inside the
 // requestAnimationFrame callback, so what they draw is in that frame. On the
 // desktop presenting waits for the display, so this only lets other jobs run.
+// On macOS that needs the caller to run under runMain.
 public func nextFrame() async {
     #if os(Emscripten)
     await withUnsafeContinuation { continuation in
