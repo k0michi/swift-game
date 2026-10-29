@@ -16,6 +16,7 @@ final class AudioRenderPlan: @unchecked Sendable {
             parameter: AudioParamTimeline,
             paramSources: [Int]
         )
+        case gain(parameter: AudioParamTimeline, paramSources: [Int])
         case mediaStream(state: MediaStreamRenderState)
         case waveShaper(state: WaveShaperRenderState, curve: [Float]?, oversample: OverSampleType)
     }
@@ -54,7 +55,7 @@ final class AudioRenderPlan: @unchecked Sendable {
                 frameCount: frameCount, channelCount: configuration.outputChannelCount
             )
             switch configuration.processor {
-            case let .constant(_, _, _, sources), let .delay(_, _, sources):
+            case let .constant(_, _, _, sources), let .delay(_, _, sources), let .gain(_, sources):
                 paramInput = sources.isEmpty ? nil : AudioRenderQuantum(channelCapacity: 1, frameCount: frameCount)
             case .passThrough, .mediaStream, .waveShaper:
                 paramInput = nil
@@ -64,7 +65,7 @@ final class AudioRenderPlan: @unchecked Sendable {
         // Whether the output has as many channels as the input, however many.
         private static func outputFollowsInput(_ processor: Processor) -> Bool {
             switch processor {
-            case .delay, .waveShaper: true
+            case .delay, .gain, .waveShaper: true
             case .passThrough, .constant, .mediaStream: false
             }
         }
@@ -114,6 +115,27 @@ final class AudioRenderPlan: @unchecked Sendable {
                 }
             case let .mediaStream(state):
                 state.render(into: slot.output)
+            case let .gain(parameter, paramSources):
+                slot.paramInput?.clear()
+                if let paramInput = slot.paramInput {
+                    for sourceIndex in paramSources {
+                        ChannelMixer.mix(slots[sourceIndex].output, into: paramInput, interpretation: .speakers)
+                    }
+                }
+                guard let input = slot.input else { continue }
+                slot.output.setChannelCount(input.channelCount)
+                for index in 0 ..< input.frameCount {
+                    let modulationIndex = parameter.automationRate == .kRate ? 0 : index
+                    let modulation = slot.paramInput.map { $0.channelData(0)[modulationIndex] } ?? 0
+                    let gain = parameter.computedValue(
+                        at: frame + UInt64(index),
+                        quantumStart: frame,
+                        modulation: modulation
+                    )
+                    for channel in 0 ..< input.channelCount {
+                        slot.output.channelData(channel)[index] = input.channelData(channel)[index] * gain
+                    }
+                }
             case let .waveShaper(state, curve, oversample):
                 if let input = slot.input {
                     state.render(input: input, output: slot.output, curve: curve, oversample: oversample)

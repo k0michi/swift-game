@@ -13,6 +13,7 @@ let tests: [(String, @MainActor () async throws -> Void)] = [
     ("testSuspendAndResume", testSuspendAndResume),
     ("testStateChanges", testStateChanges),
     ("testAudioContext", testAudioContext),
+    ("testGain", testGain),
     ("testWaveShaper", testWaveShaper),
     ("testWaveShaperErrors", testWaveShaperErrors),
 ]
@@ -168,6 +169,42 @@ func testAudioContext() async throws {
     } catch let error as WebAudioError {
         expect(error == .invalidState, "resume after close: \(error)")
     }
+}
+
+@MainActor
+func testGain() async throws {
+    let context = try OfflineAudioContext(numberOfChannels: 1, length: 128, sampleRate: sampleRate)
+    let gain = context.createGain()
+    expect(gain.gain.defaultValue == 1 && gain.gain.automationRate == .aRate, "gain defaults")
+    expect(
+        gain.channelCount == 2 && gain.channelCountMode == .max && gain.channelInterpretation == .speakers,
+        "channel defaults"
+    )
+    expect(.rangeError, "a gain option that is not finite") {
+        _ = try GainNode(context: context, options: GainOptions(gain: .nan))
+    }
+
+    let buffer = try await render(length: 256) { context in
+        let source = context.createConstantSource()
+        let gain = try GainNode(context: context, options: GainOptions(gain: 3))
+        expect(gain.gain.value == 3, "the gain option is applied")
+        // A ramp from 0 to 1 over the first 128 frames, plus 0.5 from a
+        // source connected to the parameter.
+        try gain.gain.setValueAtTime(0, startTime: 0)
+        try gain.gain.linearRampToValueAtTime(1, endTime: 128 / Double(sampleRate))
+        let modulation = context.createConstantSource()
+        modulation.offset.value = 0.5
+        try modulation.connect(gain.gain)
+        try source.connect(gain).connect(context.destination)
+        try source.start()
+        try modulation.start()
+    }
+    var samples = [Float](repeating: 0, count: 256)
+    try buffer.copyFromChannel(&samples, channelNumber: 0)
+    for frame in [0, 64, 96] {
+        expect(isClose(samples[frame], 0.5 + Float(frame) / 128), "gain at \(frame) is \(samples[frame])")
+    }
+    expect(samples[128...].allSatisfy { isClose($0, 1.5) }, "gain after the ramp")
 }
 
 // Renders a constant `input` through a WaveShaperNode set up by `configure`,

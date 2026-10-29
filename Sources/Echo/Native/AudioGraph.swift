@@ -179,6 +179,13 @@ final class AudioGraph {
                     parameter: delayTime.renderTimeline,
                     paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
                 )
+            } else if let node = slot.node as? GainNode {
+                let gain = node.gain
+                let paramSources = slot.paramSources.first { $0.0 === gain }?.1 ?? []
+                processor = .gain(
+                    parameter: gain.renderTimeline,
+                    paramSources: paramSources.map { indices[ObjectIdentifier($0)]! }
+                )
             } else if let shaper = slot.node as? WaveShaperNode {
                 processor = .waveShaper(state: shaper.renderState, curve: shaper.curve, oversample: shaper.oversample)
             } else if let source = slot.node as? MediaStreamAudioSourceNode {
