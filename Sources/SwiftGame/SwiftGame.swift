@@ -73,7 +73,7 @@ struct SwiftGame {
 
         var sound: SoundEffects?
         do {
-            sound = try SoundEffects()
+            sound = try SoundEffects(system: system)
         } catch {
             print("Sound is unavailable: \(error)")
         }
@@ -95,6 +95,9 @@ struct SwiftGame {
         while isRunning {
             var shouldConfigureSurface = false
             while let event = pollEvent() {
+                if (event as? MouseButtonEvent)?.down == true || (event as? KeyboardEvent)?.down == true {
+                    sound?.resume()
+                }
                 switch event {
                 case let event as MouseMotionEvent:
                     game.playerX = min(max(event.x, 0), fieldWidth)
