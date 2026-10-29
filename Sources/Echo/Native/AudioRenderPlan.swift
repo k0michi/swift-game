@@ -65,6 +65,7 @@ final class AudioRenderPlan: @unchecked Sendable {
         let sources: [Int]
         let isMuted: Bool
         let isCycleBreaker: Bool
+        let sounding: SoundingSignal?
         let processor: Processor
     }
 
@@ -288,6 +289,11 @@ final class AudioRenderPlan: @unchecked Sendable {
                                  interpretation: slot.configuration.interpretation)
             }
             state.write(input: input, frame: frame)
+        }
+
+        // Once every input, a cycle breaker's too, is mixed.
+        for slot in slots {
+            slot.configuration.sounding?.update(input: slot.input, output: slot.output)
         }
 
         let destination = slots[destinationIndex].output

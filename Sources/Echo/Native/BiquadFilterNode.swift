@@ -43,6 +43,9 @@ public final class BiquadFilterNode: AudioNode {
     )
 
     let renderState = BiquadRenderState(channelCapacity: Int(AudioBuffer.maximumNumberOfChannels))
+    // An IIR filter's tail-time: it rings on after its input stops.
+    private let sounding = SoundingSignal()
+    override var soundingSignal: SoundingSignal? { sounding }
 
     public init(context: BaseAudioContext, options: BiquadFilterOptions = BiquadFilterOptions()) throws {
         guard (1 ... AudioBuffer.maximumNumberOfChannels).contains(options.channelCount ?? 2) else {

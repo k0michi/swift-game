@@ -22,6 +22,8 @@ public final class MediaStreamAudioSourceNode: AudioNode {
             channelCountMode: .max,
             channelInterpretation: .speakers
         )
+        // It plays while its track is live, whoever keeps it.
+        context.keep(self)
     }
 }
 

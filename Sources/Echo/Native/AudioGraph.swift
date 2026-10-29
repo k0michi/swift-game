@@ -1,19 +1,63 @@
 // Echo renders the audio itself, except in the browser, where Web/ hands it
 // to the browser's Web Audio.
 #if !os(Emscripten)
+// The connections between a context's nodes. They keep neither end: the
+// context keeps what sounds or may sound, the caller keeps what it uses, and
+// a connection whose end has gone goes too.
 @MainActor
 final class AudioGraph {
     private struct Connection {
-        let source: AudioNode
-        let destination: AudioNode
+        // A connection from or to the destination is from or to the
+        // context's output, which outlives any one destination node.
+        weak var source: AudioNode?
+        let fromOutput: Bool
+        weak var destination: AudioNode?
+        let toOutput: Bool
         let output: UInt32
         let input: UInt32
+
+        init(source: AudioNode, destination: AudioNode, output: UInt32, input: UInt32) {
+            fromOutput = source is AudioDestinationNode
+            toOutput = destination is AudioDestinationNode
+            self.source = fromOutput ? nil : source
+            self.destination = toOutput ? nil : destination
+            self.output = output
+            self.input = input
+        }
+
+        var isLive: Bool { (fromOutput || source != nil) && (toOutput || destination != nil) }
+
+        func comes(from node: AudioNode) -> Bool {
+            node is AudioDestinationNode ? fromOutput : source === node
+        }
+
+        func leads(to node: AudioNode) -> Bool {
+            node is AudioDestinationNode ? toOutput : destination === node
+        }
     }
 
     private struct ParamConnection {
-        let source: AudioNode
-        let destination: AudioParam
+        weak var source: AudioNode?
+        let fromOutput: Bool
+        weak var destination: AudioParam?
+        // The parameter's node.
+        weak var owner: AudioNode?
         let output: UInt32
+
+        @MainActor
+        init(source: AudioNode, destination: AudioParam, output: UInt32) {
+            fromOutput = source is AudioDestinationNode
+            self.source = fromOutput ? nil : source
+            self.destination = destination
+            owner = destination.owner
+            self.output = output
+        }
+
+        var isLive: Bool { (fromOutput || source != nil) && destination != nil && owner != nil }
+
+        func comes(from node: AudioNode) -> Bool {
+            node is AudioDestinationNode ? fromOutput : source === node
+        }
     }
 
     @MainActor
@@ -38,57 +82,82 @@ final class AudioGraph {
 
     private var connections: [Connection] = []
     private var paramConnections: [ParamConnection] = []
-    private var orderedSlots: [RenderSlot] = []
-    private var needsPreparation = true
+    // The destination node a plan is being made for, which stands for the
+    // context's output.
+    private weak var output: AudioDestinationNode?
 
-    func invalidate() { needsPreparation = true }
+    var connectionCount: Int { connections.count + paramConnections.count }
 
     func connect(_ source: AudioNode, to destination: AudioNode, output: UInt32, input: UInt32) throws {
         if connections.contains(where: {
-            $0.source === source && $0.destination === destination && $0.output == output && $0.input == input
+            $0.comes(from: source) && $0.leads(to: destination) && $0.output == output && $0.input == input
         }) { return }
         connections.append(Connection(source: source, destination: destination, output: output, input: input))
-        needsPreparation = true
     }
 
     func connect(_ source: AudioNode, to destination: AudioParam, output: UInt32) {
         guard !paramConnections.contains(where: {
-            $0.source === source && $0.destination === destination && $0.output == output
+            $0.comes(from: source) && $0.destination === destination && $0.output == output
         }) else { return }
         paramConnections.append(ParamConnection(source: source, destination: destination, output: output))
-        needsPreparation = true
     }
 
     func disconnect(_ source: AudioNode) {
-        connections.removeAll { $0.source === source }
-        paramConnections.removeAll { $0.source === source }
-        needsPreparation = true
+        connections.removeAll { $0.comes(from: source) }
+        paramConnections.removeAll { $0.comes(from: source) }
     }
 
     func disconnect(_ source: AudioNode, output: UInt32) {
-        connections.removeAll { $0.source === source && $0.output == output }
-        paramConnections.removeAll { $0.source === source && $0.output == output }
-        needsPreparation = true
+        connections.removeAll { $0.comes(from: source) && $0.output == output }
+        paramConnections.removeAll { $0.comes(from: source) && $0.output == output }
     }
 
     @discardableResult
     func disconnect(_ source: AudioNode, from destination: AudioNode) -> Bool {
         let originalCount = connections.count
-        connections.removeAll { $0.source === source && $0.destination === destination }
-        needsPreparation = true
+        connections.removeAll { $0.comes(from: source) && $0.leads(to: destination) }
         return connections.count != originalCount
     }
 
     @discardableResult
     func disconnect(_ source: AudioNode, from destination: AudioParam) -> Bool {
         let originalCount = paramConnections.count
-        paramConnections.removeAll { $0.source === source && $0.destination === destination }
-        needsPreparation = true
+        paramConnections.removeAll { $0.comes(from: source) && $0.destination === destination }
         return paramConnections.count != originalCount
     }
 
-    private func prepare(destination: AudioDestinationNode) {
-        guard needsPreparation else { return }
+    // Removes the connections one of whose ends has gone. Returns whether
+    // any went.
+    func removeDeadConnections() -> Bool {
+        let count = connectionCount
+        connections.removeAll { !$0.isLive }
+        paramConnections.removeAll { !$0.isLive }
+        return connectionCount != count
+    }
+
+    // The nodes that `roots` lead to, through connections to nodes and to
+    // parameters, without the roots unless one leads to another. The
+    // context's output is not one.
+    func nodes(downstreamOf roots: [AudioNode]) -> [AudioNode] {
+        var reached: [ObjectIdentifier: AudioNode] = [:]
+        var pending = roots
+        while let node = pending.popLast() {
+            let next = connections.compactMap { $0.comes(from: node) ? $0.destination : nil }
+                + paramConnections.compactMap { $0.comes(from: node) ? $0.owner : nil }
+            for node in next where reached.updateValue(node, forKey: ObjectIdentifier(node)) == nil {
+                pending.append(node)
+            }
+        }
+        return Array(reached.values)
+    }
+
+    // The nodes that render, sources first, each with what it is connected
+    // from. Made again for each plan, as keeping them would keep the nodes;
+    // the caller clears what each is connected from once done, as a cycle
+    // would otherwise keep them anyway.
+    private func prepare(destination: AudioDestinationNode) -> [RenderSlot] {
+        output = destination
+        defer { output = nil }
         var slots: [ObjectIdentifier: RenderSlot] = [:]
         var order: [RenderSlot] = []
 
@@ -97,11 +166,14 @@ final class AudioGraph {
             if let slot = slots[identifier] { return slot }
             let slot = RenderSlot(node: node)
             slots[identifier] = slot
-            for connection in connections where connection.destination === node {
-                slot.sources.append(visit(connection.source))
+            for connection in connections where connection.leads(to: node) {
+                if let source = connection.fromOutput ? output : connection.source {
+                    slot.sources.append(visit(source))
+                }
             }
             for param in node.audioParams {
-                let sources = paramConnections.filter { $0.destination === param }.map { visit($0.source) }
+                let sources = paramConnections.filter { $0.destination === param }
+                    .compactMap { $0.fromOutput ? output : $0.source }.map(visit)
                 if !sources.isEmpty {
                     slot.paramSources.append((param, sources))
                 }
@@ -150,12 +222,17 @@ final class AudioGraph {
             }
             slot.isCycleBreaker = cycleBreakers.contains(ObjectIdentifier(slot.node)) && !slot.isMuted
         }
-        orderedSlots = ordered
-        needsPreparation = false
+        return ordered
     }
 
     func makeRenderPlan(destination: AudioDestinationNode, frameCount: Int) throws -> AudioRenderPlan {
-        prepare(destination: destination)
+        let orderedSlots = prepare(destination: destination)
+        defer {
+            for slot in orderedSlots {
+                slot.sources = []
+                slot.paramSources = []
+            }
+        }
         let indices = Dictionary(uniqueKeysWithValues: orderedSlots.enumerated().map {
             (ObjectIdentifier($0.element), $0.offset)
         })
@@ -260,6 +337,7 @@ final class AudioGraph {
                 sources: slot.sources.map { indices[ObjectIdentifier($0)]! },
                 isMuted: slot.isMuted,
                 isCycleBreaker: slot.isCycleBreaker,
+                sounding: slot.node.soundingSignal,
                 processor: processor
             )
         }
@@ -289,10 +367,14 @@ final class AudioGraph {
         from node: AudioNode,
         ignoringInputsOf cycleBreakers: Set<ObjectIdentifier>
     ) -> [AudioNode] {
-        connections.filter {
-            $0.source === node && !cycleBreakers.contains(ObjectIdentifier($0.destination))
-        }.map(\.destination)
-            + paramConnections.compactMap { $0.source === node ? $0.destination.owner : nil }
+        connections.compactMap { connection -> AudioNode? in
+            guard connection.comes(from: node),
+                  let destination = connection.toOutput ? output : connection.destination,
+                  !cycleBreakers.contains(ObjectIdentifier(destination))
+            else { return nil }
+            return destination
+        }
+            + paramConnections.compactMap { $0.comes(from: node) ? $0.owner : nil }
     }
 
 }

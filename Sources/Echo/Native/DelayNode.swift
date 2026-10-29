@@ -13,6 +13,10 @@ public final class DelayNode: AudioNode {
 
     public let maxDelayTime: Double
     let renderState: DelayRenderState
+    // A delay's tail-time: what it holds plays out after its input stops,
+    // for up to its longest delay.
+    private let sounding: SoundingSignal
+    override var soundingSignal: SoundingSignal? { sounding }
 
     public init(context: BaseAudioContext, options: DelayOptions = DelayOptions()) throws {
         guard options.maxDelayTime.isFinite,
@@ -26,6 +30,7 @@ public final class DelayNode: AudioNode {
             throw WebAudioError.notSupported
         }
         maxDelayTime = options.maxDelayTime
+        sounding = SoundingSignal(tailFrames: Int((options.maxDelayTime * Double(context.sampleRate)).rounded(.up)))
         renderState = DelayRenderState(
             maxDelayTime: options.maxDelayTime,
             sampleRate: context.sampleRate,

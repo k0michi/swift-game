@@ -36,19 +36,16 @@ public class AudioNode {
         }
 
         self.channelCount = channelCount
-        graph.invalidate()
         context.graphDidChange()
     }
 
     public func setChannelCountMode(_ channelCountMode: ChannelCountMode) throws {
         self.channelCountMode = channelCountMode
-        graph.invalidate()
         context.graphDidChange()
     }
 
     public func setChannelInterpretation(_ channelInterpretation: ChannelInterpretation) {
         self.channelInterpretation = channelInterpretation
-        graph.invalidate()
         context.graphDidChange()
     }
 
@@ -59,6 +56,8 @@ public class AudioNode {
             throw WebAudioError.indexSize
         }
         try graph.connect(self, to: destinationNode, output: output, input: input)
+        context.hold(self)
+        context.hold(destinationNode)
         context.graphDidChange()
         return destinationNode
     }
@@ -81,10 +80,18 @@ public class AudioNode {
 
     var audioParams: [AudioParam] { [] }
 
+    // For a node with a tail-time, whether it still sounds, which keeps it
+    // while nothing else does.
+    var soundingSignal: SoundingSignal? { nil }
+
     public func connect(_ destinationParam: AudioParam, output: UInt32 = 0) throws {
         guard context === destinationParam.context else { throw WebAudioError.invalidAccess }
         guard output < numberOfOutputs else { throw WebAudioError.indexSize }
         graph.connect(self, to: destinationParam, output: output)
+        context.hold(self)
+        if let owner = destinationParam.owner {
+            context.hold(owner)
+        }
         context.graphDidChange()
     }
 
