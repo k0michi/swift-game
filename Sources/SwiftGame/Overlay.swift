@@ -71,22 +71,28 @@ struct FPSCounter {
         milliseconds = 0
     }
 
-    // Draws the FPS in the top-left corner with the dot font, over a dark
-    // backdrop and with a shadow so it stays readable on any background.
+    // Draws the FPS in the top-left corner with the dot font, and what was
+    // built in smaller dots under it, over a dark backdrop and with a
+    // shadow so they stay readable on any background.
     func append(to batch: inout Batch) {
-        let scale: Float = 2
+        let lines: [(text: String, scale: Float)] = [(text, 2), (BuildInfo.version, 1)]
         let padding: Float = 4
+        let lineSpacing: Float = 3
 
+        let width = lines.map { BitmapFont.width(of: $0.text, scale: $0.scale) }.max() ?? 0
+        let height = lines.map { Float(BitmapFont.glyphHeight) * $0.scale }.reduce(0, +)
+            + lineSpacing * Float(lines.count - 1)
         batch.appendRect(
-            left: 0, top: 0,
-            right: BitmapFont.width(of: text, scale: scale) + padding * 2,
-            bottom: Float(BitmapFont.glyphHeight) * scale + padding * 2,
+            left: 0, top: 0, right: width + padding * 2, bottom: height + padding * 2,
             color: RGBA(r: 0, g: 0, b: 0, a: 0.45))
-        BitmapFont.appendText(
-            text, x: padding + scale / 2, y: padding + scale / 2, scale: scale,
-            color: RGBA(r: 0, g: 0, b: 0, a: 0.8), to: &batch)
-        BitmapFont.appendText(
-            text, x: padding, y: padding, scale: scale, color: RGBA(r: 1, g: 1, b: 1, a: 1),
-            to: &batch)
+        var top = padding
+        for (text, scale) in lines {
+            BitmapFont.appendText(
+                text, x: padding + scale / 2, y: top + scale / 2, scale: scale,
+                color: RGBA(r: 0, g: 0, b: 0, a: 0.8), to: &batch)
+            BitmapFont.appendText(
+                text, x: padding, y: top, scale: scale, color: RGBA(r: 1, g: 1, b: 1, a: 1), to: &batch)
+            top += Float(BitmapFont.glyphHeight) * scale + lineSpacing
+        }
     }
 }

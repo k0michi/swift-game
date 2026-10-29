@@ -25,6 +25,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        # All of the history and tags, for the build to describe itself.
+        with:
+          fetch-depth: 0
 
       - uses: ./.github/actions/setup-swift
         with:
@@ -188,6 +191,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        # All of the history and tags, for the build to describe itself.
+        with:
+          fetch-depth: 0
 
       # The SDK's modules work only with the compiler of the same snapshot.
       - name: Install the Swift snapshot

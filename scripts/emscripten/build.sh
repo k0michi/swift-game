@@ -10,6 +10,7 @@ set -eu
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 configuration=${1:-debug}
 
+"$script_directory/../generate-build-info.sh"
 "$script_directory/fetch-foundation.sh"
 "$script_directory/build-sdl.sh"
 "$script_directory/build-dawn.sh"

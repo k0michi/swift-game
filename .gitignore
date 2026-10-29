@@ -8,3 +8,5 @@ Package.resolved
 xcuserdata/
 node_modules/
 _*
+# Written by scripts/generate-build-info.sh before each build.
+Sources/CBuildInfo/BuildInfo.generated.h

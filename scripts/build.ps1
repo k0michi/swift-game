@@ -2,6 +2,9 @@ $ErrorActionPreference = "Stop"
 
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
 
+& (Join-Path $PSScriptRoot "generate-build-info.ps1")
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 & (Join-Path $PSScriptRoot "build-sdl.ps1")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

@@ -112,6 +112,8 @@ let package = Package(
             dependencies: [.product(name: "RealModule", package: "swift-numerics")]
         ),
         .target(name: "CEmscripten"),
+        // What was built, from scripts/generate-build-info.sh.
+        .target(name: "CBuildInfo"),
         .target(name: "MainLoop", dependencies: ["CEmscripten"]),
         .target(name: "CEchoWeb"),
         .target(
@@ -163,7 +165,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "SwiftGame",
-            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop"] + foundation,
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "CBuildInfo"] + foundation,
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
             ] + customExecutorSettings
