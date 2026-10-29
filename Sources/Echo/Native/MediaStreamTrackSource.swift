@@ -12,9 +12,12 @@ final class MediaStreamTrackSource: @unchecked Sendable {
 
     private let capacity = 16_384
     private let samples: UnsafeMutableBufferPointer<Float>
+    // Serializes the writers and the tracks' lifetimes, never the rendering
+    // thread, which reads the samples up to writtenFrames.
     private let lock = NSLock()
     private let onStop: @Sendable () -> Void
-    private var writtenFrames: UInt64 = 0
+    // Stored once the samples before it are written.
+    private let writtenFrames = ManagedAtomic<UInt64>(0)
     private var liveTracks = 1
     private var captureStopped = false
 
@@ -68,23 +71,24 @@ final class MediaStreamTrackSource: @unchecked Sendable {
         defer { lock.unlock() }
         let channels = Int(channelCount)
         let frames = input.count / channels
+        let written = writtenFrames.load(ordering: .relaxed)
         for frame in 0 ..< frames {
-            let destination = Int((writtenFrames + UInt64(frame)) % UInt64(capacity)) * channels
+            let destination = Int((written + UInt64(frame)) % UInt64(capacity)) * channels
             let source = frame * channels
             for channel in 0 ..< channels {
                 samples[destination + channel] = input[source + channel]
             }
         }
-        writtenFrames += UInt64(frames)
+        writtenFrames.store(written + UInt64(frames), ordering: .releasing)
         return frames
     }
 
     func currentFrame() -> UInt64 {
-        lock.lock()
-        defer { lock.unlock() }
-        return writtenFrames
+        writtenFrames.load(ordering: .acquiring)
     }
 
+    // A reader a whole ring behind the writer may read samples as they are
+    // overwritten, which only garbles audio already lost to the overrun.
     func render(
         into output: AudioRenderQuantum,
         cursor: inout Double,
@@ -92,8 +96,7 @@ final class MediaStreamTrackSource: @unchecked Sendable {
         silent: Bool
     ) {
         output.setChannelCount(Int(channelCount))
-        lock.lock()
-        defer { lock.unlock() }
+        let writtenFrames = currentFrame()
         let oldestFrame = writtenFrames > UInt64(capacity) ? writtenFrames - UInt64(capacity) : 0
         cursor = max(cursor, Double(oldestFrame))
         let increment = Double(sampleRate) / Double(outputSampleRate)
