@@ -1,6 +1,7 @@
-// Runs EchoBrowserTests in headless Chromium for scripts/emscripten/test-browser.sh.
+// Runs a page of browser tests, EchoBrowserTests or FetchBrowserTests, in
+// headless Chromium for scripts/emscripten/test-browser.sh.
 //
-// Usage: node runner.js <directory with EchoBrowserTests.html>
+// Usage: node runner.js <directory with the page> [page, EchoBrowserTests.html by default]
 //
 // The page prints its results to the console and ends with "All tests passed"
 // or "<n> test(s) failed". Audio is muted, and audio contexts may start
@@ -12,6 +13,7 @@ import { extname, join } from 'node:path';
 import { chromium } from 'playwright';
 
 const root = process.argv[2];
+const testPage = process.argv[3] ?? 'EchoBrowserTests.html';
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm' };
 const server = createServer(async (request, response) => {
   try {
@@ -52,7 +54,7 @@ const timeout = new Promise((resolve) => setTimeout(() => {
   resolve();
 }, 30_000));
 
-await page.goto(`http://127.0.0.1:${server.address().port}/EchoBrowserTests.html`);
+await page.goto(`http://127.0.0.1:${server.address().port}/${testPage}`);
 await Promise.race([finished, timeout]);
 await browser.close();
 server.close();

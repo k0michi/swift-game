@@ -230,6 +230,14 @@ let package = Package(
             exclude: ["package.json", "package-lock.json", "node_modules", "runner.js"],
             swiftSettings: customExecutorSettings
         ),
+        // Fetch on the browser's fetch, run in headless Chromium by
+        // scripts/emscripten/test-browser.sh.
+        .executableTarget(
+            name: "FetchBrowserTests",
+            dependencies: ["Fetch", "MainLoop"],
+            path: "Tests/FetchBrowserTests",
+            swiftSettings: customExecutorSettings
+        ),
         .testTarget(
             name: "DawnTests",
             dependencies: ["Dawn", "Interop"],
