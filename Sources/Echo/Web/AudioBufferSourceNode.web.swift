@@ -25,8 +25,6 @@ public final class AudioBufferSourceNode: AudioScheduledSourceNode {
     // makes.
     private var bufferSet = false
     private var started = false
-    // The browser's copy of `buffer`.
-    private var browserBuffer: JSObjectReference?
 
     public init(context: BaseAudioContext, options: AudioBufferSourceOptions = AudioBufferSourceOptions()) throws {
         try options.validate()
@@ -53,17 +51,9 @@ public final class AudioBufferSourceNode: AudioScheduledSourceNode {
             bufferSet = true
         }
         self.buffer = buffer
-        browserBuffer = try buffer.map { buffer in
-            try JSObjectReference.new("AudioBuffer", options: [
-                ("numberOfChannels", .number(Double(buffer.numberOfChannels))),
-                ("length", .number(Double(buffer.length))),
-                ("sampleRate", .number(Double(buffer.sampleRate))),
-            ])
-        }
-        if started {
+        if started || buffer == nil {
             try acquireContent()
         }
-        try object.set("buffer", object: browserBuffer)
     }
 
     public override func start(_ when: Double = 0) throws {
@@ -80,14 +70,26 @@ public final class AudioBufferSourceNode: AudioScheduledSourceNode {
         keepUntilEnded()
     }
 
-    // Copies the buffer's samples into the browser's copy.
+    // Gives the browser a copy of the buffer's samples as they are now. The
+    // copy is filled before the node gets it, as Firefox takes a buffer's
+    // samples when it is assigned, and would play a buffer filled later as
+    // silence.
     private func acquireContent() throws {
-        guard let buffer, let browserBuffer else { return }
+        guard let buffer else {
+            try object.set("buffer", object: nil)
+            return
+        }
+        let browserBuffer = try JSObjectReference.new("AudioBuffer", options: [
+            ("numberOfChannels", .number(Double(buffer.numberOfChannels))),
+            ("length", .number(Double(buffer.length))),
+            ("sampleRate", .number(Double(buffer.sampleRate))),
+        ])
         for channel in 0 ..< buffer.numberOfChannels {
             var samples = [Float](repeating: 0, count: Int(buffer.length))
             try buffer.copyFromChannel(&samples, channelNumber: channel)
             try browserBuffer.call("copyToChannel", floats: samples, [Double(channel)])
         }
+        try object.set("buffer", object: browserBuffer)
     }
 }
 #endif
