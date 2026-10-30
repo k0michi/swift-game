@@ -93,6 +93,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "swift-game", targets: ["SwiftGame"]),
+        .executable(name: "shooter", targets: ["Shooter"]),
         .library(name: "GameToolkit", targets: ["GameToolkit"]),
         .library(name: "SDL3", targets: ["SDL3"]),
         .library(name: "Dawn", targets: ["Dawn"]),
@@ -180,6 +181,15 @@ let package = Package(
         ),
         .executableTarget(
             name: "SwiftGame",
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit"]
+                + foundation,
+            swiftSettings: [
+                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
+            ] + customExecutorSettings
+        ),
+        // A 3D shooting game, made of plain shapes.
+        .executableTarget(
+            name: "Shooter",
             dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit"]
                 + foundation,
             swiftSettings: [
