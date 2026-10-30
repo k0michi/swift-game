@@ -48,14 +48,14 @@ jobs:
             libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
           sudo apt-get install --yes libx11-xcb-dev patchelf
 
-      # Only SDL and Dawn, which take long to build, from what only the CMake
+      # Only SDL, Dawn and stb, which CMake builds, from what only the CMake
       # files and their build scripts choose. The Swift code builds quickly.
       - name: Restore the dependencies
         id: dependencies-cache
         uses: actions/cache/restore@v6
         with:
           path: .build/dependencies
-          key: dependencies-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/build-sdl.*', 'scripts/build-dawn.*') }}
+          key: dependencies-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/build-sdl.*', 'scripts/build-dawn.*', 'scripts/build-stb.*') }}
           restore-keys: |
             dependencies-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-
 
@@ -245,7 +245,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .build/dependencies/emscripten
-          key: dependencies-v${{ env.BUILD_CACHE_VERSION }}-web-${{ env.SWIFT_SNAPSHOT }}-emsdk-${{ env.EMSDK_VERSION }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/emscripten/build-sdl.sh', 'scripts/emscripten/build-dawn.sh') }}
+          key: dependencies-v${{ env.BUILD_CACHE_VERSION }}-web-${{ env.SWIFT_SNAPSHOT }}-emsdk-${{ env.EMSDK_VERSION }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/emscripten/build-sdl.sh', 'scripts/emscripten/build-dawn.sh', 'scripts/emscripten/build-stb.sh') }}
           restore-keys: |
             dependencies-v${{ env.BUILD_CACHE_VERSION }}-web-${{ env.SWIFT_SNAPSHOT }}-emsdk-${{ env.EMSDK_VERSION }}-
 

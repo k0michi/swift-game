@@ -11,6 +11,7 @@ tests_directory="$repository_root/Tests/EchoBrowserTests"
 
 "$script_directory/build-sdl.sh"
 "$script_directory/build-dawn.sh"
+"$script_directory/build-stb.sh"
 "$script_directory/swift-build.sh" --target EchoBrowserTests
 "$script_directory/link.sh" EchoBrowserTests
 
