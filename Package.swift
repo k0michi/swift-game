@@ -81,6 +81,7 @@ let stbSwiftCompilerFlags = stbCompilerFlags.flatMap { ["-Xcc", $0] }
 // The paths of the static libraries.
 let stbImageLinkerFlags = readStbFlags(named: "stb_image-linker")
 let stbImageWriteLinkerFlags = readStbFlags(named: "stb_image_write-linker")
+let stbVorbisLinkerFlags = readStbFlags(named: "stb_vorbis-linker")
 
 // Echo plays through SDL3 on the desktop, and through the browser's Web Audio
 // on the web.
@@ -114,6 +115,7 @@ let package = Package(
         .library(name: "VectorMath", targets: ["VectorMath"]),
         .library(name: "StbImage", targets: ["StbImage"]),
         .library(name: "StbImageWrite", targets: ["StbImageWrite"]),
+        .library(name: "StbVorbis", targets: ["StbVorbis"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
@@ -163,8 +165,8 @@ let package = Package(
                 .linkedLibrary("c++", .when(platforms: [.macOS])),
             ]
         ),
-        // stb_image and stb_image_write, each on its own, built by
-        // scripts/build-stb.sh.
+        // stb_image, stb_image_write and stb_vorbis, each on its own, built
+        // by scripts/build-stb.sh.
         .target(
             name: "CStbImage",
             cSettings: [.unsafeFlags(stbCompilerFlags)],
@@ -183,6 +185,16 @@ let package = Package(
         .target(
             name: "StbImageWrite",
             dependencies: ["CStbImageWrite"],
+            swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
+        ),
+        .target(
+            name: "CStbVorbis",
+            cSettings: [.unsafeFlags(stbCompilerFlags)],
+            linkerSettings: [.unsafeFlags(stbVorbisLinkerFlags)]
+        ),
+        .target(
+            name: "StbVorbis",
+            dependencies: ["CStbVorbis"],
             swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
         ),
         .target(
@@ -261,7 +273,8 @@ let package = Package(
         ),
         .testTarget(
             name: "StbTests",
-            dependencies: ["StbImage", "StbImageWrite"],
+            dependencies: ["StbImage", "StbImageWrite", "StbVorbis"],
+            resources: [.copy("Resources")],
             swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
         ),
         .testTarget(
