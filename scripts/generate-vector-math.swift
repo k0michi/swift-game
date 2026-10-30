@@ -99,7 +99,7 @@ final class Source {
 /// Operators that apply `expression` to each pair of components, between two
 /// vectors and between a vector and a scalar on either side.
 func componentwiseOperators(
-    _ source: Source, size: Int, _ operation: String,
+    _ source: Source, size: Int, _ operation: String, construct: String = "Self(",
     _ expression: @escaping (String, String) -> String
 ) {
     let forms = [
@@ -110,7 +110,7 @@ func componentwiseOperators(
     for (parameters, component) in forms {
         source.inlinable(
             "public static func \(operation) (\(parameters)) -> Self",
-            "Self(\(each(size, component)))")
+            "\(construct)\(each(size, component)))")
     }
     for rhs in ["Self", "Scalar"] {
         source.inlinable(
@@ -919,6 +919,107 @@ func writeLaplaceExpansion(_ source: Source) {
     }
 }
 
+
+// MARK: - Concrete scalars
+
+/// Overloads for `scalar` of what games call most, which a caller with
+/// concrete types prefers over the generic ones as more specific. Without
+/// optimization, as in debug builds, the generic ones look up their
+/// scalar's type and witnesses on every call, and take several times as long.
+func generateConcrete(_ source: Source, size: Int, scalar: String) {
+    let name = "Vector\(size)"
+    let components = Array(componentNames.prefix(size))
+    source.line()
+    source.block("extension \(name) where Scalar == \(scalar)") {
+        // Not public, so that what literals and unannotated calls infer
+        // stays as the generic initializers have it.
+        source.line()
+        source.line("@usableFromInline")
+        source.block(
+            "init(concrete x: \(scalar), \(components.dropFirst().map { "_ \($0): \(scalar)" }.joined(separator: ", ")))"
+        ) {
+            source.line(components.map { "self.\($0) = \($0)" }.joined(separator: "\n"))
+        }
+        for operation in ["+", "-", "*", "/"] {
+            componentwiseOperators(source, size: size, operation, construct: "Self(concrete: ") {
+                "\($0) \(operation) \($1)"
+            }
+        }
+        source.inlinable(
+            "public static prefix func - (operand: Self) -> Self",
+            "Self(concrete: \(each(size) { "-operand.\($0)" }))")
+    }
+
+    let vector = "\(name)<\(scalar)>"
+    source.inlinable(
+        "public func dot(_ e1: \(vector), _ e2: \(vector)) -> \(scalar)",
+        each(size, separator: " + ") { "e1.\($0) * e2.\($0)" })
+    source.inlinable(
+        "public func length(_ e: \(vector)) -> \(scalar)",
+        "(\(each(size, separator: " + ") { "e.\($0) * e.\($0)" })).squareRoot()")
+    source.inlinable(
+        "public func distance(_ e1: \(vector), _ e2: \(vector)) -> \(scalar)",
+        "length(e1 - e2)")
+    source.inlinable(
+        "public func normalize(_ e: \(vector)) -> \(vector)",
+        "e / length(e)")
+    source.inlinable(
+        "public func mix(_ e1: \(vector), _ e2: \(vector), _ e3: \(scalar)) -> \(vector)",
+        "\(vector)(concrete: \(each(size) { "e1.\($0) + (e2.\($0) - e1.\($0)) * e3" }))")
+    source.inlinable(
+        "public func min(_ e1: \(vector), _ e2: \(vector)) -> \(vector)",
+        "\(vector)(concrete: \(each(size) { "Swift.min(e1.\($0), e2.\($0))" }))")
+    source.inlinable(
+        "public func max(_ e1: \(vector), _ e2: \(vector)) -> \(vector)",
+        "\(vector)(concrete: \(each(size) { "Swift.max(e1.\($0), e2.\($0))" }))")
+    source.inlinable(
+        "public func clamp(_ e: \(vector), _ low: \(vector), _ high: \(vector)) -> \(vector)",
+        "\(vector)(concrete: \(each(size) { "Swift.min(Swift.max(e.\($0), low.\($0)), high.\($0))" }))")
+    source.inlinable(
+        "public func abs(_ e: \(vector)) -> \(vector)",
+        "\(vector)(concrete: \(each(size) { "Swift.abs(e.\($0))" }))")
+    if size == 3 {
+        source.inlinable(
+            "public func cross(_ e1: \(vector), _ e2: \(vector)) -> \(vector)",
+            "\(vector)(concrete: e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x)")
+    }
+
+    // The products of square matrices, with vectors and with each other.
+    let matrix = "Matrix\(size)x\(size)"
+    let columns = (0..<size).map { "column\($0)" }
+    source.line()
+    source.block("extension \(matrix) where Scalar == \(scalar)") {
+        source.line()
+        source.line("@usableFromInline")
+        source.block(
+            "init(concrete column0: \(vector), \(columns.dropFirst().map { "_ \($0): \(vector)" }.joined(separator: ", ")))"
+        ) {
+            source.line("self.columns = (\(columns.joined(separator: ", ")))")
+        }
+        let terms = { (component: String) in
+            (0..<size).map { "lhs.columns.\($0).\(component) * rhs.\(componentNames[$0])" }.joined(separator: " + ")
+        }
+        source.inlinable(
+            "public static func * (lhs: Self, rhs: \(vector)) -> \(vector)",
+            "\(vector)(concrete: \(components.map(terms).joined(separator: ", ")))")
+        source.inlinable(
+            "public static func * (lhs: Self, rhs: Self) -> Self",
+            "Self(concrete: \((0..<size).map { "lhs * rhs.columns.\($0)" }.joined(separator: ", ")))")
+    }
+}
+
+func generateConcrete(_ size: Int) -> String {
+    let source = Source()
+    source.line()
+    source.line("// Vector\(size) and Matrix\(size)x\(size) for Float and Double, which callers with")
+    source.line("// these scalars use in place of the generic versions; see generateConcrete in")
+    source.line("// the script.")
+    for scalar in ["Float", "Double"] {
+        generateConcrete(source, size: size, scalar: scalar)
+    }
+    return source.text
+}
+
 // MARK: - Output
 
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -928,6 +1029,7 @@ var files: [String: String] = [:]
 for size in sizes {
     files["Vector\(size).swift"] = generateVector(size)
     files["Vector\(size)+Swizzles.swift"] = generateSwizzles(size)
+    files["Vector\(size)+Concrete.swift"] = generateConcrete(size)
 }
 for columns in sizes {
     for rows in sizes {

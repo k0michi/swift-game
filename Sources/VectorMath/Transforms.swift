@@ -74,11 +74,11 @@ extension Matrix4x4 where Scalar: Real {
         let c = cos(angle)
         let s = sin(angle)
         let t: Scalar = 1 - c
-        return Self(
-            Vector4(t * x * x + c, t * x * y + s * z, t * x * z - s * y, 0),
-            Vector4(t * x * y - s * z, t * y * y + c, t * y * z + s * x, 0),
-            Vector4(t * x * z + s * y, t * y * z - s * x, t * z * z + c, 0),
-            Vector4(0, 0, 0, 1))
+        // Each column on a line of its own, typed, for the type checker.
+        let column0 = Vector4<Scalar>(t * x * x + c, t * x * y + s * z, t * x * z - s * y, 0)
+        let column1 = Vector4<Scalar>(t * x * y - s * z, t * y * y + c, t * y * z + s * x, 0)
+        let column2 = Vector4<Scalar>(t * x * z + s * y, t * y * z - s * x, t * z * z + c, 0)
+        return Self(column0, column1, column2, Vector4(0, 0, 0, 1))
     }
 
     /// The perspective projection with the vertical field of view `fovY`, for a
