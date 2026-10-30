@@ -114,9 +114,20 @@ jobs:
         shell: pwsh
         run: ./scripts/test.ps1
 
-      # The debug builds of both games, which the steps above made. SDL and
-      # Dawn are linked statically, so the games need at most the Swift
-      # runtime beside them:
+      # After the tests, which use the debug builds, optimized builds of both
+      # games to package.
+      - name: Build the games (release)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./scripts/build.sh -c release
+
+      - name: Build the games (release)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build.ps1 -c release
+
+      # The release builds of both games. SDL and Dawn are linked statically,
+      # so the games need at most the Swift runtime beside them:
       # macOS has its own, Linux gets the toolchain's in lib, found through
       # the executable's run path, and Windows gets it and the Visual C++
       # runtime beside the executable. macOS and Linux are archived with tar,
@@ -129,7 +140,7 @@ jobs:
           package="$RUNNER_TEMP/$name"
           mkdir -p "$package"
           for game in swift-game shooter; do
-            cp "$(swift build --show-bin-path)/$game" "$package/"
+            cp "$(swift build -c release --show-bin-path)/$game" "$package/"
             if [ "$RUNNER_OS" = Linux ]; then
               mkdir -p "$package/lib"
               ldd "$package/$game" |
@@ -148,7 +159,7 @@ jobs:
         run: |
           $package = Join-Path $env:RUNNER_TEMP "swift-game-windows"
           New-Item -ItemType Directory -Force $package | Out-Null
-          $bin = swift build --show-bin-path
+          $bin = swift build -c release --show-bin-path
           foreach ($game in "swift-game", "shooter") {
             Copy-Item (Join-Path $bin "$game.exe") $package
           }
