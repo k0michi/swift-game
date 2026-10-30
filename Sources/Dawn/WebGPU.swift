@@ -24,6 +24,34 @@ public enum WebGPUError: Error, Equatable {
     case beginRenderPassFailed
     case finishCommandEncoderFailed
     case presentFailed(status: UInt32)
+    case popErrorScopeFailed(status: UInt32, message: String)
+}
+
+// WGPUErrorFilter
+public enum ErrorFilter: UInt32, Sendable {
+    case validation = 0x0000_0001
+    case outOfMemory = 0x0000_0002
+    case `internal` = 0x0000_0003
+}
+
+// WGPUErrorType
+public enum ErrorType: UInt32, Sendable {
+    case noError = 0x0000_0001
+    case validation = 0x0000_0002
+    case outOfMemory = 0x0000_0003
+    case `internal` = 0x0000_0004
+    case unknown = 0x0000_0005
+}
+
+/// An error that an error scope caught.
+public struct DeviceError: Error, Equatable, Sendable {
+    public var type: ErrorType
+    public var message: String
+
+    public init(type: ErrorType, message: String) {
+        self.type = type
+        self.message = message
+    }
 }
 
 // WGPUBackendType
@@ -1632,20 +1660,62 @@ public struct RenderPassColorAttachment {
     }
 }
 
+// WGPURenderPassDepthStencilAttachment
+public struct RenderPassDepthStencilAttachment {
+    public var nextInChain: (any ChainedStructNode)?
+    public var view: TextureView
+    public var depthLoadOp: LoadOp
+    public var depthStoreOp: StoreOp
+    /// NaN leaves it undefined, as a depth that is not cleared must be.
+    public var depthClearValue: Float
+    public var depthReadOnly: Bool
+    public var stencilLoadOp: LoadOp
+    public var stencilStoreOp: StoreOp
+    public var stencilClearValue: UInt32
+    public var stencilReadOnly: Bool
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        view: TextureView,
+        depthLoadOp: LoadOp = .undefined,
+        depthStoreOp: StoreOp = .undefined,
+        depthClearValue: Float = .nan,
+        depthReadOnly: Bool = false,
+        stencilLoadOp: LoadOp = .undefined,
+        stencilStoreOp: StoreOp = .undefined,
+        stencilClearValue: UInt32 = 0,
+        stencilReadOnly: Bool = false
+    ) {
+        self.nextInChain = nextInChain
+        self.view = view
+        self.depthLoadOp = depthLoadOp
+        self.depthStoreOp = depthStoreOp
+        self.depthClearValue = depthClearValue
+        self.depthReadOnly = depthReadOnly
+        self.stencilLoadOp = stencilLoadOp
+        self.stencilStoreOp = stencilStoreOp
+        self.stencilClearValue = stencilClearValue
+        self.stencilReadOnly = stencilReadOnly
+    }
+}
+
 // WGPURenderPassDescriptor
 public struct RenderPassDescriptor {
     public var nextInChain: (any ChainedStructNode)?
     public var label: String?
     public var colorAttachments: [RenderPassColorAttachment]
+    public var depthStencilAttachment: RenderPassDepthStencilAttachment?
 
     public init(
         nextInChain: (any ChainedStructNode)? = nil,
         label: String? = nil,
-        colorAttachments: [RenderPassColorAttachment]
+        colorAttachments: [RenderPassColorAttachment],
+        depthStencilAttachment: RenderPassDepthStencilAttachment? = nil
     ) {
         self.nextInChain = nextInChain
         self.label = label
         self.colorAttachments = colorAttachments
+        self.depthStencilAttachment = depthStencilAttachment
     }
 }
 
@@ -1927,6 +1997,57 @@ public final class Device: @unchecked Sendable {
             samplerHandle = handle
         }
         return Sampler(handle: samplerHandle, device: self)
+    }
+
+    // wgpuDevicePushErrorScope
+    /// Starts catching errors of the kind `filter` names, until the matching
+    /// `popErrorScope`.
+    public func pushErrorScope(_ filter: ErrorFilter) {
+        wgpuDevicePushErrorScope(handle, filter.cValue)
+    }
+
+    // wgpuDevicePopErrorScope
+    /// The first error caught since the matching `pushErrorScope`, or nil if
+    /// there was none.
+    ///
+    /// Dawn keeps error scopes per thread, so this runs on the caller's
+    /// executor, which must be the one that pushed the scope. Some backends
+    /// answer only from `Instance.processEvents`, so a loop that calls it
+    /// should not wait for this in the meantime.
+    nonisolated(nonsending) public func popErrorScope() async throws -> DeviceError? {
+        let result: ErrorScopeResult = await withCheckedContinuation { continuation in
+            let context = ErrorScopeContext(continuation)
+            let retainedContext = Unmanaged.passRetained(context).toOpaque()
+            var callbackInfo = WGPUPopErrorScopeCallbackInfo()
+            callbackInfo.mode = WGPUCallbackMode_AllowSpontaneous
+            callbackInfo.userdata1 = retainedContext
+            callbackInfo.callback = { status, type, message, userdata1, _ in
+                guard let userdata1 else { return }
+                let context = Unmanaged<ErrorScopeContext>
+                    .fromOpaque(userdata1)
+                    .takeRetainedValue()
+                context.continuation.resume(
+                    returning: ErrorScopeResult(status: status, type: type, message: decode(message))
+                )
+            }
+            _ = wgpuDevicePopErrorScope(handle, callbackInfo)
+        }
+
+        guard result.status == WGPUPopErrorScopeStatus_Success else {
+            throw WebGPUError.popErrorScopeFailed(
+                status: UInt32(truncatingIfNeeded: result.status.rawValue),
+                message: result.message
+            )
+        }
+        let type: ErrorType =
+            switch result.type {
+            case WGPUErrorType_NoError: .noError
+            case WGPUErrorType_Validation: .validation
+            case WGPUErrorType_OutOfMemory: .outOfMemory
+            case WGPUErrorType_Internal: .internal
+            default: .unknown
+            }
+        return type == .noError ? nil : DeviceError(type: type, message: result.message)
     }
 
     // wgpuDeviceCreateCommandEncoder
@@ -2216,6 +2337,28 @@ public final class RenderPassEncoder {
         wgpuRenderPassEncoderEnd(handle)
     }
 
+    // wgpuRenderPassEncoderSetViewport
+    public func setViewport(
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        minDepth: Float,
+        maxDepth: Float
+    ) {
+        wgpuRenderPassEncoderSetViewport(handle, x, y, width, height, minDepth, maxDepth)
+    }
+
+    // wgpuRenderPassEncoderSetScissorRect
+    public func setScissorRect(
+        x: UInt32,
+        y: UInt32,
+        width: UInt32,
+        height: UInt32
+    ) {
+        wgpuRenderPassEncoderSetScissorRect(handle, x, y, width, height)
+    }
+
     // wgpuRenderPassEncoderSetPipeline
     public func setPipeline(_ pipeline: RenderPipeline) {
         wgpuRenderPassEncoderSetPipeline(handle, pipeline.handle)
@@ -2497,6 +2640,30 @@ private struct DeviceRequestResult: @unchecked Sendable {
     let status: WGPURequestDeviceStatus
     let device: WGPUDevice?
     let message: String
+}
+
+private struct ErrorScopeResult: @unchecked Sendable {
+    let status: WGPUPopErrorScopeStatus
+    let type: WGPUErrorType
+    let message: String
+}
+
+private final class ErrorScopeContext: @unchecked Sendable {
+    let continuation: CheckedContinuation<ErrorScopeResult, Never>
+
+    init(_ continuation: CheckedContinuation<ErrorScopeResult, Never>) {
+        self.continuation = continuation
+    }
+}
+
+private extension ErrorFilter {
+    var cValue: WGPUErrorFilter {
+        switch self {
+        case .validation: WGPUErrorFilter_Validation
+        case .outOfMemory: WGPUErrorFilter_OutOfMemory
+        case .internal: WGPUErrorFilter_Internal
+        }
+    }
 }
 
 private final class DeviceRequestContext: @unchecked Sendable {
@@ -3816,16 +3983,45 @@ private func withCRenderPassDescriptor<Result>(
                 index: 0,
                 converted: []
             ) { colorAttachments in
-                try colorAttachments.withUnsafeBufferPointer { colorAttachments in
-                    var cDescriptor = WGPURenderPassDescriptor()
-                    cDescriptor.nextInChain = nextInChain
-                    cDescriptor.label = label
-                    cDescriptor.colorAttachmentCount = colorAttachments.count
-                    cDescriptor.colorAttachments = colorAttachments.baseAddress
-                    return try withUnsafePointer(to: &cDescriptor, body)
+                try withCRenderPassDepthStencilAttachment(
+                    descriptor.depthStencilAttachment
+                ) { depthStencilAttachment in
+                    try colorAttachments.withUnsafeBufferPointer { colorAttachments in
+                        var cDescriptor = WGPURenderPassDescriptor()
+                        cDescriptor.nextInChain = nextInChain
+                        cDescriptor.label = label
+                        cDescriptor.colorAttachmentCount = colorAttachments.count
+                        cDescriptor.colorAttachments = colorAttachments.baseAddress
+                        cDescriptor.depthStencilAttachment = depthStencilAttachment
+                        return try withUnsafePointer(to: &cDescriptor, body)
+                    }
                 }
             }
         }
+    }
+}
+
+private func withCRenderPassDepthStencilAttachment<Result>(
+    _ attachment: RenderPassDepthStencilAttachment?,
+    body: (UnsafePointer<WGPURenderPassDepthStencilAttachment>?) throws -> Result
+) throws -> Result {
+    guard let attachment else {
+        return try body(nil)
+    }
+
+    return try withCChain(attachment.nextInChain) { nextInChain in
+        var cAttachment = WGPURenderPassDepthStencilAttachment()
+        cAttachment.nextInChain = nextInChain
+        cAttachment.view = attachment.view.handle
+        cAttachment.depthLoadOp = attachment.depthLoadOp.cValue
+        cAttachment.depthStoreOp = attachment.depthStoreOp.cValue
+        cAttachment.depthClearValue = attachment.depthClearValue
+        cAttachment.depthReadOnly = attachment.depthReadOnly ? 1 : 0
+        cAttachment.stencilLoadOp = attachment.stencilLoadOp.cValue
+        cAttachment.stencilStoreOp = attachment.stencilStoreOp.cValue
+        cAttachment.stencilClearValue = attachment.stencilClearValue
+        cAttachment.stencilReadOnly = attachment.stencilReadOnly ? 1 : 0
+        return try withUnsafePointer(to: &cAttachment, body)
     }
 }
 
