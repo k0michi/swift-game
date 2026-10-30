@@ -79,6 +79,8 @@ let foundation: [Target.Dependency] = isEmscripten
 // on the web.
 let echoOutput: [Target.Dependency] = isEmscripten ? [] : ["EchoSDL3"]
 
+let realModule: Target.Dependency = .product(name: "RealModule", package: "swift-numerics")
+
 // Swift reads an executable's DefaultExecutorFactory, which MainLoop's
 // browser executor needs, only when availability is not checked. Emscripten
 // has no OS versions for availability to check.
@@ -174,14 +176,14 @@ let package = Package(
         // hide what differs between the platforms.
         .target(
             name: "GameToolkit",
-            dependencies: ["SDL3", "Dawn", "CBuildInfo", "VectorMath", "Echo"] + echoOutput + foundation,
+            dependencies: ["SDL3", "Dawn", "CBuildInfo", "VectorMath", "Echo", realModule] + echoOutput + foundation,
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
             ]
         ),
         .executableTarget(
             name: "SwiftGame",
-            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit"]
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule]
                 + foundation,
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
@@ -190,7 +192,7 @@ let package = Package(
         // A 3D shooting game, made of plain shapes.
         .executableTarget(
             name: "Shooter",
-            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit"]
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule]
                 + foundation,
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),

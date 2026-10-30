@@ -2,6 +2,7 @@ import Dawn
 import Echo
 import GameToolkit
 @_spi(ExperimentalCustomExecutors) import MainLoop
+import RealModule
 import SDL3
 import SDL3Dawn
 import VectorMath
@@ -320,7 +321,7 @@ struct ChaseCamera {
         let right = normalize(cross(forward, Vector3(0, 1, 0)))
         let up = cross(right, forward)
         let ndc = Vector2(point.x / canvasSize.x * 2 - 1, 1 - point.y / canvasSize.y * 2)
-        let halfHeight = tan(Self.fovY / 2)
+        let halfHeight = Float.tan(Self.fovY / 2)
         let direction =
             forward + right * (ndc.x * halfHeight * canvasSize.x / canvasSize.y) + up * (ndc.y * halfHeight)
         // The plane is ahead of the eye, which is behind it at positive z.

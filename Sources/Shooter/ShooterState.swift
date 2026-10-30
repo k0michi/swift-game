@@ -1,4 +1,3 @@
-import Foundation
 import VectorMath
 
 // The world is in units, with y up and the enemies coming from far down -z

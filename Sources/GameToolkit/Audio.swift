@@ -1,5 +1,5 @@
 import Echo
-import Foundation
+import RealModule
 
 extension BaseAudioContext {
     /// A gain that rises linearly from silence to `peak` over `attack`
@@ -43,7 +43,7 @@ extension BaseAudioContext {
         let clipper = createWaveShaper()
         let curveSize = 1025
         try clipper.setCurve((0..<curveSize).map { index in
-            Float(tanh(4 * (Double(index) / Double(curveSize - 1) * 2 - 1)))
+            Float(Double.tanh(4 * (Double(index) / Double(curveSize - 1) * 2 - 1)))
         })
         try gain.connect(clipper).connect(destination)
         return gain

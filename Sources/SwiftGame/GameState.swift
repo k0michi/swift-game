@@ -1,5 +1,5 @@
-import Foundation
 import GameToolkit
+import RealModule
 import VectorMath
 
 // Game coordinates are window points with the origin at the top left.
@@ -48,11 +48,11 @@ struct GameState {
             default: Vector2(fieldWidth + bulletRadius, Float.random(in: 0...fieldHeight))
             }
         let toPlayer = player - position
-        let angle = atan2(toPlayer.y, toPlayer.x) + Float.random(in: -0.35...0.35)
+        let angle = Float.atan2(y: toPlayer.y, x: toPlayer.x) + Float.random(in: -0.35...0.35)
         let speed = Float.random(in: 120...(180 + elapsed * 6))
         bullets.append(
             Bullet(
-                position: position, velocity: Vector2(cos(angle), sin(angle)) * speed,
+                position: position, velocity: Vector2(Float.cos(angle), Float.sin(angle)) * speed,
                 previousPosition: position))
     }
 
