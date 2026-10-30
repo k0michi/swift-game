@@ -66,15 +66,6 @@ let dawnLinkerFlags = readDawnFlags(named: "linker").flatMap { flag -> [String] 
     return ["-l\(libraryName)"]
 }
 
-// Apple platforms ship Foundation. For Emscripten it is built from the sources
-// that scripts/emscripten/fetch-foundation.sh checks out and patches.
-let foundationDependencies: [Package.Dependency] = isEmscripten
-    ? [.package(path: "\(dependenciesRoot)/foundation/swift-corelibs-foundation")]
-    : []
-let foundation: [Target.Dependency] = isEmscripten
-    ? [.product(name: "Foundation", package: "swift-corelibs-foundation")]
-    : []
-
 // Echo plays through SDL3 on the desktop, and through the browser's Web Audio
 // on the web.
 let echoOutput: [Target.Dependency] = isEmscripten ? [] : ["EchoSDL3"]
@@ -109,7 +100,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-numerics.git", from: "1.1.0"),
-    ] + foundationDependencies,
+    ],
     targets: [
         .target(name: "Interop"),
         // Depends on nothing but the standard library and swift-numerics, so that
@@ -126,7 +117,7 @@ let package = Package(
         .target(name: "CEchoWeb"),
         .target(
             name: "Echo",
-            dependencies: ["CEchoWeb", .product(name: "Atomics", package: "swift-atomics")] + foundation
+            dependencies: ["CEchoWeb", .product(name: "Atomics", package: "swift-atomics")]
         ),
         // Swift targets that import SDL3 or Dawn, even indirectly, need their
         // headers to load CSDL3 or CDawn.
@@ -161,7 +152,7 @@ let package = Package(
         ),
         .target(
             name: "SDL3",
-            dependencies: ["CSDL3", "Interop"] + foundation,
+            dependencies: ["CSDL3", "Interop"],
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags),
             ]
@@ -176,15 +167,14 @@ let package = Package(
         // hide what differs between the platforms.
         .target(
             name: "GameToolkit",
-            dependencies: ["SDL3", "Dawn", "CBuildInfo", "VectorMath", "Echo", realModule] + echoOutput + foundation,
+            dependencies: ["SDL3", "Dawn", "CBuildInfo", "VectorMath", "Echo", realModule] + echoOutput,
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
             ]
         ),
         .executableTarget(
             name: "SwiftGame",
-            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule]
-                + foundation,
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule],
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
             ] + customExecutorSettings
@@ -192,8 +182,7 @@ let package = Package(
         // A 3D shooting game, made of plain shapes.
         .executableTarget(
             name: "Shooter",
-            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule]
-                + foundation,
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule],
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
             ] + customExecutorSettings

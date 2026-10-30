@@ -9,7 +9,6 @@ script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository_root=$(CDPATH= cd -- "$script_directory/../.." && pwd)
 tests_directory="$repository_root/Tests/EchoBrowserTests"
 
-"$script_directory/fetch-foundation.sh"
 "$script_directory/build-sdl.sh"
 "$script_directory/build-dawn.sh"
 "$script_directory/swift-build.sh" --target EchoBrowserTests
