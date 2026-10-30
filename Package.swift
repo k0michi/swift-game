@@ -75,6 +75,10 @@ let foundation: [Target.Dependency] = isEmscripten
     ? [.product(name: "Foundation", package: "swift-corelibs-foundation")]
     : []
 
+// Echo plays through SDL3 on the desktop, and through the browser's Web Audio
+// on the web.
+let echoOutput: [Target.Dependency] = isEmscripten ? [] : ["EchoSDL3"]
+
 // Swift reads an executable's DefaultExecutorFactory, which MainLoop's
 // browser executor needs, only when availability is not checked. Emscripten
 // has no OS versions for availability to check.
@@ -165,7 +169,8 @@ let package = Package(
         ),
         .executableTarget(
             name: "SwiftGame",
-            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "CBuildInfo", "VectorMath"] + foundation,
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "CBuildInfo", "VectorMath", "Echo"]
+                + echoOutput + foundation,
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
             ] + customExecutorSettings
