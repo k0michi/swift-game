@@ -224,6 +224,11 @@ let package = Package(
             dependencies: ["Interop"]
         ),
         .testTarget(
+            name: "ShooterTests",
+            dependencies: ["Shooter", "VectorMath"],
+            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags)]
+        ),
+        .testTarget(
             name: "VectorMathTests",
             dependencies: ["VectorMath"]
         ),

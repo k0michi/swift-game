@@ -10,8 +10,8 @@ let canvasSize = Vector2<Float>(800, 480)
 let ticksPerSecond: Float = 60
 let depthFormat = TextureFormat.depth24Plus
 
-/// A 3D shooting game of plain shapes: steer the ship with the arrow keys or
-/// WASD and fire with space; enter or a click starts again after a crash.
+/// A 3D shooting game of plain shapes: the ship flies to the mouse and fires
+/// while the button is held; a click or enter starts again after a crash.
 /// F3 toggles the frame graph and the FPS.
 @main
 struct Shooter: AsyncMain {
@@ -20,6 +20,8 @@ struct Shooter: AsyncMain {
         let window = try createWindow(
             title: "shooter", w: Int32(canvasSize.x), h: Int32(canvasSize.y),
             flags: platformWindowFlags([.highPixelDensity]))
+        // A crosshair stands in for it.
+        try hideCursor()
 
         let instance = try createInstance()
         let surface = try instance.createSurface(from: window)
@@ -38,7 +40,7 @@ struct Shooter: AsyncMain {
             print("Sound is unavailable: \(error)")
         }
 
-        print("Steer with the arrow keys or WASD and fire with space. Press F3 to toggle the frame graph and FPS.")
+        print("Steer with the mouse and hold the button to fire. Press F3 to toggle the frame graph and FPS.")
         if audioWaitsForUserGesture {
             print("Click or press a key to turn on sound.")
         }
@@ -63,12 +65,12 @@ struct Shooter: AsyncMain {
                 switch event {
                 case let event as MouseButtonEvent where event.down:
                     restarts = true
+                    // A click shorter than a tick still fires.
+                    firesOnce = true
                 case let event as KeyboardEvent where event.down && !event.repeat:
                     switch event.key {
                     case .f3: showsOverlay.toggle()
                     case .return: restarts = true
-                    // A tap shorter than a tick still fires.
-                    case .space: firesOnce = true
                     default: break
                     }
                 default:
@@ -101,13 +103,13 @@ struct Shooter: AsyncMain {
                     state.restart()
                 }
                 restarts = false
-                let keys = getKeyboardState()
-                func axis(_ negative: [Scancode], _ positive: [Scancode]) -> Float {
-                    (positive.contains { keys[$0] } ? 1 : 0) - (negative.contains { keys[$0] } ? 1 : 0)
-                }
-                let direction = Vector2(axis([.left, .a], [.right, .d]), axis([.down, .s], [.up, .w]))
+                // The ship flies to where the mouse points in its plane, so
+                // that it stays under the crosshair.
+                let mouse = getMouseState()
+                let target = ChaseCamera(following: state.ship).pointInShipPlane(under: Vector2(mouse.x, mouse.y))
                 let (score, bullets, wasOver) = (state.score, state.bullets.count, state.isOver)
-                state.tick(duration: 1 / ticksPerSecond, direction: direction, fires: keys[.space] || firesOnce)
+                state.tick(
+                    duration: 1 / ticksPerSecond, target: target, fires: mouse.flags.contains(.left) || firesOnce)
                 firesOnce = false
                 sounds?.play(
                     shot: state.bullets.count > bullets, hit: state.score > score, crash: state.isOver && !wasOver)
@@ -124,19 +126,13 @@ struct Shooter: AsyncMain {
             draw(state, into: &meshes)
             var shapes = ShapeBatch(canvasSize: canvasSize)
             drawHUD(of: state, into: &shapes)
+            drawCrosshair(at: Vector2(getMouseState().x, getMouseState().y), into: &shapes)
             if showsOverlay {
                 frameGraph.append(to: &shapes)
                 fpsCounter.append(to: &shapes)
             }
 
-            // The camera follows the ship a little, from behind and above.
-            let follow = Vector3(state.ship * 0.4, 0)
-            let projection = Matrix4x4<Float>.perspective(
-                fovY: .pi / 3, aspectRatio: canvasSize.x / canvasSize.y, near: 0.1, far: 200, handedness: .right,
-                depth: .zeroToOne)
-            let view = Matrix4x4<Float>.lookAt(
-                eye: follow + Vector3(0, 2.5, 9), target: follow + Vector3(0, 0, -20), up: Vector3(0, 1, 0),
-                handedness: .right)
+            let camera = ChaseCamera(following: state.ship)
             do {
                 let encoder = try device.createCommandEncoder()
                 let pass = try encoder.beginRenderPass(
@@ -149,7 +145,7 @@ struct Shooter: AsyncMain {
                         depthStencilAttachment: RenderPassDepthStencilAttachment(
                             view: depth, depthLoadOp: .clear, depthStoreOp: .discard, depthClearValue: 1)))
                 try meshRenderer.draw(
-                    meshes, viewProjection: projection * view, lightDirection: Vector3(-0.3, -1, -0.5), ambient: 0.35,
+                    meshes, viewProjection: camera.viewProjection, lightDirection: Vector3(-0.3, -1, -0.5), ambient: 0.35,
                     into: pass)
                 try shapeRenderer.draw(shapes, into: pass)
                 pass.end()
@@ -167,8 +163,12 @@ struct Shooter: AsyncMain {
     }
 
     private static func draw(_ state: ShooterState, into meshes: inout MeshBatch) {
+        // Scaled by `scale`, then moved to `position`, built directly, as a
+        // product of two matrices takes long in unoptimized builds, as in the
+        // browser, for every one of the stars.
         func place(at position: Vector3<Float>, scale: Vector3<Float>) -> Matrix4x4<Float> {
-            .translation(position) * .scale(scale)
+            Matrix4x4(
+                Vector4(scale.x, 0, 0, 0), Vector4(0, scale.y, 0, 0), Vector4(0, 0, scale.z, 0), Vector4(position, 1))
         }
 
         for star in state.stars {
@@ -196,10 +196,10 @@ struct Shooter: AsyncMain {
             meshes.append(.cube, transform: place(at: bullet, scale: Vector3(0.07, 0.07, 0.6)), color: Vector4(1, 0.9, 0.3, 1))
         }
         for enemy in state.enemies {
-            let spin = Matrix4x4<Float>.rotation(angle: enemy.spin, axis: normalize(Vector3(0.3, 1, 0.2)))
             meshes.append(
-                .octahedron, transform: place(at: enemy.position, scale: Vector3(repeating: enemyRadius)) * spin,
-                color: Vector4(1, 0.3, 0.4, 1))
+                .octahedron,
+                transform: .translation(enemy.position) * enemy.rotation * .scale(Vector3(repeating: enemyRadius)),
+                color: enemy.kind == .homing ? Vector4(0.3, 1, 0.45, 1) : Vector4(1, 0.3, 0.4, 1))
         }
         for piece in state.debris {
             meshes.append(
@@ -220,6 +220,19 @@ struct Shooter: AsyncMain {
             BitmapFont.appendText(
                 message, at: (canvasSize - Vector2(width, Float(BitmapFont.glyphHeight) * scale)) / 2,
                 scale: scale, color: Vector4(1, 0.4, 0.4, 1), to: &shapes)
+        }
+    }
+
+    /// Four ticks around the mouse, with a gap in the middle.
+    private static func drawCrosshair(at point: Vector2<Float>, into shapes: inout ShapeBatch) {
+        let color = Vector4<Float>(1, 1, 1, 0.85)
+        for (direction, across) in [(Vector2<Float>(1, 0), Vector2<Float>(0, 1)), (Vector2(0, 1), Vector2(1, 0))] {
+            for side: Float in [-1, 1] {
+                let near = point + direction * side * 4
+                let far = point + direction * side * 11
+                let width = across * 1
+                shapes.appendRect(from: min(near, far) - width, to: max(near, far) + width, color: color)
+            }
         }
     }
 
@@ -281,5 +294,41 @@ final class Sounds {
             .connect(master)
         try source.start(start)
         try source.stop(start + duration)
+    }
+}
+
+/// The camera, which follows the ship a little, from behind and above.
+struct ChaseCamera {
+    static let fovY: Float = .pi / 3
+    let eye: Vector3<Float>
+    let target: Vector3<Float>
+
+    init(following ship: Vector2<Float>) {
+        let follow = Vector3(ship * 0.4, 0)
+        eye = follow + Vector3(0, 2.5, 9)
+        target = follow + Vector3(0, 0, -20)
+    }
+
+    var viewProjection: Matrix4x4<Float> {
+        let projection = Matrix4x4<Float>.perspective(
+            fovY: Self.fovY, aspectRatio: canvasSize.x / canvasSize.y, near: 0.1, far: 200, handedness: .right,
+            depth: .zeroToOne)
+        let view = Matrix4x4<Float>.lookAt(eye: eye, target: target, up: Vector3(0, 1, 0), handedness: .right)
+        return projection * view
+    }
+
+    /// Where the ray from the eye through `point` on the canvas meets the
+    /// ship's plane, z = 0.
+    func pointInShipPlane(under point: Vector2<Float>) -> Vector2<Float> {
+        let forward = normalize(target - eye)
+        let right = normalize(cross(forward, Vector3(0, 1, 0)))
+        let up = cross(right, forward)
+        let ndc = Vector2(point.x / canvasSize.x * 2 - 1, 1 - point.y / canvasSize.y * 2)
+        let halfHeight = tan(Self.fovY / 2)
+        let direction =
+            forward + right * (ndc.x * halfHeight * canvasSize.x / canvasSize.y) + up * (ndc.y * halfHeight)
+        // The plane is ahead of the eye, which is behind it at positive z.
+        let distance = -eye.z / direction.z
+        return (eye + direction * distance).xy
     }
 }
