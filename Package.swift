@@ -70,6 +70,35 @@ let dawnLinkerFlags = readDawnFlags(named: "linker").flatMap { flag -> [String] 
 // on the web.
 let echoOutput: [Target.Dependency] = isEmscripten ? [] : ["EchoSDL3"]
 
+// Fetch calls the browser's fetch on the web, and makes the requests itself
+// with AsyncHTTPClient, on SwiftNIO, on the desktop.
+let fetchDependencies: [Package.Dependency] = isEmscripten
+    ? []
+    : [
+        .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.26.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.86.0"),
+    ]
+let fetchClient: [Target.Dependency] = isEmscripten
+    ? []
+    : [
+        .product(name: "AsyncHTTPClient", package: "async-http-client"),
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOHTTP1", package: "swift-nio"),
+    ]
+let fetchTests: [Target] = isEmscripten
+    ? []
+    : [
+        .testTarget(
+            name: "FetchTests",
+            dependencies: [
+                "Fetch",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ]
+        ),
+    ]
+
 let realModule: Target.Dependency = .product(name: "RealModule", package: "swift-numerics")
 
 // Swift reads an executable's DefaultExecutorFactory, which MainLoop's
@@ -95,12 +124,13 @@ let package = Package(
         .library(name: "Echo", targets: ["Echo"]),
         .library(name: "EchoSDL3", targets: ["EchoSDL3"]),
         .library(name: "MainLoop", targets: ["MainLoop"]),
+        .library(name: "Fetch", targets: ["Fetch"]),
         .library(name: "VectorMath", targets: ["VectorMath"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-numerics.git", from: "1.1.0"),
-    ],
+    ] + fetchDependencies,
     targets: [
         .target(name: "Interop"),
         // Depends on nothing but the standard library and swift-numerics, so that
@@ -119,6 +149,10 @@ let package = Package(
             name: "Echo",
             dependencies: ["CEchoWeb", .product(name: "Atomics", package: "swift-atomics")]
         ),
+        .target(name: "CFetchWeb"),
+        // The Fetch API, kept apart from the rest so that only what makes
+        // requests depends on SwiftNIO.
+        .target(name: "Fetch", dependencies: ["CFetchWeb"] + fetchClient),
         // Swift targets that import SDL3 or Dawn, even indirectly, need their
         // headers to load CSDL3 or CDawn.
         .target(
@@ -235,5 +269,5 @@ let package = Package(
             dependencies: ["EchoSDL3", "Echo", "SDL3"],
             swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags)]
         ),
-    ]
+    ] + fetchTests
 )
