@@ -16,7 +16,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(stb)
 
 # A library for each single-file library, with its implementation.
-foreach(library IN ITEMS stb_image stb_image_write)
+foreach(library IN ITEMS stb_image stb_image_write stb_vorbis)
     add_library(${library} STATIC ${library}.c)
     target_include_directories(${library} PUBLIC "${stb_SOURCE_DIR}")
     if(WIN32)
@@ -30,7 +30,7 @@ if(DEFINED STB_METADATA_DIRECTORY)
         OUTPUT "${STB_METADATA_DIRECTORY}/compiler-flags.txt"
         CONTENT "-I${stb_SOURCE_DIR}\n"
     )
-    foreach(library IN ITEMS stb_image stb_image_write)
+    foreach(library IN ITEMS stb_image stb_image_write stb_vorbis)
         file(GENERATE
             OUTPUT "${STB_METADATA_DIRECTORY}/${library}-linker-flags.txt"
             CONTENT "$<TARGET_FILE:${library}>\n"

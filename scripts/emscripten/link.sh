@@ -46,7 +46,8 @@ set --
 for flags in "$repository_root/.build/dependencies/emscripten/sdl3/linker-flags.txt" \
     "$dawn_linker_flags" \
     "$repository_root/.build/dependencies/emscripten/stb/stb_image-linker-flags.txt" \
-    "$repository_root/.build/dependencies/emscripten/stb/stb_image_write-linker-flags.txt"; do
+    "$repository_root/.build/dependencies/emscripten/stb/stb_image_write-linker-flags.txt" \
+    "$repository_root/.build/dependencies/emscripten/stb/stb_vorbis-linker-flags.txt"; do
     while IFS= read -r flag; do
         case "$flag" in
         "") ;;
