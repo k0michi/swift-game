@@ -2,7 +2,6 @@ import CSDL3
 #if canImport(Dispatch)
 import Dispatch
 #endif
-import Foundation
 
 #if canImport(Dispatch)
 private let audioCleanupQueue = DispatchQueue(
@@ -132,7 +131,7 @@ public func audioIsUnsigned(_ format: AudioFormat) -> Bool {
 // SDL_AudioDeviceID
 public final class AudioDeviceID: Hashable, @unchecked Sendable {
     public let rawValue: UInt32
-    fileprivate let callbackLock = NSLock()
+    fileprivate let callbackLock = Mutex()
     fileprivate var postmixCallbackBox: AudioPostmixCallbackBox?
     fileprivate var openedSystem: System?
 
@@ -173,7 +172,7 @@ private final class WeakAudioDeviceID {
 }
 
 private final class AudioDeviceIDRegistry: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = Mutex()
     private var values: [UInt32: WeakAudioDeviceID] = [:]
 
     func get(rawValue: UInt32, openedSystem: System? = nil) -> AudioDeviceID {
@@ -232,7 +231,7 @@ public func audioFramesize(_ spec: AudioSpec) -> UInt32 {
 // SDL_AudioStream
 public final class AudioStream: @unchecked Sendable {
     fileprivate let storage: AudioStreamStorage
-    fileprivate let callbackLock = NSLock()
+    fileprivate let callbackLock = Mutex()
     fileprivate var getCallbackBox: AudioStreamCallbackBox?
     fileprivate var putCallbackBox: AudioStreamCallbackBox?
 

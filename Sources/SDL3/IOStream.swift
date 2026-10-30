@@ -1,5 +1,4 @@
 import CSDL3
-import Foundation
 
 // SDL_IOStatus
 public enum IOStatus: UInt32, Sendable {
@@ -47,7 +46,7 @@ private final class IOStreamInterfaceBox: @unchecked Sendable {
 
 // SDL_IOStream
 public final class IOStream: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = Mutex()
     private var pointer: OpaquePointer?
 
     fileprivate init(pointer: OpaquePointer) {
