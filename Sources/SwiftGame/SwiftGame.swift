@@ -1,76 +1,30 @@
 import Dawn
+import GameToolkit
 @_spi(ExperimentalCustomExecutors) import MainLoop
 import SDL3
 import SDL3Dawn
 import VectorMath
-
-private enum SetupError: Error {
-    case surfaceFormatUnavailable
-    case surfaceAlphaModeUnavailable
-    case surfacePresentModeUnavailable
-    case renderAttachmentUnsupported
-    case invalidWindowPixelSize
-}
 
 /// A bullet-dodging game: the white ball follows the mouse, and yellow balls
 /// come in from the edges, faster and more often over time, bouncing off each
 /// other. A click starts a new round after a hit, and F3 toggles the frame
 /// graph and the FPS.
 @main
-@MainActor
-struct SwiftGame {
-    #if os(Emscripten)
-    typealias DefaultExecutorFactory = BrowserExecutorFactory
-    #endif
-
-    #if os(Emscripten)
-    static func main() async throws {
-        try await run()
-    }
-    #else
-    static func main() {
-        runMain(run)
-    }
-    #endif
-
-    private static func run() async throws {
+struct SwiftGame: AsyncMain {
+    static func run() async throws {
         let system = try `init`(flags: [.audio, .video])
-
-        var windowFlags: WindowFlags = [.highPixelDensity]
-        #if os(macOS)
-            windowFlags.insert(.metal)
-        #endif
         // The window is the field, in points.
         let window = try createWindow(
-            title: "swift-game", w: Int32(fieldWidth), h: Int32(fieldHeight), flags: windowFlags)
+            title: "swift-game", w: Int32(fieldWidth), h: Int32(fieldHeight),
+            flags: platformWindowFlags([.highPixelDensity]))
         try hideCursor()
 
         let instance = try createInstance()
         let surface = try instance.createSurface(from: window)
-
-        #if os(macOS)
-            let backendType = BackendType.metal
-        #elseif os(Windows)
-            let backendType = BackendType.d3D12
-        #elseif os(Emscripten)
-            let backendType = BackendType.undefined
-        #else
-            let backendType = BackendType.vulkan
-        #endif
-
-        // The game only needs compatibility mode, which the WebGL 2 fallback offers too.
-        #if os(Emscripten)
-            let featureLevel = FeatureLevel.compatibility
-        #else
-            let featureLevel = FeatureLevel.core
-        #endif
-
-        let adapter = try await instance.requestAdapter(
-            options: RequestAdapterOptions(featureLevel: featureLevel, backendType: backendType)
-        )
+        let adapter = try await instance.requestAdapter(options: platformAdapterOptions())
         let device = try await adapter.requestDevice()
-        let format = try configure(surface: surface, device: device, adapter: adapter, window: window)
-        let renderer = try Renderer(device: device, format: format)
+        let format = try configureSurface(surface, device: device, adapter: adapter, window: window).format
+        let renderer = try ShapeRenderer(device: device, format: format)
 
         var sound: SoundEffects?
         do {
@@ -80,9 +34,9 @@ struct SwiftGame {
         }
 
         print("Move the mouse to dodge the yellow bullets. Press F3 to toggle the frame graph and FPS.")
-        #if os(Emscripten)
+        if audioWaitsForUserGesture {
             print("Click or press a key to turn on sound.")
-        #endif
+        }
 
         var game = GameState()
         var frameGraph = FrameGraph()
@@ -119,7 +73,7 @@ struct SwiftGame {
             }
             guard isRunning else { break }
             if shouldConfigureSurface {
-                _ = try? configure(surface: surface, device: device, adapter: adapter, window: window)
+                _ = try? configureSurface(surface, device: device, adapter: adapter, window: window)
             }
 
             let now = ContinuousClock.now
@@ -151,7 +105,7 @@ struct SwiftGame {
 
             // How far the frame is between the last tick and the next one.
             let blend = game.isOver ? 1 : tickAccumulator / tickDuration
-            var batch = Batch()
+            var batch = ShapeBatch(canvasSize: fieldSize)
             for bullet in game.bullets {
                 batch.appendBall(
                     center: mix(bullet.previousPosition, bullet.position, blend), radius: bulletRadius,
@@ -165,14 +119,25 @@ struct SwiftGame {
                 fpsCounter.append(to: &batch)
             }
 
-            let background =
+            let background: Color =
                 game.isOver
-                ? Vector4<Float>(0.45, 0.1, 0.1, 1)
-                : Vector4<Float>(100.0 / 255, 149.0 / 255, 237.0 / 255, 1)
+                ? Color(r: 0.45, g: 0.1, b: 0.1, a: 1)
+                : Color(r: 100.0 / 255, g: 149.0 / 255, b: 237.0 / 255, a: 1)
             do {
-                try renderer.draw(batch, background: background, to: surface)
+                let encoder = try device.createCommandEncoder()
+                let pass = try encoder.beginRenderPass(
+                    descriptor: RenderPassDescriptor(
+                        colorAttachments: [
+                            RenderPassColorAttachment(
+                                view: try surface.getCurrentTexture().createView(), loadOp: .clear,
+                                storeOp: .store, clearValue: background)
+                        ]))
+                try renderer.draw(batch, into: pass)
+                pass.end()
+                device.getQueue().submit([try encoder.finish()])
+                try surface.present()
             } catch WebGPUError.getCurrentTextureFailed {
-                _ = try? configure(surface: surface, device: device, adapter: adapter, window: window)
+                _ = try? configureSurface(surface, device: device, adapter: adapter, window: window)
             }
 
             instance.processEvents()
@@ -185,52 +150,5 @@ struct SwiftGame {
     private static func milliseconds(_ duration: Duration) -> Float {
         let (seconds, attoseconds) = duration.components
         return Float(seconds) * 1000 + Float(attoseconds) / 1e15
-    }
-
-    private static func configure(
-        surface: Surface,
-        device: Device,
-        adapter: Adapter,
-        window: Window
-    ) throws -> TextureFormat {
-        let capabilities = try surface.getCapabilities(adapter: adapter)
-        guard capabilities.usages.contains(.renderAttachment) else {
-            throw SetupError.renderAttachmentUnsupported
-        }
-        guard let format = capabilities.formats.first else {
-            throw SetupError.surfaceFormatUnavailable
-        }
-        guard
-            let alphaMode = capabilities.alphaModes.contains(.auto)
-                ? CompositeAlphaMode.auto
-                : capabilities.alphaModes.first
-        else {
-            throw SetupError.surfaceAlphaModeUnavailable
-        }
-        guard
-            let presentMode = capabilities.presentModes.contains(.fifo)
-                ? PresentMode.fifo
-                : capabilities.presentModes.first
-        else {
-            throw SetupError.surfacePresentModeUnavailable
-        }
-        let size = try getWindowSizeInPixels(window: window)
-        guard size.w > 0, size.h > 0 else {
-            throw SetupError.invalidWindowPixelSize
-        }
-
-        try surface.configure(
-            SurfaceConfiguration(
-                device: device,
-                format: format,
-                usage: .renderAttachment,
-                width: UInt32(size.w),
-                height: UInt32(size.h),
-                viewFormats: [],
-                alphaMode: alphaMode,
-                presentMode: presentMode
-            )
-        )
-        return format
     }
 }

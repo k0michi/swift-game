@@ -4,11 +4,11 @@ import VectorMath
 ///
 /// Each glyph's shape is a string of seven rows of five characters, separated
 /// by spaces: `#` for a lit dot and `.` for an unlit one.
-enum BitmapFont {
-    static let glyphWidth = 5
-    static let glyphHeight = 7
+public enum BitmapFont {
+    public static let glyphWidth = 5
+    public static let glyphHeight = 7
     /// Horizontal distance between glyphs, in dots, including one dot of spacing.
-    static let advance = 6
+    public static let advance = 6
 
     private static let shapes: [(Character, String)] = [
         (" ", "..... ..... ..... ..... ..... ..... ....."),
@@ -130,7 +130,7 @@ enum BitmapFont {
     }()
 
     /// The width of `text` in pixels, without the spacing after the last glyph.
-    static func width(of text: String, scale: Float) -> Float {
+    public static func width(of text: String, scale: Float) -> Float {
         let count = text.unicodeScalars.count
         return count == 0 ? 0 : Float(count * advance - 1) * scale
     }
@@ -138,8 +138,8 @@ enum BitmapFont {
     /// Appends rectangles drawing `text` with its top-left corner at `origin`,
     /// each dot `scale` pixels square. Characters outside printable ASCII
     /// draw as `?`.
-    static func appendText(
-        _ text: String, at origin: Vector2<Float>, scale: Float, color: Vector4<Float>, to batch: inout Batch
+    public static func appendText(
+        _ text: String, at origin: Vector2<Float>, scale: Float, color: Vector4<Float>, to batch: inout ShapeBatch
     ) {
         var glyphOrigin = origin
         for scalar in text.unicodeScalars {
@@ -153,7 +153,7 @@ enum BitmapFont {
 
     /// One rectangle per run of lit dots in a row.
     private static func appendGlyph(
-        _ rows: [UInt8], at origin: Vector2<Float>, scale: Float, color: Vector4<Float>, to batch: inout Batch
+        _ rows: [UInt8], at origin: Vector2<Float>, scale: Float, color: Vector4<Float>, to batch: inout ShapeBatch
     ) {
         for (rowIndex, bits) in rows.enumerated() {
             let top = origin.y + Float(rowIndex) * scale

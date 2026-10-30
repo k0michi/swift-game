@@ -1,7 +1,7 @@
 import VectorMath
 
 /// Recent frame intervals for the profiler-style graph, oldest first from `next`.
-struct FrameGraph {
+public struct FrameGraph {
     static let capacity = 240
     static let barWidth: Float = 2
     static let pixelsPerMillisecond: Float = 3
@@ -10,7 +10,9 @@ struct FrameGraph {
     var samples = [Float](repeating: 0, count: capacity)
     var next = 0
 
-    mutating func record(_ milliseconds: Float) {
+    public init() {}
+
+    public mutating func record(_ milliseconds: Float) {
         samples[next] = milliseconds
         next = (next + 1) % Self.capacity
     }
@@ -18,10 +20,10 @@ struct FrameGraph {
     // Draws the frame intervals as bars in the bottom-right corner, like the
     // Minecraft profiler: green up to 60 FPS, yellow up to 30 FPS, red beyond.
     // Thin lines mark 16.7 ms (60 FPS) and 33.3 ms (30 FPS).
-    func append(to batch: inout Batch) {
+    public func append(to batch: inout ShapeBatch) {
         let width = Float(Self.capacity) * Self.barWidth
-        let left = fieldWidth - width
-        let bottom = fieldHeight
+        let left = batch.canvasSize.x - width
+        let bottom = batch.canvasSize.y
         let height = Self.maxMilliseconds * Self.pixelsPerMillisecond
 
         batch.appendRect(
@@ -54,14 +56,16 @@ struct FrameGraph {
 }
 
 /// Frames per second, averaged over half a second so the number is readable.
-struct FPSCounter {
+public struct FPSCounter {
     static let interval: Float = 500
 
     var frames = 0
     var milliseconds: Float = 0
     var text = "--.- FPS"
 
-    mutating func record(_ frameMilliseconds: Float) {
+    public init() {}
+
+    public mutating func record(_ frameMilliseconds: Float) {
         frames += 1
         milliseconds += frameMilliseconds
         guard milliseconds >= Self.interval else { return }
@@ -74,7 +78,7 @@ struct FPSCounter {
     // Draws the FPS in the top-left corner with the dot font, and what was
     // built in smaller dots under it, over a dark backdrop and with a
     // shadow so they stay readable on any background.
-    func append(to batch: inout Batch) {
+    public func append(to batch: inout ShapeBatch) {
         let lines: [(text: String, scale: Float)] = [(text, 2), (BuildInfo.version, 1)]
         let padding: Float = 4
         let lineSpacing: Float = 3

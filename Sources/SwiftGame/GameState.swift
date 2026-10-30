@@ -1,4 +1,5 @@
 import Foundation
+import GameToolkit
 import VectorMath
 
 // Game coordinates are window points with the origin at the top left.
@@ -116,10 +117,4 @@ struct GameState {
             )
         }
     }
-}
-
-/// `value` with one decimal place, rounded down.
-func formatTenths(_ value: Float) -> String {
-    let tenths = Int(value * 10)
-    return "\(tenths / 10).\(tenths % 10)"
 }

@@ -93,6 +93,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "swift-game", targets: ["SwiftGame"]),
+        .library(name: "GameToolkit", targets: ["GameToolkit"]),
         .library(name: "SDL3", targets: ["SDL3"]),
         .library(name: "Dawn", targets: ["Dawn"]),
         .library(name: "SDL3Dawn", targets: ["SDL3Dawn"]),
@@ -167,10 +168,20 @@ let package = Package(
             dependencies: ["SDL3", "Dawn"],
             swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags)]
         ),
+        // Utilities on SDL3, WebGPU and Web Audio that games share: drawing
+        // 2D shapes, 3D meshes and dot text, a debug overlay, and helpers that
+        // hide what differs between the platforms.
+        .target(
+            name: "GameToolkit",
+            dependencies: ["SDL3", "Dawn", "CBuildInfo", "VectorMath", "Echo"] + echoOutput + foundation,
+            swiftSettings: [
+                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
+            ]
+        ),
         .executableTarget(
             name: "SwiftGame",
-            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "CBuildInfo", "VectorMath", "Echo"]
-                + echoOutput + foundation,
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit"]
+                + foundation,
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
             ] + customExecutorSettings
