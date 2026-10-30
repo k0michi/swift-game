@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   build:
+    name: build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -58,12 +59,12 @@ jobs:
           restore-keys: |
             dependencies-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-
 
-      - name: Build on macOS or Linux
+      - name: Build the games (debug)
         if: runner.os != 'Windows'
         shell: bash
         run: ./scripts/build.sh
 
-      - name: Build on Windows
+      - name: Build the games (debug)
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/build.ps1
@@ -75,19 +76,19 @@ jobs:
           path: .build/dependencies
           key: ${{ steps.dependencies-cache.outputs.cache-primary-key }}
 
-      - name: Test SDL3 wrapper on macOS
+      - name: Test
         if: runner.os == 'macOS'
         shell: bash
         run: ./scripts/test.sh
 
       # Only an optimized build shows what rendering allocates, and only
       # Darwin's allocator lets the tests count it.
-      - name: Check that rendering does not allocate on macOS
+      - name: Check that rendering does not allocate
         if: runner.os == 'macOS'
         shell: bash
         run: ./scripts/test.sh -c release -Xswiftc -enable-testing --filter RenderAllocationTests
 
-      - name: Test with coverage on Linux
+      - name: Test with coverage
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -98,7 +99,7 @@ jobs:
           test -n "$test_bundle"
           llvm-cov export --format=lcov --instr-profile "$coverage_data" "$test_bundle" > coverage.lcov
 
-      - name: Upload Linux coverage to Codecov
+      - name: Upload the coverage to Codecov
         if: runner.os == 'Linux'
         uses: codecov/codecov-action@v5
         with:
@@ -108,7 +109,7 @@ jobs:
           flags: linux
           fail_ci_if_error: true
 
-      - name: Test SDL3 wrapper on Windows
+      - name: Test
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test.ps1
@@ -120,7 +121,7 @@ jobs:
       # the executable's run path, and Windows gets it and the Visual C++
       # runtime beside the executable. macOS and Linux are archived with tar,
       # which keeps the executable bit that an artifact's zip would drop.
-      - name: Package the games on macOS or Linux
+      - name: Package the games
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -141,7 +142,7 @@ jobs:
           echo "SWIFT_GAME_ARTIFACT_NAME=$name" >> "$GITHUB_ENV"
           echo "SWIFT_GAME_ARTIFACT=$RUNNER_TEMP/$name.tar.gz" >> "$GITHUB_ENV"
 
-      - name: Package the games on Windows
+      - name: Package the games
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -186,6 +187,7 @@ jobs:
           git diff --exit-code -- Sources/VectorMath/Generated
 
   web:
+    name: build (web)
     runs-on: ubuntu-24.04
     env:
       SWIFT_SNAPSHOT: swift-DEVELOPMENT-SNAPSHOT-2026-10-17-a
@@ -232,9 +234,11 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .build/dependencies/emscripten
-          key: web-deps-${{ env.SWIFT_SNAPSHOT }}-${{ env.EMSDK_VERSION }}-${{ hashFiles('CMakeLists.txt', 'scripts/emscripten/**') }}
+          key: dependencies-v${{ env.BUILD_CACHE_VERSION }}-web-${{ env.SWIFT_SNAPSHOT }}-emsdk-${{ env.EMSDK_VERSION }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/emscripten/build-sdl.sh', 'scripts/emscripten/build-dawn.sh') }}
+          restore-keys: |
+            dependencies-v${{ env.BUILD_CACHE_VERSION }}-web-${{ env.SWIFT_SNAPSHOT }}-emsdk-${{ env.EMSDK_VERSION }}-
 
-      - name: Build the games for the browser
+      - name: Build the games (debug)
         shell: bash
         run: |
           ./scripts/emscripten/build.sh debug swift-game
@@ -253,13 +257,13 @@ jobs:
           npm ci --prefix Tests/EchoBrowserTests --no-audit --no-fund
           npx --prefix Tests/EchoBrowserTests playwright install --with-deps chromium
 
-      - name: Test Echo on Web Audio
+      - name: Test
         shell: bash
         run: ./scripts/emscripten/test-browser.sh
 
       # Pushes to the default branch publish the games on GitHub Pages: the
       # bullet-dodging game at the top, and the shooter at /shooter/.
-      - name: Build the games for Pages
+      - name: Build the games (release)
         if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         shell: bash
         run: |
