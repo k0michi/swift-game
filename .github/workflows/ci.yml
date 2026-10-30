@@ -113,39 +113,44 @@ jobs:
         shell: pwsh
         run: ./scripts/test.ps1
 
-      # The debug build, which the steps above made. SDL and Dawn are linked
-      # statically, so the game needs at most the Swift runtime beside it:
+      # The debug builds of both games, which the steps above made. SDL and
+      # Dawn are linked statically, so the games need at most the Swift
+      # runtime beside them:
       # macOS has its own, Linux gets the toolchain's in lib, found through
       # the executable's run path, and Windows gets it and the Visual C++
       # runtime beside the executable. macOS and Linux are archived with tar,
       # which keeps the executable bit that an artifact's zip would drop.
-      - name: Package the game on macOS or Linux
+      - name: Package the games on macOS or Linux
         if: runner.os != 'Windows'
         shell: bash
         run: |
           name="swift-game-$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')"
           package="$RUNNER_TEMP/$name"
           mkdir -p "$package"
-          cp "$(swift build --show-bin-path)/swift-game" "$package/"
-          if [ "$RUNNER_OS" = Linux ]; then
-            mkdir -p "$package/lib"
-            ldd "$package/swift-game" |
-              awk -v toolchain="$GITHUB_WORKSPACE/.swift-toolchain/" 'index($3, toolchain) == 1 { print $3 }' |
-              xargs -r cp -t "$package/lib"
-            patchelf --set-rpath '$ORIGIN/lib' "$package/swift-game"
-          fi
+          for game in swift-game shooter; do
+            cp "$(swift build --show-bin-path)/$game" "$package/"
+            if [ "$RUNNER_OS" = Linux ]; then
+              mkdir -p "$package/lib"
+              ldd "$package/$game" |
+                awk -v toolchain="$GITHUB_WORKSPACE/.swift-toolchain/" 'index($3, toolchain) == 1 { print $3 }' |
+                xargs -r cp -t "$package/lib"
+              patchelf --set-rpath '$ORIGIN/lib' "$package/$game"
+            fi
+          done
           tar -czf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP" "$name"
           echo "SWIFT_GAME_ARTIFACT_NAME=$name" >> "$GITHUB_ENV"
           echo "SWIFT_GAME_ARTIFACT=$RUNNER_TEMP/$name.tar.gz" >> "$GITHUB_ENV"
 
-      - name: Package the game on Windows
+      - name: Package the games on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $package = Join-Path $env:RUNNER_TEMP "swift-game-windows"
           New-Item -ItemType Directory -Force $package | Out-Null
           $bin = swift build --show-bin-path
-          Copy-Item (Join-Path $bin "swift-game.exe") $package
+          foreach ($game in "swift-game", "shooter") {
+            Copy-Item (Join-Path $bin "$game.exe") $package
+          }
           $swiftRuntime = Split-Path -Parent (Get-Command swiftCore.dll).Source
           Copy-Item (Join-Path $swiftRuntime "*.dll") $package
           foreach ($library in "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
@@ -157,7 +162,7 @@ jobs:
           "SWIFT_GAME_ARTIFACT_NAME=swift-game-windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "SWIFT_GAME_ARTIFACT=$package" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Upload the game
+      - name: Upload the games
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.SWIFT_GAME_ARTIFACT_NAME }}
@@ -229,9 +234,11 @@ jobs:
           path: .build/dependencies/emscripten
           key: web-deps-${{ env.SWIFT_SNAPSHOT }}-${{ env.EMSDK_VERSION }}-${{ hashFiles('CMakeLists.txt', 'scripts/emscripten/**') }}
 
-      - name: Build for the browser
+      - name: Build the games for the browser
         shell: bash
-        run: ./scripts/emscripten/build.sh
+        run: |
+          ./scripts/emscripten/build.sh debug swift-game
+          ./scripts/emscripten/build.sh debug shooter
 
       - name: Save the dependencies
         if: env.SAVES_CACHES == 'true' && steps.dependencies-cache.outputs.cache-hit != 'true'
@@ -250,19 +257,24 @@ jobs:
         shell: bash
         run: ./scripts/emscripten/test-browser.sh
 
-      # Pushes to the default branch publish the game on GitHub Pages.
-      - name: Build the game for Pages
+      # Pushes to the default branch publish the games on GitHub Pages: the
+      # bullet-dodging game at the top, and the shooter at /shooter/.
+      - name: Build the games for Pages
         if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         shell: bash
         run: |
-          ./scripts/emscripten/build.sh release
           site="$RUNNER_TEMP/site"
-          mkdir -p "$site"
           release=.build/wasm32-unknown-emscripten/release
-          cp "$release/swift-game.js" "$release/swift-game.wasm" "$site/"
-          cp "$release/swift-game.html" "$site/index.html"
+          for game in swift-game shooter; do
+            ./scripts/emscripten/build.sh release "$game"
+            page="$site"
+            if [ "$game" != swift-game ]; then page="$site/$game"; fi
+            mkdir -p "$page"
+            cp "$release/$game.js" "$release/$game.wasm" "$page/"
+            cp "$release/$game.html" "$page/index.html"
+          done
 
-      - name: Upload the game for Pages
+      - name: Upload the games for Pages
         if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         uses: actions/upload-pages-artifact@v3
         with:
