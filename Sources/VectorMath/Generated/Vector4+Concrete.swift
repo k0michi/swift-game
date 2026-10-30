@@ -179,6 +179,16 @@ extension Matrix4x4 where Scalar == Float {
     public static func * (lhs: Self, rhs: Self) -> Self {
         Self(concrete: lhs * rhs.columns.0, lhs * rhs.columns.1, lhs * rhs.columns.2, lhs * rhs.columns.3)
     }
+
+    @inlinable
+    public static func translation(_ offset: Vector3<Float>) -> Self {
+        Self(concrete: Vector4<Float>(concrete: 1, 0, 0, 0), Vector4<Float>(concrete: 0, 1, 0, 0), Vector4<Float>(concrete: 0, 0, 1, 0), Vector4<Float>(concrete: offset.x, offset.y, offset.z, 1))
+    }
+
+    @inlinable
+    public static func scale(_ factors: Vector3<Float>) -> Self {
+        Self(concrete: Vector4<Float>(concrete: factors.x, 0, 0, 0), Vector4<Float>(concrete: 0, factors.y, 0, 0), Vector4<Float>(concrete: 0, 0, factors.z, 0), Vector4<Float>(concrete: 0, 0, 0, 1))
+    }
 }
 
 extension Vector4 where Scalar == Double {
@@ -355,5 +365,15 @@ extension Matrix4x4 where Scalar == Double {
     @inlinable
     public static func * (lhs: Self, rhs: Self) -> Self {
         Self(concrete: lhs * rhs.columns.0, lhs * rhs.columns.1, lhs * rhs.columns.2, lhs * rhs.columns.3)
+    }
+
+    @inlinable
+    public static func translation(_ offset: Vector3<Double>) -> Self {
+        Self(concrete: Vector4<Double>(concrete: 1, 0, 0, 0), Vector4<Double>(concrete: 0, 1, 0, 0), Vector4<Double>(concrete: 0, 0, 1, 0), Vector4<Double>(concrete: offset.x, offset.y, offset.z, 1))
+    }
+
+    @inlinable
+    public static func scale(_ factors: Vector3<Double>) -> Self {
+        Self(concrete: Vector4<Double>(concrete: factors.x, 0, 0, 0), Vector4<Double>(concrete: 0, factors.y, 0, 0), Vector4<Double>(concrete: 0, 0, factors.z, 0), Vector4<Double>(concrete: 0, 0, 0, 1))
     }
 }

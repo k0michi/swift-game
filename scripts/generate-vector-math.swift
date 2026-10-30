@@ -1005,6 +1005,18 @@ func generateConcrete(_ source: Source, size: Int, scalar: String) {
         source.inlinable(
             "public static func * (lhs: Self, rhs: Self) -> Self",
             "Self(concrete: \((0..<size).map { "lhs * rhs.columns.\($0)" }.joined(separator: ", ")))")
+        if size == 4 {
+            // The 3D transforms that place things, which games make for
+            // every thing they draw.
+            source.inlinable(
+                "public static func translation(_ offset: Vector3<\(scalar)>) -> Self",
+                "Self(concrete: \(vector)(concrete: 1, 0, 0, 0), \(vector)(concrete: 0, 1, 0, 0), "
+                    + "\(vector)(concrete: 0, 0, 1, 0), \(vector)(concrete: offset.x, offset.y, offset.z, 1))")
+            source.inlinable(
+                "public static func scale(_ factors: Vector3<\(scalar)>) -> Self",
+                "Self(concrete: \(vector)(concrete: factors.x, 0, 0, 0), \(vector)(concrete: 0, factors.y, 0, 0), "
+                    + "\(vector)(concrete: 0, 0, factors.z, 0), \(vector)(concrete: 0, 0, 0, 1))")
+        }
     }
 }
 
