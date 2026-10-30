@@ -11,8 +11,10 @@ let isEmscripten = ProcessInfo.processInfo.environment["SWIFT_GAME_TARGET"] == "
 let dependenciesRoot = "\(packageRoot)/.build/dependencies" + (isEmscripten ? "/emscripten" : "")
 let sdlFlagsRoot = "\(dependenciesRoot)/sdl3"
 let dawnFlagsRoot = "\(dependenciesRoot)/dawn"
+let stbFlagsRoot = "\(dependenciesRoot)/stb"
 let sdlBuildScript = isEmscripten ? "./scripts/emscripten/build-sdl.sh" : "./scripts/build-sdl.sh"
 let dawnBuildScript = isEmscripten ? "./scripts/emscripten/build-dawn.sh" : "./scripts/build-dawn.sh"
+let stbBuildScript = isEmscripten ? "./scripts/emscripten/build-stb.sh" : "./scripts/build-stb.sh"
 
 func readSDLFlags(named name: String) -> [String] {
     let path = "\(sdlFlagsRoot)/\(name)-flags.txt"
@@ -66,6 +68,20 @@ let dawnLinkerFlags = readDawnFlags(named: "linker").flatMap { flag -> [String] 
     return ["-l\(libraryName)"]
 }
 
+func readStbFlags(named name: String) -> [String] {
+    let path = "\(stbFlagsRoot)/\(name)-flags.txt"
+    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fatalError("stb build metadata is missing. Run \(stbBuildScript) first.")
+    }
+    return contents.split(whereSeparator: \.isNewline).map(String.init)
+}
+
+let stbCompilerFlags = readStbFlags(named: "compiler")
+let stbSwiftCompilerFlags = stbCompilerFlags.flatMap { ["-Xcc", $0] }
+// The paths of the static libraries.
+let stbImageLinkerFlags = readStbFlags(named: "stb_image-linker")
+let stbImageWriteLinkerFlags = readStbFlags(named: "stb_image_write-linker")
+
 // Echo plays through SDL3 on the desktop, and through the browser's Web Audio
 // on the web.
 let echoOutput: [Target.Dependency] = isEmscripten ? [] : ["EchoSDL3"]
@@ -96,6 +112,8 @@ let package = Package(
         .library(name: "EchoSDL3", targets: ["EchoSDL3"]),
         .library(name: "MainLoop", targets: ["MainLoop"]),
         .library(name: "VectorMath", targets: ["VectorMath"]),
+        .library(name: "StbImage", targets: ["StbImage"]),
+        .library(name: "StbImageWrite", targets: ["StbImageWrite"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
@@ -144,6 +162,28 @@ let package = Package(
                 .unsafeFlags(dawnLinkerFlags),
                 .linkedLibrary("c++", .when(platforms: [.macOS])),
             ]
+        ),
+        // stb_image and stb_image_write, each on its own, built by
+        // scripts/build-stb.sh.
+        .target(
+            name: "CStbImage",
+            cSettings: [.unsafeFlags(stbCompilerFlags)],
+            linkerSettings: [.unsafeFlags(stbImageLinkerFlags)]
+        ),
+        .target(
+            name: "StbImage",
+            dependencies: ["CStbImage"],
+            swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
+        ),
+        .target(
+            name: "CStbImageWrite",
+            cSettings: [.unsafeFlags(stbCompilerFlags)],
+            linkerSettings: [.unsafeFlags(stbImageWriteLinkerFlags)]
+        ),
+        .target(
+            name: "StbImageWrite",
+            dependencies: ["CStbImageWrite"],
+            swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
         ),
         .target(
             name: "Dawn",
@@ -218,6 +258,11 @@ let package = Package(
             name: "ShooterTests",
             dependencies: ["Shooter", "VectorMath"],
             swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags)]
+        ),
+        .testTarget(
+            name: "StbTests",
+            dependencies: ["StbImage", "StbImageWrite"],
+            swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
         ),
         .testTarget(
             name: "VectorMathTests",
