@@ -35,21 +35,21 @@ public struct ShapeBatch {
     private mutating func appendQuad(
         from topLeft: Vector2<Float>, to bottomRight: Vector2<Float>, local: Float, color: Vector4<Float>
     ) {
-        // Clip space has y up.
-        let topLeft = topLeft / canvasSize * Vector2(2, -2) + Vector2(-1, 1)
-        let bottomRight = bottomRight / canvasSize * Vector2(2, -2) + Vector2(-1, 1)
-        let corners: [(position: Vector2<Float>, local: Vector2<Float>)] = [
-            (topLeft, Vector2(-local, local)),
-            (Vector2(bottomRight.x, topLeft.y), Vector2(local, local)),
-            (Vector2(topLeft.x, bottomRight.y), Vector2(-local, -local)),
-            (Vector2(bottomRight.x, topLeft.y), Vector2(local, local)),
-            (bottomRight, Vector2(local, -local)),
-            (Vector2(topLeft.x, bottomRight.y), Vector2(-local, -local)),
+        // In scalars, as unoptimized builds, as in the browser, would take
+        // far longer over vectors. Clip space has y up.
+        let left = topLeft.x / canvasSize.x * 2 - 1
+        let right = bottomRight.x / canvasSize.x * 2 - 1
+        let top = 1 - topLeft.y / canvasSize.y * 2
+        let bottom = 1 - bottomRight.y / canvasSize.y * 2
+        let (r, g, b, a) = (color.r, color.g, color.b, color.a)
+        vertices += [
+            left, top, -local, local, r, g, b, a,
+            right, top, local, local, r, g, b, a,
+            left, bottom, -local, -local, r, g, b, a,
+            right, top, local, local, r, g, b, a,
+            right, bottom, local, -local, r, g, b, a,
+            left, bottom, -local, -local, r, g, b, a,
         ]
-        for corner in corners {
-            vertices += [corner.position.x, corner.position.y, corner.local.x, corner.local.y]
-            vertices += [color.r, color.g, color.b, color.a]
-        }
     }
 }
 

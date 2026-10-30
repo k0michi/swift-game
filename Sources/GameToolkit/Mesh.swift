@@ -5,6 +5,8 @@ import VectorMath
 public struct Mesh: Sendable {
     /// Each three positions are a triangle.
     public let positions: [Vector3<Float>]
+    // The positions' coordinates in order, for appending without vectors.
+    let coordinates: [Float]
 
     /// Triangles from `positions`, each three a triangle. A convex shape's
     /// triangles are wound to face away from its center, however given.
@@ -18,6 +20,7 @@ public struct Mesh: Sendable {
             wound += dot(normal, a - center) >= 0 ? [a, b, c] : [a, c, b]
         }
         self.positions = wound
+        coordinates = wound.flatMap { [$0.x, $0.y, $0.z] }
     }
 
     /// A cube from -1 to 1 on each axis.
@@ -75,14 +78,61 @@ public struct MeshBatch {
     /// `mesh` moved into world space by `transform`, in a color with each
     /// component from 0 to 1. Each triangle is lit as flat.
     public mutating func append(_ mesh: Mesh, transform: Matrix4x4<Float>, color: Vector4<Float>) {
-        let positions = mesh.positions.map { (transform * Vector4($0, 1)).xyz }
-        for start in stride(from: 0, to: positions.count, by: 3) {
-            let (a, b, c) = (positions[start], positions[start + 1], positions[start + 2])
-            let normal = normalize(cross(b - a, c - a))
-            for position in [a, b, c] {
-                vertices += [position.x, position.y, position.z, normal.x, normal.y, normal.z]
-                vertices += [color.r, color.g, color.b, color.a]
+        // In scalars on raw buffers, as games append thousands of triangles a
+        // frame and unoptimized builds, as in the browser, would take far
+        // longer over vectors and arrays.
+        let (c0, c1, c2, c3) = transform.columns
+        let m = (
+            c0.x, c0.y, c0.z, c1.x, c1.y, c1.z, c2.x, c2.y, c2.z, c3.x, c3.y, c3.z
+        )
+        let (r, g, b, alpha) = (color.r, color.g, color.b, color.a)
+        let triangleCount = mesh.coordinates.count / 9
+        let added = [Float](unsafeUninitializedCapacity: triangleCount * 3 * Self.floatsPerVertex) {
+            vertices, initializedCount in
+            mesh.coordinates.withUnsafeBufferPointer { source in
+                var output = 0
+                for triangle in 0..<triangleCount {
+                    let input = triangle * 9
+                    // The triangle's corners in world space.
+                    var x0 = source[input], y0 = source[input + 1], z0 = source[input + 2]
+                    var x1 = source[input + 3], y1 = source[input + 4], z1 = source[input + 5]
+                    var x2 = source[input + 6], y2 = source[input + 7], z2 = source[input + 8]
+                    (x0, y0, z0) = (
+                        m.0 * x0 + m.3 * y0 + m.6 * z0 + m.9, m.1 * x0 + m.4 * y0 + m.7 * z0 + m.10,
+                        m.2 * x0 + m.5 * y0 + m.8 * z0 + m.11
+                    )
+                    (x1, y1, z1) = (
+                        m.0 * x1 + m.3 * y1 + m.6 * z1 + m.9, m.1 * x1 + m.4 * y1 + m.7 * z1 + m.10,
+                        m.2 * x1 + m.5 * y1 + m.8 * z1 + m.11
+                    )
+                    (x2, y2, z2) = (
+                        m.0 * x2 + m.3 * y2 + m.6 * z2 + m.9, m.1 * x2 + m.4 * y2 + m.7 * z2 + m.10,
+                        m.2 * x2 + m.5 * y2 + m.8 * z2 + m.11
+                    )
+                    let (ux, uy, uz) = (x1 - x0, y1 - y0, z1 - z0)
+                    let (vx, vy, vz) = (x2 - x0, y2 - y0, z2 - z0)
+                    var (nx, ny, nz) = (uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
+                    let length = (nx * nx + ny * ny + nz * nz).squareRoot()
+                    if length > 0 {
+                        (nx, ny, nz) = (nx / length, ny / length, nz / length)
+                    }
+                    for (x, y, z) in [(x0, y0, z0), (x1, y1, z1), (x2, y2, z2)] {
+                        vertices[output] = x
+                        vertices[output + 1] = y
+                        vertices[output + 2] = z
+                        vertices[output + 3] = nx
+                        vertices[output + 4] = ny
+                        vertices[output + 5] = nz
+                        vertices[output + 6] = r
+                        vertices[output + 7] = g
+                        vertices[output + 8] = b
+                        vertices[output + 9] = alpha
+                        output += Self.floatsPerVertex
+                    }
+                }
             }
+            initializedCount = triangleCount * 3 * Self.floatsPerVertex
         }
+        vertices += added
     }
 }
