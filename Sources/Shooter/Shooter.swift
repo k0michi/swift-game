@@ -163,12 +163,8 @@ struct Shooter: AsyncMain {
     }
 
     private static func draw(_ state: ShooterState, into meshes: inout MeshBatch) {
-        // Scaled by `scale`, then moved to `position`, built directly, as a
-        // product of two matrices takes long in unoptimized builds, as in the
-        // browser, for every one of the stars.
         func place(at position: Vector3<Float>, scale: Vector3<Float>) -> Matrix4x4<Float> {
-            Matrix4x4(
-                Vector4(scale.x, 0, 0, 0), Vector4(0, scale.y, 0, 0), Vector4(0, 0, scale.z, 0), Vector4(position, 1))
+            .translation(position) * .scale(scale)
         }
 
         for star in state.stars {
