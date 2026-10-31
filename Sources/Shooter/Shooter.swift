@@ -28,6 +28,7 @@ struct Shooter: AsyncMain {
         let surface = try instance.createSurface(from: window)
         let adapter = try await instance.requestAdapter(options: platformAdapterOptions())
         let device = try await adapter.requestDevice()
+        let deviceDetails = (try? describe(adapter.getInfo())) ?? []
         var configuration = try configureSurface(surface, device: device, adapter: adapter, window: window)
         var depth = try createDepthTexture(
             device: device, width: configuration.width, height: configuration.height, format: depthFormat)
@@ -134,7 +135,7 @@ struct Shooter: AsyncMain {
             drawCrosshair(at: Vector2(getMouseState().x, getMouseState().y), into: &shapes)
             if showsOverlay {
                 frameGraph.append(to: &shapes)
-                fpsCounter.append(to: &shapes)
+                fpsCounter.append(to: &shapes, details: deviceDetails)
             }
 
             let camera = ChaseCamera(following: state.ship)
