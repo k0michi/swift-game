@@ -104,11 +104,9 @@ nonisolated(nonsending) public func saveScreenshot(_ copy: TextureCopy) async th
 @discardableResult
 public func saveScreenshot(pixels: [UInt8], width: UInt32, height: UInt32) async throws -> String {
     let time = try timeToDateTime(ticks: getCurrentTime(), localTime: true)
-    func twoDigits(_ value: Int32) -> String {
-        value < 10 ? "0\(value)" : "\(value)"
-    }
-    let name = "screenshot-\(time.year)\(twoDigits(time.month))\(twoDigits(time.day))-"
-        + "\(twoDigits(time.hour))\(twoDigits(time.minute))\(twoDigits(time.second)).png"
+    let date = [time.year, time.month, time.day].map { formatZeroPadded($0, width: 2) }.joined()
+    let clock = [time.hour, time.minute, time.second].map { formatZeroPadded($0, width: 2) }.joined()
+    let name = "screenshot-\(date)-\(clock).png"
     var png: [UInt8] = []
     try pixels.withUnsafeBytes { data in
         try writePngToFunc(
