@@ -4,6 +4,8 @@ import StbImageWrite
 
 #if os(Emscripten)
     import CGameToolkitWeb
+#else
+    import SystemPackage
 #endif
 
 public enum ScreenshotError: Error {
@@ -95,9 +97,9 @@ nonisolated(nonsending) public func saveScreenshot(_ copy: TextureCopy) async th
 }
 
 /// Saves RGBA pixels, rows from the top, as a PNG named after the local
-/// time: into the working directory, or as a download in a browser. Returns
-/// its name. It encodes and writes off the caller's executor, so that a game
-/// does not stall on it.
+/// time: into the working directory, with `writeFile`, or as a download in a
+/// browser. Returns its name. It encodes off the caller's executor, so that
+/// a game does not stall on it.
 @concurrent
 @discardableResult
 public func saveScreenshot(pixels: [UInt8], width: UInt32, height: UInt32) async throws -> String {
@@ -107,16 +109,16 @@ public func saveScreenshot(pixels: [UInt8], width: UInt32, height: UInt32) async
     }
     let name = "screenshot-\(time.year)\(twoDigits(time.month))\(twoDigits(time.day))-"
         + "\(twoDigits(time.hour))\(twoDigits(time.minute))\(twoDigits(time.second)).png"
+    var png: [UInt8] = []
     try pixels.withUnsafeBytes { data in
-        #if os(Emscripten)
-            // The browser has the one thread, which this runs on as well.
-            var png: [UInt8] = []
-            try writePngToFunc(
-                func: { png += $0 }, w: Int32(width), h: Int32(height), comp: 4, data: data, strideInBytes: 0)
-            game_toolkit_web_download(name, png, Int32(png.count), "image/png")
-        #else
-            try writePng(filename: name, w: Int32(width), h: Int32(height), comp: 4, data: data, strideInBytes: 0)
-        #endif
+        try writePngToFunc(
+            func: { png += $0 }, w: Int32(width), h: Int32(height), comp: 4, data: data, strideInBytes: 0)
     }
+    #if os(Emscripten)
+        // The browser has the one thread, which this runs on as well.
+        game_toolkit_web_download(name, png, Int32(png.count), "image/png")
+    #else
+        try await writeFile(png, to: FilePath(name))
+    #endif
     return name
 }
