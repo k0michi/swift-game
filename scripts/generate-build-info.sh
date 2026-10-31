@@ -12,7 +12,8 @@ set -eu
 
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 version=$(git -C "$repository_root" describe --tags --always --dirty 2>/dev/null || echo unknown)
-target_info=$(swiftc -print-target-info 2>/dev/null || true)
+# The compiler the build uses, which the browser build lets SWIFT choose.
+target_info=$("${SWIFT:-swift}" -print-target-info 2>/dev/null || true)
 swift_version=$(printf '%s\n' "$target_info" | sed -n -E 's/.*"compilerVersion": ".*Swift version ([^ "]+).*/\1/p')
 triple=${1:-$(printf '%s\n' "$target_info" | sed -n -E 's/.*"unversionedTriple": "([^"]+)".*/\1/p' | head -n 1)}
 header="$repository_root/Sources/CBuildInfo/BuildInfo.generated.h"
