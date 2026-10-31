@@ -561,4 +561,60 @@ struct WebGPUTests {
 
         withExtendedLifetime((instance, adapter, device, sampler)) {}
     }
+
+    @Test
+    @MainActor
+    func copiesATextureIntoABufferAndMapsIt() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let texture = try device.createTexture(
+            descriptor: TextureDescriptor(
+                usage: [.copySrc, .copyDst],
+                dimension: .`2D`,
+                size: Extent3D(width: 4, height: 2, depthOrArrayLayers: 1),
+                format: .rgba8Unorm
+            )
+        )
+        #expect(texture.getWidth() == 4)
+        #expect(texture.getHeight() == 2)
+        #expect(texture.getFormat() == .rgba8Unorm)
+        #expect(texture.getUsage() == [.copySrc, .copyDst])
+
+        // Rows of a copy are 256 bytes apart.
+        let buffer = try device.createBuffer(
+            descriptor: BufferDescriptor(usage: [.mapRead, .copyDst], size: 256 * 2)
+        )
+        let encoder = try device.createCommandEncoder()
+        encoder.copyTextureToBuffer(
+            source: TexelCopyTextureInfo(texture: texture),
+            destination: TexelCopyBufferInfo(
+                layout: TexelCopyBufferLayout(bytesPerRow: 256, rowsPerImage: 2),
+                buffer: buffer
+            ),
+            copySize: Extent3D(width: 4, height: 2, depthOrArrayLayers: 1)
+        )
+        device.getQueue().submit([try encoder.finish()])
+
+        #expect(buffer.getConstMappedRange(size: 256 * 2) == nil)
+        // Dawn answers from processEvents, which runs while the map waits.
+        var mapped = false
+        let mapping = Task { @MainActor in
+            try await buffer.mapAsync(mode: .read)
+            mapped = true
+        }
+        while !mapped {
+            instance.processEvents()
+            await Task.yield()
+        }
+        try await mapping.value
+        let bytes = try #require(buffer.getConstMappedRange(size: 256 * 2))
+        #expect(bytes.count == 512)
+        buffer.unmap()
+        #expect(buffer.getConstMappedRange(size: 256 * 2) == nil)
+
+        withExtendedLifetime((instance, adapter, device, texture)) {}
+    }
 }

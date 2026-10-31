@@ -25,6 +25,7 @@ public enum WebGPUError: Error, Equatable {
     case finishCommandEncoderFailed
     case presentFailed(status: UInt32)
     case popErrorScopeFailed(status: UInt32, message: String)
+    case mapAsyncFailed(status: UInt32, message: String)
 }
 
 // WGPUErrorFilter
@@ -427,6 +428,9 @@ public struct Extent3D: Sendable {
     }
 }
 
+// WGPU_WHOLE_MAP_SIZE: SIZE_MAX, which Swift sees as the size_t's Int.
+public let wholeMapSize = Int(bitPattern: UInt.max)
+
 // WGPU_COPY_STRIDE_UNDEFINED
 public let copyStrideUndefined = UInt32.max
 
@@ -464,6 +468,17 @@ public struct TexelCopyTextureInfo {
         self.mipLevel = mipLevel
         self.origin = origin
         self.aspect = aspect
+    }
+}
+
+// WGPUTexelCopyBufferInfo
+public struct TexelCopyBufferInfo {
+    public var layout: TexelCopyBufferLayout
+    public var buffer: Buffer
+
+    public init(layout: TexelCopyBufferLayout = TexelCopyBufferLayout(), buffer: Buffer) {
+        self.layout = layout
+        self.buffer = buffer
     }
 }
 
@@ -957,6 +972,19 @@ public struct BufferUsage: OptionSet, Sendable {
     public static let indirect = Self(rawValue: 0x0000_0000_0000_0100)
     public static let queryResolve = Self(rawValue: 0x0000_0000_0000_0200)
     public static let texelBuffer = Self(rawValue: 0x0000_0000_0000_0400)
+}
+
+// WGPUMapMode
+public struct MapMode: OptionSet, Sendable {
+    public let rawValue: UInt64
+
+    public init(rawValue: UInt64) {
+        self.rawValue = rawValue
+    }
+
+    public static let none: Self = []
+    public static let read = Self(rawValue: 0x0000_0000_0000_0001)
+    public static let write = Self(rawValue: 0x0000_0000_0000_0002)
 }
 
 // WGPUBufferDescriptor
@@ -2083,6 +2111,52 @@ public final class Buffer {
         self.device = device
     }
 
+    // wgpuBufferMapAsync
+    /// Maps `size` bytes from `offset`, or the rest of the buffer when `size`
+    /// is `wholeMapSize`, for `getConstMappedRange` to read once it returns.
+    ///
+    /// Dawn answers only from `Instance.processEvents`, so a loop that calls
+    /// it should not wait for this in the meantime.
+    nonisolated(nonsending) public func mapAsync(
+        mode: MapMode, offset: Int = 0, size: Int = wholeMapSize
+    ) async throws {
+        let result: MapResult = await withCheckedContinuation { continuation in
+            let context = MapContext(continuation)
+            let retainedContext = Unmanaged.passRetained(context).toOpaque()
+            var callbackInfo = WGPUBufferMapCallbackInfo()
+            callbackInfo.mode = WGPUCallbackMode_AllowSpontaneous
+            callbackInfo.userdata1 = retainedContext
+            callbackInfo.callback = { status, message, userdata1, _ in
+                guard let userdata1 else { return }
+                let context = Unmanaged<MapContext>
+                    .fromOpaque(userdata1)
+                    .takeRetainedValue()
+                context.continuation.resume(returning: MapResult(status: status, message: decode(message)))
+            }
+            _ = wgpuBufferMapAsync(handle, mode.rawValue, offset, size, callbackInfo)
+        }
+
+        guard result.status == WGPUMapAsyncStatus_Success else {
+            throw WebGPUError.mapAsyncFailed(
+                status: UInt32(truncatingIfNeeded: result.status.rawValue),
+                message: result.message
+            )
+        }
+    }
+
+    // wgpuBufferGetConstMappedRange
+    /// The mapped bytes, or nil if they are not mapped. They are valid until
+    /// `unmap`.
+    public func getConstMappedRange(offset: Int = 0, size: Int) -> UnsafeRawBufferPointer? {
+        guard let pointer = wgpuBufferGetConstMappedRange(handle, offset, size) else { return nil }
+        return UnsafeRawBufferPointer(start: pointer, count: size)
+    }
+
+    // wgpuBufferUnmap
+    public func unmap() {
+        wgpuBufferUnmap(handle)
+    }
+
     deinit {
         // wgpuBufferRelease
         wgpuBufferRelease(handle)
@@ -2265,6 +2339,18 @@ public final class CommandEncoder {
         return RenderPassEncoder(handle: handle, commandEncoder: self)
     }
 
+    // wgpuCommandEncoderCopyTextureToBuffer
+    public func copyTextureToBuffer(
+        source: TexelCopyTextureInfo,
+        destination: TexelCopyBufferInfo,
+        copySize: Extent3D
+    ) {
+        var cSource = source.cValue
+        var cDestination = destination.cValue
+        var cCopySize = copySize.cValue
+        wgpuCommandEncoderCopyTextureToBuffer(handle, &cSource, &cDestination, &cCopySize)
+    }
+
     // wgpuCommandEncoderFinish
     public func finish(
         descriptor: CommandBufferDescriptor = CommandBufferDescriptor()
@@ -2441,6 +2527,26 @@ public final class Texture {
     init(handle: WGPUTexture, owner: AnyObject) {
         self.handle = handle
         self.owner = owner
+    }
+
+    // wgpuTextureGetWidth
+    public func getWidth() -> UInt32 {
+        wgpuTextureGetWidth(handle)
+    }
+
+    // wgpuTextureGetHeight
+    public func getHeight() -> UInt32 {
+        wgpuTextureGetHeight(handle)
+    }
+
+    // wgpuTextureGetUsage
+    public func getUsage() -> TextureUsage {
+        TextureUsage(rawValue: wgpuTextureGetUsage(handle))
+    }
+
+    // wgpuTextureGetFormat
+    public func getFormat() -> TextureFormat {
+        TextureFormat(rawValue: UInt32(truncatingIfNeeded: wgpuTextureGetFormat(handle).rawValue))
     }
 
     // wgpuTextureCreateView
@@ -2646,6 +2752,19 @@ private struct ErrorScopeResult: @unchecked Sendable {
     let status: WGPUPopErrorScopeStatus
     let type: WGPUErrorType
     let message: String
+}
+
+private struct MapResult: @unchecked Sendable {
+    let status: WGPUMapAsyncStatus
+    let message: String
+}
+
+private final class MapContext: @unchecked Sendable {
+    let continuation: CheckedContinuation<MapResult, Never>
+
+    init(_ continuation: CheckedContinuation<MapResult, Never>) {
+        self.continuation = continuation
+    }
 }
 
 private final class ErrorScopeContext: @unchecked Sendable {
@@ -3050,6 +3169,12 @@ private extension TexelCopyBufferLayout {
             bytesPerRow: bytesPerRow,
             rowsPerImage: rowsPerImage
         )
+    }
+}
+
+private extension TexelCopyBufferInfo {
+    var cValue: WGPUTexelCopyBufferInfo {
+        WGPUTexelCopyBufferInfo(layout: layout.cValue, buffer: buffer.handle)
     }
 }
 
