@@ -6,9 +6,6 @@ env:
   # Caches are saved only by pushes to the default branch, so that every
   # branch restores the latest of them instead of keeping its own.
   SAVES_CACHES: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-  # A Swift program that crashes, a test or the compiler, prints its stacks
-  # on macOS and Linux, where Swift's backtracer works.
-  SWIFT_BACKTRACE: enable=yes,interactive=no,color=no
 
 on:
   push:
@@ -112,30 +109,10 @@ jobs:
           flags: linux
           fail_ci_if_error: true
 
-      # Swift prints no stacks of a crash on Windows, so Windows keeps a dump
-      # of every process that crashes, whose stacks a failed test prints.
-      - name: Keep crash dumps
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/windows-crash-dumps.ps1 keep
-
       - name: Test
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test.ps1
-
-      - name: Print the stacks of crashes
-        if: failure() && runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/windows-crash-dumps.ps1 print
-
-      - name: Upload the crash dumps
-        if: failure() && runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: crash-dumps-windows
-          path: ${{ runner.temp }}/crash-dumps
-          if-no-files-found: ignore
 
       # After the tests, which use the debug builds, optimized builds of both
       # games to package.
