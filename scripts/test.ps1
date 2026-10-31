@@ -8,5 +8,5 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $env:SDL_VIDEODRIVER = "dummy"
 $env:SDL_AUDIODRIVER = "dummy"
 
-swift test --package-path $RepositoryRoot @args
+swift test --package-path $RepositoryRoot --no-parallel @args
 exit $LASTEXITCODE
