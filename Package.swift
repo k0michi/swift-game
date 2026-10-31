@@ -89,6 +89,15 @@ let stbTrueTypeLinkerFlags = readStbFlags(named: "stb_truetype-linker")
 // on the web.
 let echoOutput: [Target.Dependency] = isEmscripten ? [] : ["EchoSDL3"]
 
+// GameToolkit writes files with swift-system on the desktop. A browser
+// downloads them instead.
+let systemDependencies: [Package.Dependency] = isEmscripten
+    ? []
+    : [.package(url: "https://github.com/apple/swift-system.git", from: "1.4.0")]
+let systemProduct: [Target.Dependency] = isEmscripten
+    ? []
+    : [.product(name: "SystemPackage", package: "swift-system")]
+
 let realModule: Target.Dependency = .product(name: "RealModule", package: "swift-numerics")
 
 // Swift reads an executable's DefaultExecutorFactory, which MainLoop's
@@ -124,7 +133,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-numerics.git", from: "1.1.0"),
-    ],
+    ] + systemDependencies,
     targets: [
         .target(name: "Interop"),
         // Depends on nothing but the standard library and swift-numerics, so that
@@ -249,7 +258,7 @@ let package = Package(
             name: "GameToolkit",
             dependencies: [
                 "SDL3", "Dawn", "CBuildInfo", "VectorMath", "Echo", "StbImageWrite", "CGameToolkitWeb", realModule,
-            ] + echoOutput,
+            ] + echoOutput + systemProduct,
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
             ]
@@ -299,6 +308,11 @@ let package = Package(
         .testTarget(
             name: "ShooterTests",
             dependencies: ["Shooter", "VectorMath"],
+            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags)]
+        ),
+        .testTarget(
+            name: "GameToolkitTests",
+            dependencies: ["GameToolkit"] + systemProduct,
             swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags)]
         ),
         .testTarget(
