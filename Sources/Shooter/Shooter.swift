@@ -13,7 +13,7 @@ let depthFormat = TextureFormat.depth24Plus
 
 /// A 3D shooting game of plain shapes: the ship flies to the mouse and fires
 /// while the button is held; a click or enter starts again after a crash.
-/// F3 toggles the frame graph and the FPS.
+/// F2 saves a screenshot, and F3 toggles the frame graph and the FPS.
 @main
 struct Shooter: AsyncMain {
     static func run() async throws {
@@ -41,7 +41,9 @@ struct Shooter: AsyncMain {
             print("Sound is unavailable: \(error)")
         }
 
-        print("Steer with the mouse and hold the button to fire. Press F3 to toggle the frame graph and FPS.")
+        print(
+            "Steer with the mouse and hold the button to fire. Press F2 to save a screenshot, and F3 to toggle the frame graph and FPS."
+        )
         if audioWaitsForUserGesture {
             print("Click or press a key to turn on sound.")
         }
@@ -53,6 +55,7 @@ struct Shooter: AsyncMain {
         var shownTitle = ""
         var restarts = false
         var firesOnce = false
+        var takesScreenshot = false
         var tickAccumulator: Float = 0
         var lastFrame = ContinuousClock.now
         var isRunning = true
@@ -70,6 +73,7 @@ struct Shooter: AsyncMain {
                     firesOnce = true
                 case let event as KeyboardEvent where event.down && !event.repeat:
                     switch event.key {
+                    case .f2: takesScreenshot = true
                     case .f3: showsOverlay.toggle()
                     case .return: restarts = true
                     default: break
@@ -135,12 +139,13 @@ struct Shooter: AsyncMain {
 
             let camera = ChaseCamera(following: state.ship)
             do {
+                let texture = try surface.getCurrentTexture()
                 let encoder = try device.createCommandEncoder()
                 let pass = try encoder.beginRenderPass(
                     descriptor: RenderPassDescriptor(
                         colorAttachments: [
                             RenderPassColorAttachment(
-                                view: try surface.getCurrentTexture().createView(), loadOp: .clear,
+                                view: try texture.createView(), loadOp: .clear,
                                 storeOp: .store, clearValue: Color(r: 0.02, g: 0.02, b: 0.08, a: 1))
                         ],
                         depthStencilAttachment: RenderPassDepthStencilAttachment(
@@ -150,8 +155,26 @@ struct Shooter: AsyncMain {
                     into: pass)
                 try shapeRenderer.draw(shapes, into: pass)
                 pass.end()
+                var screenshot: TextureCopy?
+                if takesScreenshot {
+                    takesScreenshot = false
+                    do {
+                        screenshot = try copyTexture(texture, device: device, encoder: encoder)
+                    } catch {
+                        print("Could not take a screenshot: \(error)")
+                    }
+                }
                 device.getQueue().submit([try encoder.finish()])
                 try surface.present()
+                if let screenshot {
+                    Task {
+                        do {
+                            print("Saved \(try await saveScreenshot(screenshot))")
+                        } catch {
+                            print("Could not save a screenshot: \(error)")
+                        }
+                    }
+                }
             } catch WebGPUError.getCurrentTextureFailed {
                 _ = try? configureSurface(surface, device: device, adapter: adapter, window: window)
             }
