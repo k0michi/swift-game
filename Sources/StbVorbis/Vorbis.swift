@@ -39,7 +39,7 @@ private func takeDecoded(
     let samples = decode(&channels, &sampleRate, &output)
     guard samples >= 0, let output else {
         // The decoders say only that they failed.
-        throw StbVorbisError(operation: operation, code: Int32(bitPattern: VORBIS_invalid_stream.rawValue))
+        throw StbVorbisError(operation: operation, code: Int32(truncatingIfNeeded: VORBIS_invalid_stream.rawValue))
     }
     defer { free(output) }
     return (Array(UnsafeBufferPointer(start: output, count: Int(samples) * Int(channels))), channels, sampleRate)

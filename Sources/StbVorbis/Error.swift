@@ -17,8 +17,9 @@ public struct StbVorbisError: Error, Equatable, CustomStringConvertible {
         message = Self.name(of: code)
     }
 
+    // C enums are Int32 on Windows and UInt32 elsewhere.
     private static func name(of code: Int32) -> String {
-        switch STBVorbisError(UInt32(bitPattern: code)) {
+        switch STBVorbisError(STBVorbisError.RawValue(truncatingIfNeeded: code)) {
         case VORBIS__no_error: "no error"
         case VORBIS_need_more_data: "need more data"
         case VORBIS_invalid_api_mixing: "invalid API mixing"
