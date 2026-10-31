@@ -26,6 +26,7 @@ public enum WebGPUError: Error, Equatable {
     case presentFailed(status: UInt32)
     case popErrorScopeFailed(status: UInt32, message: String)
     case mapAsyncFailed(status: UInt32, message: String)
+    case getAdapterInfoFailed
 }
 
 // WGPUErrorFilter
@@ -66,6 +67,52 @@ public enum BackendType: UInt32, Sendable {
     case vulkan = 0x0000_0006
     case openGL = 0x0000_0007
     case openGLES = 0x0000_0008
+}
+
+// WGPUAdapterType
+public enum AdapterType: UInt32, Sendable {
+    case discreteGPU = 0x0000_0001
+    case integratedGPU = 0x0000_0002
+    case cpu = 0x0000_0003
+    case unknown = 0x0000_0004
+}
+
+// WGPUAdapterInfo
+public struct AdapterInfo: Sendable {
+    public var vendor: String
+    public var architecture: String
+    public var device: String
+    public var description: String
+    public var backendType: BackendType
+    public var adapterType: AdapterType
+    public var vendorID: UInt32
+    public var deviceID: UInt32
+    public var subgroupMinSize: UInt32
+    public var subgroupMaxSize: UInt32
+
+    public init(
+        vendor: String = "",
+        architecture: String = "",
+        device: String = "",
+        description: String = "",
+        backendType: BackendType = .undefined,
+        adapterType: AdapterType = .unknown,
+        vendorID: UInt32 = 0,
+        deviceID: UInt32 = 0,
+        subgroupMinSize: UInt32 = 0,
+        subgroupMaxSize: UInt32 = 0
+    ) {
+        self.vendor = vendor
+        self.architecture = architecture
+        self.device = device
+        self.description = description
+        self.backendType = backendType
+        self.adapterType = adapterType
+        self.vendorID = vendorID
+        self.deviceID = deviceID
+        self.subgroupMinSize = subgroupMinSize
+        self.subgroupMaxSize = subgroupMaxSize
+    }
 }
 
 // WGPUFeatureLevel
@@ -1858,6 +1905,19 @@ public final class Adapter: @unchecked Sendable {
         wgpuAdapterRelease(handle)
     }
 
+    // wgpuAdapterGetInfo
+    public func getInfo() throws -> AdapterInfo {
+        var cInfo = WGPUAdapterInfo()
+        guard wgpuAdapterGetInfo(handle, &cInfo) == WGPUStatus_Success else {
+            throw WebGPUError.getAdapterInfoFailed
+        }
+        defer {
+            // wgpuAdapterInfoFreeMembers
+            wgpuAdapterInfoFreeMembers(cInfo)
+        }
+        return AdapterInfo(cInfo)
+    }
+
     // wgpuAdapterRequestDevice
     public func requestDevice() async throws -> Device {
         let result: DeviceRequestResult = await withCheckedContinuation { continuation in
@@ -2076,6 +2136,19 @@ public final class Device: @unchecked Sendable {
             default: .unknown
             }
         return type == .noError ? nil : DeviceError(type: type, message: result.message)
+    }
+
+    // wgpuDeviceGetAdapterInfo
+    public func getAdapterInfo() throws -> AdapterInfo {
+        var cInfo = WGPUAdapterInfo()
+        guard wgpuDeviceGetAdapterInfo(handle, &cInfo) == WGPUStatus_Success else {
+            throw WebGPUError.getAdapterInfoFailed
+        }
+        defer {
+            // wgpuAdapterInfoFreeMembers
+            wgpuAdapterInfoFreeMembers(cInfo)
+        }
+        return AdapterInfo(cInfo)
     }
 
     // wgpuDeviceCreateCommandEncoder
@@ -2790,6 +2863,23 @@ private final class DeviceRequestContext: @unchecked Sendable {
 
     init(_ continuation: CheckedContinuation<DeviceRequestResult, Never>) {
         self.continuation = continuation
+    }
+}
+
+private extension AdapterInfo {
+    init(_ info: WGPUAdapterInfo) {
+        self.init(
+            vendor: decode(info.vendor),
+            architecture: decode(info.architecture),
+            device: decode(info.device),
+            description: decode(info.description),
+            backendType: BackendType(rawValue: UInt32(truncatingIfNeeded: info.backendType.rawValue)) ?? .undefined,
+            adapterType: AdapterType(rawValue: UInt32(truncatingIfNeeded: info.adapterType.rawValue)) ?? .unknown,
+            vendorID: info.vendorID,
+            deviceID: info.deviceID,
+            subgroupMinSize: info.subgroupMinSize,
+            subgroupMaxSize: info.subgroupMaxSize
+        )
     }
 }
 

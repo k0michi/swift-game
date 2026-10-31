@@ -617,4 +617,21 @@ struct WebGPUTests {
 
         withExtendedLifetime((instance, adapter, device, texture)) {}
     }
+
+    @Test
+    func describesTheNullAdapter() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let info = try adapter.getInfo()
+        #expect(info.backendType == .null)
+        #expect(!info.device.isEmpty || !info.description.isEmpty)
+        let device = try await adapter.requestDevice()
+        let deviceInfo = try device.getAdapterInfo()
+        #expect(deviceInfo.backendType == .null)
+        #expect(deviceInfo.device == info.device)
+
+        withExtendedLifetime((instance, adapter, device)) {}
+    }
 }
