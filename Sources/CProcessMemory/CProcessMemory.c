@@ -68,8 +68,12 @@ uint64_t process_memory_current(void) {
 
 uint64_t process_memory_peak(void) {
     struct rusage usage;
-    // Linux counts ru_maxrss in kilobytes.
-    return getrusage(RUSAGE_SELF, &usage) == 0 ? (uint64_t)usage.ru_maxrss * 1024 : 0;
+    if (getrusage(RUSAGE_SELF, &usage) != 0) return 0;
+    // Linux counts ru_maxrss in kilobytes, and updates it later than the
+    // resident set, so it can fall behind what statm says now.
+    uint64_t peak = (uint64_t)usage.ru_maxrss * 1024;
+    uint64_t current = process_memory_current();
+    return current > peak ? current : peak;
 }
 
 #else
