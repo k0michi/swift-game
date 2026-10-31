@@ -312,7 +312,7 @@ let package = Package(
         ),
         .testTarget(
             name: "GameToolkitTests",
-            dependencies: ["GameToolkit"] + systemProduct,
+            dependencies: ["GameToolkit", "Dawn"] + systemProduct,
             swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags)]
         ),
         .testTarget(

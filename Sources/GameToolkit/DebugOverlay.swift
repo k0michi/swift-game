@@ -1,3 +1,4 @@
+import Dawn
 import VectorMath
 
 /// Recent frame intervals for the profiler-style graph, oldest first from `next`.
@@ -76,10 +77,12 @@ public struct FPSCounter {
     }
 
     // Draws the FPS in the top-left corner with the dot font, and what was
-    // built in smaller dots under it, over a dark backdrop and with a
-    // shadow so they stay readable on any background.
-    public func append(to batch: inout ShapeBatch) {
-        let lines: [(text: String, scale: Float)] = [(text, 2), (BuildInfo.version, 1)]
+    // built and `details`, such as `describe(_:)` of the adapter, in smaller
+    // dots under it, over a dark backdrop and with a shadow so they stay
+    // readable on any background.
+    public func append(to batch: inout ShapeBatch, details: [String] = []) {
+        let lines: [(text: String, scale: Float)] =
+            [(text, 2), (BuildInfo.version, 1)] + details.map { ($0, 1) }
         let padding: Float = 4
         let lineSpacing: Float = 3
 
@@ -96,4 +99,35 @@ public struct FPSCounter {
             origin.y += Float(BitmapFont.glyphHeight) * scale + lineSpacing
         }
     }
+}
+
+/// Lines for the debug overlay on what WebGPU says of the adapter: its name,
+/// its backend and kind, and its vendor, architecture and driver, leaving out
+/// what it does not say. A browser says little, to keep pages from telling
+/// devices apart.
+public func describe(_ info: AdapterInfo) -> [String] {
+    let name = [info.device, info.description].first { !$0.isEmpty }
+    let backend =
+        switch info.backendType {
+        case .undefined: "unknown backend"
+        case .null: "null"
+        case .webGPU: "WebGPU"
+        case .d3D11: "D3D11"
+        case .d3D12: "D3D12"
+        case .metal: "Metal"
+        case .vulkan: "Vulkan"
+        case .openGL: "OpenGL"
+        case .openGLES: "OpenGL ES"
+        }
+    let kind: String? =
+        switch info.adapterType {
+        case .discreteGPU: "discrete GPU"
+        case .integratedGPU: "integrated GPU"
+        case .cpu: "CPU"
+        case .unknown: nil
+        }
+    let source = [info.vendor, info.architecture].filter { !$0.isEmpty }.joined(separator: " ")
+    let driver = info.description == name ? "" : info.description
+    return [name, [backend, kind].compactMap(\.self).joined(separator: ", "), source, driver]
+        .compactMap { $0?.isEmpty == false ? $0 : nil }
 }
