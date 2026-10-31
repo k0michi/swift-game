@@ -23,6 +23,7 @@ struct SwiftGame: AsyncMain {
         let surface = try instance.createSurface(from: window)
         let adapter = try await instance.requestAdapter(options: platformAdapterOptions())
         let device = try await adapter.requestDevice()
+        let deviceDetails = (try? describe(adapter.getInfo())) ?? []
         let format = try configureSurface(surface, device: device, adapter: adapter, window: window).format
         let renderer = try ShapeRenderer(device: device, format: format)
 
@@ -121,7 +122,7 @@ struct SwiftGame: AsyncMain {
                 color: game.isOver ? Vector4(1, 0.3, 0.3, 1) : Vector4(1, 1, 1, 1))
             if showsOverlay {
                 frameGraph.append(to: &batch)
-                fpsCounter.append(to: &batch)
+                fpsCounter.append(to: &batch, details: deviceDetails)
             }
 
             let background: Color =
