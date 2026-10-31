@@ -262,7 +262,8 @@ let package = Package(
         .target(
             name: "GameToolkit",
             dependencies: [
-                "SDL3", "Dawn", "CBuildInfo", "VectorMath", "Echo", "StbImageWrite", "CGameToolkitWeb", realModule,
+                "SDL3", "Dawn", "CBuildInfo", "VectorMath", "Echo", "StbImageWrite", "CGameToolkitWeb", "ProcessMemory",
+                realModule,
             ] + echoOutput + systemProduct,
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),

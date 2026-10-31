@@ -1,4 +1,5 @@
 import Dawn
+import ProcessMemory
 import VectorMath
 
 /// Recent frame intervals for the profiler-style graph, oldest first from `next`.
@@ -56,13 +57,15 @@ public struct FrameGraph {
     }
 }
 
-/// Frames per second, averaged over half a second so the number is readable.
+/// Frames per second, averaged over half a second so the number is readable,
+/// and the memory the process uses, read as often.
 public struct FPSCounter {
     static let interval: Float = 500
 
     var frames = 0
     var milliseconds: Float = 0
     var text = "--.- FPS"
+    var memoryText = memoryDescription()
 
     public init() {}
 
@@ -72,17 +75,30 @@ public struct FPSCounter {
         guard milliseconds >= Self.interval else { return }
         let fps = Float(frames) * 1000 / milliseconds
         text = "\(formatTenths(fps)) FPS  \(formatTenths(milliseconds / Float(frames))) ms"
+        memoryText = Self.memoryDescription()
         frames = 0
         milliseconds = 0
     }
 
-    // Draws the FPS in the top-left corner with the dot font, and what was
-    // built and `details`, such as `describe(_:)` of the adapter, in smaller
-    // dots under it, over a dark backdrop and with a shadow so they stay
-    // readable on any background.
+    // "memory 123.4 MB", with the peak when it was more, or nothing if the
+    // platform cannot tell.
+    static func memoryDescription() -> String? {
+        guard let current = currentMemory() else { return nil }
+        func megabytes(_ bytes: UInt64) -> String {
+            "\(formatTenths(Float(bytes) / Float(1 << 20))) MB"
+        }
+        let peak = peakMemory().flatMap { $0 > current ? ", peak \(megabytes($0))" : nil } ?? ""
+        return "memory \(megabytes(current))\(peak)"
+    }
+
+    // Draws the FPS in the top-left corner with the dot font, and the memory
+    // used, what was built and `details`, such as `describe(_:)` of the
+    // adapter, in smaller dots under it, over a dark backdrop and with a
+    // shadow so they stay readable on any background.
     public func append(to batch: inout ShapeBatch, details: [String] = []) {
         let lines: [(text: String, scale: Float)] =
-            [(text, 2), (BuildInfo.version, 1)] + details.map { ($0, 1) }
+            [(text, 2)] + [memoryText, BuildInfo.version].compactMap { $0.map { ($0, 1) } }
+            + details.map { ($0, 1) }
         let padding: Float = 4
         let lineSpacing: Float = 3
 
