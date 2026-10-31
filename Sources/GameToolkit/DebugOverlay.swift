@@ -92,13 +92,16 @@ public struct FPSCounter {
     }
 
     // Draws the FPS in the top-left corner with the dot font, and the memory
-    // used, what was built and `details`, such as `describe(_:)` of the
-    // adapter, in smaller dots under it, over a dark backdrop and with a
-    // shadow so they stay readable on any background.
+    // used, what was built, with what for what, and `details`, such as
+    // `describe(_:)` of the adapter, in smaller dots under it, over a dark
+    // backdrop and with a shadow so they stay readable on any background.
     public func append(to batch: inout ShapeBatch, details: [String] = []) {
+        let build = [
+            "\(BuildInfo.version) \(BuildInfo.configuration)",
+            "Swift \(BuildInfo.swiftVersion) \(BuildInfo.triple)",
+        ]
         let lines: [(text: String, scale: Float)] =
-            [(text, 2)] + [memoryText, BuildInfo.version].compactMap { $0.map { ($0, 1) } }
-            + details.map { ($0, 1) }
+            [(text, 2)] + ([memoryText].compactMap(\.self) + build + details).map { ($0, 1) }
         let padding: Float = 4
         let lineSpacing: Float = 3
 
