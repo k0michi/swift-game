@@ -11,7 +11,8 @@ public enum SurfaceError: Error {
 
 /// Configures `surface` to present to `window` at its size in pixels, in the
 /// surface's preferred format, with vertical sync where it can, and returns
-/// the configuration.
+/// the configuration. Its textures can be copied from, for screenshots,
+/// where the surface allows.
 @MainActor
 @discardableResult
 public func configureSurface(
@@ -40,8 +41,10 @@ public func configureSurface(
     guard size.w > 0, size.h > 0 else {
         throw SurfaceError.invalidWindowPixelSize
     }
+    let usage: TextureUsage =
+        capabilities.usages.contains(.copySrc) ? [.renderAttachment, .copySrc] : .renderAttachment
     let configuration = SurfaceConfiguration(
-        device: device, format: format, usage: .renderAttachment, width: UInt32(size.w),
+        device: device, format: format, usage: usage, width: UInt32(size.w),
         height: UInt32(size.h), viewFormats: [], alphaMode: alphaMode, presentMode: presentMode)
     try surface.configure(configuration)
     return configuration

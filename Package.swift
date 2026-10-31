@@ -143,8 +143,8 @@ let package = Package(
             name: "Echo",
             dependencies: ["CEchoWeb", .product(name: "Atomics", package: "swift-atomics")]
         ),
-        // Swift targets that import SDL3 or Dawn, even indirectly, need their
-        // headers to load CSDL3 or CDawn.
+        // Swift targets that import SDL3, Dawn or stb, even indirectly, need
+        // their headers to load CSDL3, CDawn or CStb*.
         .target(
             name: "EchoSDL3",
             dependencies: ["Echo", "SDL3"],
@@ -243,18 +243,22 @@ let package = Package(
         // Utilities on SDL3, WebGPU and Web Audio that games share: drawing
         // 2D shapes, 3D meshes and dot text, a debug overlay, and helpers that
         // hide what differs between the platforms.
+        // Downloads a file in a browser, for screenshots.
+        .target(name: "CGameToolkitWeb"),
         .target(
             name: "GameToolkit",
-            dependencies: ["SDL3", "Dawn", "CBuildInfo", "VectorMath", "Echo", realModule] + echoOutput,
+            dependencies: [
+                "SDL3", "Dawn", "CBuildInfo", "VectorMath", "Echo", "StbImageWrite", "CGameToolkitWeb", realModule,
+            ] + echoOutput,
             swiftSettings: [
-                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
+                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
             ]
         ),
         .executableTarget(
             name: "SwiftGame",
             dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule],
             swiftSettings: [
-                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
+                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
             ] + customExecutorSettings
         ),
         // A 3D shooting game, made of plain shapes.
@@ -262,7 +266,7 @@ let package = Package(
             name: "Shooter",
             dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule],
             swiftSettings: [
-                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags),
+                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
             ] + customExecutorSettings
         ),
         // Echo on the browser's Web Audio, run in headless Chromium by
@@ -295,7 +299,7 @@ let package = Package(
         .testTarget(
             name: "ShooterTests",
             dependencies: ["Shooter", "VectorMath"],
-            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags)]
+            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags)]
         ),
         .testTarget(
             name: "StbTests",
