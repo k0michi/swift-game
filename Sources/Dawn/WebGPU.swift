@@ -2647,8 +2647,8 @@ public final class Surface {
         var usages = TextureUsage(rawValue: cCapabilities.usages)
         #if os(Emscripten)
         // Emdawnwebgpu leaves usages at 0, though a canvas can always be
-        // rendered to.
-        usages.insert(.renderAttachment)
+        // rendered to and copied from and to.
+        usages.formUnion([.renderAttachment, .copySrc, .copyDst])
         #endif
 
         return SurfaceCapabilities(
