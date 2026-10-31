@@ -82,6 +82,8 @@ let stbSwiftCompilerFlags = stbCompilerFlags.flatMap { ["-Xcc", $0] }
 let stbImageLinkerFlags = readStbFlags(named: "stb_image-linker")
 let stbImageWriteLinkerFlags = readStbFlags(named: "stb_image_write-linker")
 let stbVorbisLinkerFlags = readStbFlags(named: "stb_vorbis-linker")
+let stbRectPackLinkerFlags = readStbFlags(named: "stb_rect_pack-linker")
+let stbTrueTypeLinkerFlags = readStbFlags(named: "stb_truetype-linker")
 
 // Echo plays through SDL3 on the desktop, and through the browser's Web Audio
 // on the web.
@@ -116,6 +118,8 @@ let package = Package(
         .library(name: "StbImage", targets: ["StbImage"]),
         .library(name: "StbImageWrite", targets: ["StbImageWrite"]),
         .library(name: "StbVorbis", targets: ["StbVorbis"]),
+        .library(name: "StbRectPack", targets: ["StbRectPack"]),
+        .library(name: "StbTrueType", targets: ["StbTrueType"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
@@ -165,8 +169,8 @@ let package = Package(
                 .linkedLibrary("c++", .when(platforms: [.macOS])),
             ]
         ),
-        // stb_image, stb_image_write and stb_vorbis, each on its own, built
-        // by scripts/build-stb.sh.
+        // stb_image, stb_image_write, stb_vorbis, stb_rect_pack and
+        // stb_truetype, each on its own, built by scripts/build-stb.sh.
         .target(
             name: "CStbImage",
             cSettings: [.unsafeFlags(stbCompilerFlags)],
@@ -195,6 +199,28 @@ let package = Package(
         .target(
             name: "StbVorbis",
             dependencies: ["CStbVorbis"],
+            swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
+        ),
+        .target(
+            name: "CStbRectPack",
+            cSettings: [.unsafeFlags(stbCompilerFlags)],
+            linkerSettings: [.unsafeFlags(stbRectPackLinkerFlags)]
+        ),
+        .target(
+            name: "StbRectPack",
+            dependencies: ["CStbRectPack"],
+            swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
+        ),
+        // stb_truetype packs glyphs with stb_rect_pack.
+        .target(
+            name: "CStbTrueType",
+            dependencies: ["CStbRectPack"],
+            cSettings: [.unsafeFlags(stbCompilerFlags)],
+            linkerSettings: [.unsafeFlags(stbTrueTypeLinkerFlags)]
+        ),
+        .target(
+            name: "StbTrueType",
+            dependencies: ["CStbTrueType"],
             swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
         ),
         .target(
@@ -273,7 +299,8 @@ let package = Package(
         ),
         .testTarget(
             name: "StbTests",
-            dependencies: ["StbImage", "StbImageWrite", "StbVorbis"],
+            dependencies: ["StbImage", "StbImageWrite", "StbVorbis", "StbRectPack", "StbTrueType"],
+            exclude: ["make-test-font.py"],
             resources: [.copy("Resources")],
             swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
         ),
