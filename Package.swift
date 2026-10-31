@@ -124,6 +124,7 @@ let package = Package(
         .library(name: "EchoSDL3", targets: ["EchoSDL3"]),
         .library(name: "MainLoop", targets: ["MainLoop"]),
         .library(name: "VectorMath", targets: ["VectorMath"]),
+        .library(name: "ProcessMemory", targets: ["ProcessMemory"]),
         .library(name: "StbImage", targets: ["StbImage"]),
         .library(name: "StbImageWrite", targets: ["StbImageWrite"]),
         .library(name: "StbVorbis", targets: ["StbVorbis"]),
@@ -144,6 +145,10 @@ let package = Package(
             dependencies: [.product(name: "RealModule", package: "swift-numerics")]
         ),
         .target(name: "CEmscripten"),
+        // How much memory the process uses, on each platform. It depends on
+        // nothing else, so that it can move to a package of its own.
+        .target(name: "CProcessMemory"),
+        .target(name: "ProcessMemory", dependencies: ["CProcessMemory"]),
         // What was built, from scripts/generate-build-info.sh.
         .target(name: "CBuildInfo"),
         .target(name: "MainLoop", dependencies: ["CEmscripten"]),
@@ -321,6 +326,10 @@ let package = Package(
             exclude: ["make-test-font.py"],
             resources: [.copy("Resources")],
             swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
+        ),
+        .testTarget(
+            name: "ProcessMemoryTests",
+            dependencies: ["ProcessMemory"]
         ),
         .testTarget(
             name: "VectorMathTests",
