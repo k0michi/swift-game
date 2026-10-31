@@ -22,7 +22,7 @@ shooter) target=Shooter ;;
     ;;
 esac
 
-"$script_directory/../generate-build-info.sh"
+"$script_directory/../generate-build-info.sh" wasm32-unknown-emscripten
 "$script_directory/build-sdl.sh"
 "$script_directory/build-dawn.sh"
 "$script_directory/build-stb.sh"
