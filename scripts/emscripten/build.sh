@@ -22,9 +22,10 @@ shooter) target=Shooter ;;
     ;;
 esac
 
-"$script_directory/../generate-build-info.sh" wasm32-unknown-emscripten
 "$script_directory/build-sdl.sh"
 "$script_directory/build-dawn.sh"
 "$script_directory/build-stb.sh"
+"$script_directory/../generate-build-info.sh" \
+    "$("$script_directory/swift-build.sh" --configuration "$configuration" --show-bin-path | tail -n 1)"
 "$script_directory/swift-build.sh" --configuration "$configuration" --target "$target"
 "$script_directory/link.sh" "$product" "$configuration"

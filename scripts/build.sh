@@ -4,7 +4,6 @@ set -eu
 
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
-"$repository_root/scripts/generate-build-info.sh"
 "$repository_root/scripts/build-sdl.sh"
 "$repository_root/scripts/build-dawn.sh"
 "$repository_root/scripts/build-stb.sh"
@@ -12,4 +11,6 @@ repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 # about, so neither its cached manifest nor its build plans would see them
 # change.
 rm -f "$repository_root/.build/debug.yaml" "$repository_root/.build/release.yaml"
+"$repository_root/scripts/generate-build-info.sh" \
+    "$(swift build --package-path "$repository_root" --manifest-cache none --show-bin-path "$@" | tail -n 1)"
 swift build --package-path "$repository_root" --manifest-cache none "$@"
