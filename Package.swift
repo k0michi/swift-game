@@ -115,6 +115,7 @@ let package = Package(
     products: [
         .executable(name: "swift-game", targets: ["SwiftGame"]),
         .executable(name: "shooter", targets: ["Shooter"]),
+        .executable(name: "pong", targets: ["Pong"]),
         .library(name: "GameToolkit", targets: ["GameToolkit"]),
         .library(name: "SDL3", targets: ["SDL3"]),
         .library(name: "Dawn", targets: ["Dawn"]),
@@ -284,6 +285,14 @@ let package = Package(
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
             ] + customExecutorSettings
         ),
+        // Pong against the computer, in 2D.
+        .executableTarget(
+            name: "Pong",
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule],
+            swiftSettings: [
+                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
+            ] + customExecutorSettings
+        ),
         // Echo on the browser's Web Audio, run in headless Chromium by
         // scripts/emscripten/test-browser.sh.
         .executableTarget(
@@ -314,6 +323,11 @@ let package = Package(
         .testTarget(
             name: "ShooterTests",
             dependencies: ["Shooter", "VectorMath"],
+            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags)]
+        ),
+        .testTarget(
+            name: "PongTests",
+            dependencies: ["Pong", "VectorMath"],
             swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags)]
         ),
         .testTarget(
