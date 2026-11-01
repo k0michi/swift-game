@@ -139,7 +139,7 @@ jobs:
           name="swift-game-$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')"
           package="$RUNNER_TEMP/$name"
           mkdir -p "$package"
-          for game in swift-game shooter; do
+          for game in swift-game shooter pong; do
             cp "$(swift build -c release --show-bin-path)/$game" "$package/"
             if [ "$RUNNER_OS" = Linux ]; then
               mkdir -p "$package/lib"
@@ -160,7 +160,7 @@ jobs:
           $package = Join-Path $env:RUNNER_TEMP "swift-game-windows"
           New-Item -ItemType Directory -Force $package | Out-Null
           $bin = swift build -c release --show-bin-path
-          foreach ($game in "swift-game", "shooter") {
+          foreach ($game in "swift-game", "shooter", "pong") {
             Copy-Item (Join-Path $bin "$game.exe") $package
           }
           $swiftRuntime = Split-Path -Parent (Get-Command swiftCore.dll).Source
@@ -254,6 +254,7 @@ jobs:
         run: |
           ./scripts/emscripten/build.sh debug swift-game
           ./scripts/emscripten/build.sh debug shooter
+          ./scripts/emscripten/build.sh debug pong
 
       - name: Save the dependencies
         if: env.SAVES_CACHES == 'true' && steps.dependencies-cache.outputs.cache-hit != 'true'
@@ -273,14 +274,15 @@ jobs:
         run: ./scripts/emscripten/test-browser.sh
 
       # Pushes to the default branch publish the games on GitHub Pages: the
-      # bullet-dodging game at the top, and the shooter at /shooter/.
+      # bullet-dodging game at the top, the shooter at /shooter/, and Pong at
+      # /pong/.
       - name: Build the games (release)
         if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         shell: bash
         run: |
           site="$RUNNER_TEMP/site"
           release=.build/wasm32-unknown-emscripten/release
-          for game in swift-game shooter; do
+          for game in swift-game shooter pong; do
             ./scripts/emscripten/build.sh release "$game"
             page="$site"
             if [ "$game" != swift-game ]; then page="$site/$game"; fi
