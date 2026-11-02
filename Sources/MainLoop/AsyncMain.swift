@@ -19,7 +19,7 @@ public protocol AsyncMain {
 #else
     extension AsyncMain {
         public static func main() {
-            runMain(run)
+            runMain { try await run() }
         }
     }
 #endif
