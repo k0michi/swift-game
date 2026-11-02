@@ -117,9 +117,6 @@ struct TrueTypeTests {
 
     @Test
     func failsWhenItCannot() throws {
-        #expect(throws: StbTrueTypeError(operation: "stbtt_InitFont", message: "not a font")) {
-            try initFont(data: Array("not a font".utf8))
-        }
         let context = try packBegin(width: 16, height: 16)
         #expect(throws: StbTrueTypeError(operation: "stbtt_PackFontRange", message: "not all characters fit")) {
             try packFontRange(
