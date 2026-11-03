@@ -32,8 +32,12 @@ final class ViewGraph {
     /// Whether a state has changed since the frame was built, for an app that
     /// does not build a frame until something changes.
     var needsUpdate = true
-    /// The clicks of the frame being built, in points.
+    /// The clicks of the frame being built, in points: where a mouse button
+    /// went down, and where one went up.
     var clicks: [(x: Float, y: Float)] = []
+    var releases: [(x: Float, y: Float)] = []
+    /// Where the pointer is, in points, if it is over the window.
+    var pointer: (x: Float, y: Float)?
     /// The keys and text of the frame being built.
     var inputs: [InputEvent] = []
     /// When the frame is, in seconds, for what blinks or moves.
@@ -42,6 +46,10 @@ final class ViewGraph {
     private(set) var focus: Identity?
     private var focusClaimed = false
     private var focusDrawn = false
+    // The view a press began on, until the button goes up, and what each
+    // interactive view was in the last frame.
+    private var pressed: Identity?
+    private var interactions: [Identity: Interaction] = [:]
 
     private var storage: [StateKey: AnyObject] = [:]
     private var visited = Set<StateKey>()
@@ -79,10 +87,43 @@ final class ViewGraph {
         } else if focus == nil && textInput.isActive {
             try textInput.stop()
         }
+        if !releases.isEmpty {
+            pressed = nil
+        }
         clicks.removeAll(keepingCapacity: true)
+        releases.removeAll(keepingCapacity: true)
         inputs.removeAll(keepingCapacity: true)
         focusClaimed = false
         focusDrawn = false
+    }
+
+    /// What the interactive view at `identity` was in the last frame: whether
+    /// the pointer was over it, and whether it was pressed.
+    func interaction(at identity: Identity) -> Interaction {
+        interactions[identity] ?? Interaction()
+    }
+
+    /// Has the interactive view at `identity` take this frame's pointer, as it
+    /// is drawn from `x`, `y`, `width` by `height`: a button going down on it
+    /// presses it, and going up on it while it is pressed runs `action`.
+    func interact(
+        at identity: Identity, x: Float, y: Float, width: Float, height: Float, action: (() -> Void)?
+    ) {
+        func contains(_ point: (x: Float, y: Float)) -> Bool {
+            (x..<x + width).contains(point.x) && (y..<y + height).contains(point.y)
+        }
+        if clicks.contains(where: contains) {
+            pressed = identity
+        }
+        let hovered = pointer.map(contains) ?? false
+        if pressed == identity, let release = releases.last, contains(release) {
+            action?()
+        }
+        let interaction = Interaction(isHovered: hovered, isPressed: pressed == identity && hovered)
+        if interactions[identity] != interaction {
+            interactions[identity] = interaction
+            needsUpdate = true
+        }
     }
 
     /// The nodes of `root` for this frame. The state of the views that were in
@@ -90,30 +131,35 @@ final class ViewGraph {
     func update(_ root: some View) -> [any Node] {
         visited.removeAll(keepingCapacity: true)
         needsUpdate = false
-        let nodes = resolve([root], at: Identity())
+        let nodes = resolve([root], in: ResolveContext(graph: self, identity: Identity(), environment: EnvironmentValues()))
         storage = storage.filter { visited.contains($0.key) }
+        interactions = interactions.filter { key, _ in visited.contains(StateKey(identity: key, property: -2)) }
         return nodes
     }
 
-    /// The nodes of `views`, each at its place under `identity`.
-    func resolve(_ views: [any View], at identity: Identity) -> [any Node] {
+    /// The nodes of `views`, each at its place under `context`'s view.
+    func resolve(_ views: [any View], in context: ResolveContext) -> [any Node] {
         views.enumerated().flatMap { index, view in
-            resolve(view, at: identity.appending(Place(index: index, type: ObjectIdentifier(type(of: view)))))
+            resolve(view, in: context.appending(Place(index: index, type: ObjectIdentifier(type(of: view)))))
         }
     }
 
-    private func resolve<V: View>(_ view: V, at identity: Identity) -> [any Node] {
+    private func resolve<V: View>(_ view: V, in context: ResolveContext) -> [any Node] {
+        // Interactive views are kept by their identities as other state is.
+        visited.insert(StateKey(identity: context.identity, property: -2))
         if let primitive = view as? any PrimitiveView {
-            return primitive.makeNodes(in: self, at: identity)
+            return primitive.makeNodes(in: context)
         }
         // Its state, found by its identity and the order of its properties,
-        // goes into the copy of it that is evaluated.
+        // and its environment go into the copy of it that is evaluated.
         for (index, child) in Mirror(reflecting: view).children.enumerated() {
-            if let property = child.value as? any StateProperty {
-                property.install(in: self, key: StateKey(identity: identity, property: index))
+            if let property = child.value as? any DynamicProperty {
+                property.install(
+                    in: self, key: StateKey(identity: context.identity, property: index),
+                    environment: context.environment)
             }
         }
-        return resolve([view.body], at: identity)
+        return resolve([view.body], in: context)
     }
 
     /// What a primitive view at `identity` keeps from frame to frame, made
@@ -154,16 +200,24 @@ final class StateBox<Value> {
     }
 }
 
+/// Whether the pointer is over a view, and whether it is pressed.
+struct Interaction: Equatable {
+    var isHovered = false
+    var isPressed = false
+}
+
+// A property of a view that the graph gives what it needs before the view's
+// body is evaluated: its state, or its environment.
 @MainActor
-private protocol StateProperty {
-    func install(in graph: ViewGraph, key: StateKey)
+private protocol DynamicProperty {
+    func install(in graph: ViewGraph, key: StateKey, environment: EnvironmentValues)
 }
 
 /// A value a view keeps from frame to frame, as SwiftUI's @State. It is the
 /// initial value until the view is first evaluated in a ViewGraph.
 @MainActor
 @propertyWrapper
-struct State<Value>: StateProperty {
+struct State<Value>: DynamicProperty {
     private final class Location {
         var box: StateBox<Value>?
         weak var graph: ViewGraph?
@@ -191,9 +245,34 @@ struct State<Value>: StateProperty {
         Binding(get: { wrappedValue }, set: { wrappedValue = $0 })
     }
 
-    fileprivate func install(in graph: ViewGraph, key: StateKey) {
+    fileprivate func install(in graph: ViewGraph, key: StateKey, environment: EnvironmentValues) {
         location.box = graph.box(key, initial: initial)
         location.graph = graph
+    }
+}
+
+/// A value of the environment a view is in, as SwiftUI's @Environment.
+@MainActor
+@propertyWrapper
+struct Environment<Value>: DynamicProperty {
+    @MainActor
+    private final class Location {
+        var environment = EnvironmentValues()
+    }
+
+    private let keyPath: KeyPath<EnvironmentValues, Value>
+    private let location = Location()
+
+    init(_ keyPath: KeyPath<EnvironmentValues, Value>) {
+        self.keyPath = keyPath
+    }
+
+    var wrappedValue: Value {
+        location.environment[keyPath: keyPath]
+    }
+
+    fileprivate func install(in graph: ViewGraph, key: StateKey, environment: EnvironmentValues) {
+        location.environment = environment
     }
 }
 

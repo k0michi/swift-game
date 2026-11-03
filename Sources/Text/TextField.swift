@@ -19,8 +19,12 @@ struct TextField: PrimitiveView {
         self.onSubmit = onSubmit
     }
 
-    func makeNodes(in graph: ViewGraph, at identity: Identity) -> [any Node] {
-        [TextFieldNode(field: self, identity: identity, graph: graph, state: graph.state(at: identity, initial: State()))]
+    func makeNodes(in context: ResolveContext) -> [any Node] {
+        [
+            TextFieldNode(
+                field: self, identity: context.identity, graph: context.graph,
+                state: context.graph.state(at: context.identity, initial: State()))
+        ]
     }
 
     // What it keeps from frame to frame.

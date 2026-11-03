@@ -9,7 +9,7 @@ struct TextSample: AsyncMain {
     static func run() async throws {
         let system = try `init`(flags: [.video])
         defer { withExtendedLifetime(system) {} }
-        let window = try createWindow(title: "text", w: 640, h: 480, flags: platformWindowFlags([.highPixelDensity]))
+        let window = try createWindow(title: "text", w: 640, h: 600, flags: platformWindowFlags([.highPixelDensity]))
 
         let instance = try createInstance()
         let surface = try instance.createSurface(from: window)
@@ -33,8 +33,19 @@ struct TextSample: AsyncMain {
                 } else if let event = event as? KeyboardEvent, event.down {
                     graph.inputs.append(.key(event))
                 }
-                if let event = event as? MouseButtonEvent, event.down {
-                    graph.clicks.append((event.x, event.y))
+                if let event = event as? MouseMotionEvent {
+                    graph.pointer = (event.x, event.y)
+                }
+                if let event = event as? MouseButtonEvent {
+                    graph.pointer = (event.x, event.y)
+                    if event.down {
+                        graph.clicks.append((event.x, event.y))
+                    } else {
+                        graph.releases.append((event.x, event.y))
+                    }
+                }
+                if event.type == .windowMouseLeave {
+                    graph.pointer = nil
                 }
                 if event.type == .windowPixelSizeChanged {
                     configuration = (try? configureSurface(surface, device: device, adapter: adapter, window: window)) ?? configuration
@@ -84,6 +95,8 @@ struct Screen: View {
     var frame: Int
     @State private var showsSecond = true
     @State private var name = ""
+    @State private var pressed = "まだ何も押されていません"
+    @State private var sound = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -93,6 +106,17 @@ struct Screen: View {
                 // Text(name.isEmpty ? "名前を入力してください" : "こんにちは、\(name)さん")
             }
             Text("あのイーハトーヴォのすきとおった風、夏でも底に冷たさをもつ青いそら、うつくしい森で飾られたモリーオ市、郊外のぎらぎらひかる草の波。")
+            // The same buttons, in a style of the game's own.
+            HStack(spacing: 16) {
+                Button("はじめる") { pressed = "「はじめる」が押されました" }
+                Button("つづきから") { pressed = "「つづきから」が押されました" }
+            }
+            .buttonStyle(GameButtonStyle(color: Color(r: 0.95, g: 0.55, b: 0.15, a: 1)))
+            Text(pressed).font(size: 14).foregroundColor(Color(r: 0.7, g: 0.7, b: 0.7, a: 1))
+            HStack(spacing: 12) {
+                Switch(isOn: $sound)
+                Text(sound ? "サウンド: オン" : "サウンド: オフ")
+            }
             Counter(title: "A")
             if showsSecond {
                 Counter(title: "B")
@@ -127,5 +151,52 @@ struct Stepper: View {
             Button("+") { value += 1 }
             Button("リセット") { value = 0 }
         }
+    }
+}
+
+// A chunky button, its face over its darker side, which it sinks onto when it
+// is pressed, and lighter when the pointer is over it.
+struct GameButtonStyle: ButtonStyle {
+    var color: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        let sink: Float = configuration.isPressed ? 4 : 0
+        let face = configuration.isHovered ? color.mixed(with: .white, by: 0.2) : color
+        ZStack {
+            RoundedRectangle(cornerRadius: 12).fill(color.mixed(with: .black, by: 0.45)).offset(y: 4)
+            RoundedRectangle(cornerRadius: 12).fill(face).offset(y: sink)
+            RoundedRectangle(cornerRadius: 12).stroke(Color(r: 1, g: 1, b: 1, a: 0.5), lineWidth: 2).offset(y: sink)
+            configuration.label
+                .font(size: 20)
+                .foregroundColor(.white)
+                .padding(horizontal: 24, vertical: 10)
+                .offset(y: sink)
+        }
+    }
+}
+
+// An on-off switch of its own, of shapes and a tap.
+struct Switch: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        ZStack(horizontalAlignment: isOn ? .trailing : .leading) {
+            Capsule().fill(isOn ? Color(r: 0.3, g: 0.8, b: 0.45, a: 1) : Color(r: 0.35, g: 0.36, b: 0.42, a: 1))
+            Capsule().fill(.white).frame(width: 22, height: 22).padding(3)
+        }
+        .frame(width: 52, height: 28)
+        .onTapGesture { isOn.toggle() }
+    }
+}
+
+extension Color {
+    static let white = Color(r: 1, g: 1, b: 1, a: 1)
+    static let black = Color(r: 0, g: 0, b: 0, a: 1)
+
+    /// This color `amount` of the way to `other`.
+    func mixed(with other: Color, by amount: Double) -> Color {
+        Color(
+            r: r + (other.r - r) * amount, g: g + (other.g - g) * amount, b: b + (other.b - b) * amount,
+            a: a + (other.a - a) * amount)
     }
 }
