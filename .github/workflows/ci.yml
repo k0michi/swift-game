@@ -127,30 +127,14 @@ jobs:
         shell: pwsh
         run: ./scripts/build.ps1 -c release
 
-      # The release builds of both games. SDL and Dawn are linked statically,
-      # so the games need at most the Swift runtime beside them:
-      # macOS has its own, Linux gets the toolchain's in lib, found through
-      # the executable's run path, and Windows gets it and the Visual C++
-      # runtime beside the executable. macOS and Linux are archived with tar,
-      # which keeps the executable bit that an artifact's zip would drop.
+      # macOS and Linux are archived with tar, which keeps the executable bit
+      # that an artifact's zip would drop.
       - name: Package the games
         if: runner.os != 'Windows'
         shell: bash
         run: |
           name="swift-game-$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')"
-          package="$RUNNER_TEMP/$name"
-          mkdir -p "$package"
-          cp "$(swift build -c release --show-bin-path)/NotoSansJP-Regular.otf" "$(swift build -c release --show-bin-path)/NotoSansJP-LICENSE.txt" "$package/"
-          for game in swift-game shooter pong text; do
-            cp "$(swift build -c release --show-bin-path)/$game" "$package/"
-            if [ "$RUNNER_OS" = Linux ]; then
-              mkdir -p "$package/lib"
-              ldd "$package/$game" |
-                awk -v toolchain="$GITHUB_WORKSPACE/.swift-toolchain/" 'index($3, toolchain) == 1 { print $3 }' |
-                xargs -r cp -t "$package/lib"
-              patchelf --set-rpath '$ORIGIN/lib' "$package/$game"
-            fi
-          done
+          ./scripts/package.sh "$RUNNER_TEMP/$name"
           tar -czf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP" "$name"
           echo "SWIFT_GAME_ARTIFACT_NAME=$name" >> "$GITHUB_ENV"
           echo "SWIFT_GAME_ARTIFACT=$RUNNER_TEMP/$name.tar.gz" >> "$GITHUB_ENV"
@@ -160,20 +144,7 @@ jobs:
         shell: pwsh
         run: |
           $package = Join-Path $env:RUNNER_TEMP "swift-game-windows"
-          New-Item -ItemType Directory -Force $package | Out-Null
-          $bin = swift build -c release --show-bin-path
-          foreach ($game in "swift-game", "shooter", "pong", "text") {
-            Copy-Item (Join-Path $bin "$game.exe") $package
-          }
-          Copy-Item (Join-Path $bin "NotoSansJP-Regular.otf"), (Join-Path $bin "NotoSansJP-LICENSE.txt") $package
-          $swiftRuntime = Split-Path -Parent (Get-Command swiftCore.dll).Source
-          Copy-Item (Join-Path $swiftRuntime "*.dll") $package
-          foreach ($library in "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
-            Copy-Item (Join-Path $env:SystemRoot "System32\$library") $package
-          }
-          # Dawn loads the shader compiler for Direct3D from beside the
-          # executable, and ships the Windows SDK's.
-          Copy-Item (Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Redist\D3D\x64\d3dcompiler_47.dll") $package
+          ./scripts/package.ps1 -Destination $package
           "SWIFT_GAME_ARTIFACT_NAME=swift-game-windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "SWIFT_GAME_ARTIFACT=$package" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
@@ -277,24 +248,11 @@ jobs:
         shell: bash
         run: ./scripts/emscripten/test-browser.sh
 
-      # Pushes to the default branch publish the games on GitHub Pages: the
-      # bullet-dodging game at the top, the shooter at /shooter/, Pong at
-      # /pong/, and the text sample at /text/.
+      # Pushes to the default branch publish the games on GitHub Pages.
       - name: Build the games (release)
         if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         shell: bash
-        run: |
-          site="$RUNNER_TEMP/site"
-          release=.build/wasm32-unknown-emscripten/release
-          for game in swift-game shooter pong text; do
-            ./scripts/emscripten/build.sh release "$game"
-            page="$site"
-            if [ "$game" != swift-game ]; then page="$site/$game"; fi
-            mkdir -p "$page"
-            cp "$release/$game.js" "$release/$game.wasm" "$page/"
-            cp "$release/$game.html" "$page/index.html"
-          done
-          cp "$release/NotoSansJP-Regular.otf" "$release/NotoSansJP-LICENSE.txt" "$site/text/"
+        run: ./scripts/emscripten/build-site.sh "$RUNNER_TEMP/site"
 
       - name: Upload the games for Pages
         if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
