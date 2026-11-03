@@ -61,8 +61,8 @@ struct ResolveContext {
 /// needs to know where its lines break.
 @MainActor
 protocol Node {
-    func size(proposedWidth: Float?, in renderer: TextRenderer) -> (width: Float, height: Float)
-    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: TextRenderer) throws
+    func size(proposedWidth: Float?, in renderer: Compositor) -> (width: Float, height: Float)
+    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: Compositor) throws
 }
 
 // The views in a builder's block, each in a place of its own. An `if` takes
@@ -181,14 +181,14 @@ struct TextNode: Node {
     var color: Color
     var alignment: HorizontalAlignment
 
-    func size(proposedWidth: Float?, in renderer: TextRenderer) -> (width: Float, height: Float) {
+    func size(proposedWidth: Float?, in renderer: Compositor) -> (width: Float, height: Float) {
         let lines = renderer.lines(string, points: points, width: proposedWidth)
         let first = lines.first!
         let height = first.ascender - first.descender + first.lineHeight * (lines.count - 1)
         return (Float(lines.map(\.width).max()!) / 64 / renderer.scale, Float(height) / renderer.scale)
     }
 
-    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: TextRenderer) throws {
+    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: Compositor) throws {
         let lines = renderer.lines(string, points: points, width: proposedWidth)
         let width = Float(lines.map(\.width).max()!) / 64 / renderer.scale
         var y = y
@@ -223,7 +223,7 @@ struct VStackNode: Node {
     var spacing: Float
     var content: [any Node]
 
-    func size(proposedWidth: Float?, in renderer: TextRenderer) -> (width: Float, height: Float) {
+    func size(proposedWidth: Float?, in renderer: Compositor) -> (width: Float, height: Float) {
         let sizes = content.map { $0.size(proposedWidth: proposedWidth, in: renderer) }
         return (
             sizes.map(\.width).max() ?? 0,
@@ -231,7 +231,7 @@ struct VStackNode: Node {
         )
     }
 
-    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: TextRenderer) throws {
+    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: Compositor) throws {
         let width = size(proposedWidth: proposedWidth, in: renderer).width
         var y = y
         for node in content {
@@ -265,7 +265,7 @@ struct HStackNode: Node {
     var spacing: Float
     var content: [any Node]
 
-    func size(proposedWidth: Float?, in renderer: TextRenderer) -> (width: Float, height: Float) {
+    func size(proposedWidth: Float?, in renderer: Compositor) -> (width: Float, height: Float) {
         let sizes = content.map { $0.size(proposedWidth: nil, in: renderer) }
         return (
             sizes.map(\.width).reduce(0, +) + spacing * Float(max(sizes.count - 1, 0)),
@@ -273,7 +273,7 @@ struct HStackNode: Node {
         )
     }
 
-    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: TextRenderer) throws {
+    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: Compositor) throws {
         let height = size(proposedWidth: proposedWidth, in: renderer).height
         var x = x
         for node in content {
@@ -313,12 +313,12 @@ struct PaddingNode: Node {
     var horizontal: Float
     var vertical: Float
 
-    func size(proposedWidth: Float?, in renderer: TextRenderer) -> (width: Float, height: Float) {
+    func size(proposedWidth: Float?, in renderer: Compositor) -> (width: Float, height: Float) {
         let size = content.size(proposedWidth: proposedWidth.map { $0 - horizontal * 2 }, in: renderer)
         return (size.width + horizontal * 2, size.height + vertical * 2)
     }
 
-    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: TextRenderer) throws {
+    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: Compositor) throws {
         try content.draw(
             x: x + horizontal, y: y + vertical, proposedWidth: proposedWidth.map { $0 - horizontal * 2 }, in: renderer)
     }
@@ -341,11 +341,11 @@ struct FrameNode: Node {
     var width: Float
     var alignment: HorizontalAlignment
 
-    func size(proposedWidth: Float?, in renderer: TextRenderer) -> (width: Float, height: Float) {
+    func size(proposedWidth: Float?, in renderer: Compositor) -> (width: Float, height: Float) {
         (width, content.size(proposedWidth: width, in: renderer).height)
     }
 
-    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: TextRenderer) throws {
+    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: Compositor) throws {
         let size = content.size(proposedWidth: width, in: renderer)
         try content.draw(
             x: x + alignment.offset(of: size.width, in: width), y: y, proposedWidth: width, in: renderer)
@@ -366,11 +366,11 @@ struct BackgroundNode: Node {
     var content: any Node
     var color: Color
 
-    func size(proposedWidth: Float?, in renderer: TextRenderer) -> (width: Float, height: Float) {
+    func size(proposedWidth: Float?, in renderer: Compositor) -> (width: Float, height: Float) {
         content.size(proposedWidth: proposedWidth, in: renderer)
     }
 
-    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: TextRenderer) throws {
+    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: Compositor) throws {
         let size = content.size(proposedWidth: proposedWidth, in: renderer)
         renderer.fill(x: x, y: y, width: size.width, height: size.height, color: color)
         try content.draw(x: x, y: y, proposedWidth: proposedWidth, in: renderer)

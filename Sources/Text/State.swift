@@ -27,7 +27,7 @@ enum InputEvent {
 /// text for the view with the focus, which a click gives.
 @MainActor
 final class ViewGraph {
-    let renderer: TextRenderer
+    let compositor: Compositor
     let textInput: TextInput
     /// Whether a state has changed since the frame was built, for an app that
     /// does not build a frame until something changes.
@@ -54,8 +54,8 @@ final class ViewGraph {
     private var storage: [StateKey: AnyObject] = [:]
     private var visited = Set<StateKey>()
 
-    init(renderer: TextRenderer, textInput: TextInput) {
-        self.renderer = renderer
+    init(compositor: Compositor, textInput: TextInput) {
+        self.compositor = compositor
         self.textInput = textInput
     }
 

@@ -11,32 +11,55 @@ struct GlowButton: View {
 
     var body: some View {
         Pressable(action: action) { interaction in
-            GPUView(
-                GlowButtonFace.self,
-                parameters: GlowButtonFace.Parameters(
-                    color: color, isPressed: interaction.isPressed, isHovered: interaction.isHovered)
-            ) {
+            Draw(GlowButtonFace.self, item: { rectangle in
+                GlowButtonFace.Item(
+                    rectangle: rectangle, color: color, isPressed: interaction.isPressed,
+                    isHovered: interaction.isHovered)
+            }) {
                 Text(title).font(size: 20).padding(horizontal: 26, vertical: 12)
             }
         }
     }
 }
 
-final class GlowButtonFace: GPUDrawing {
-    struct Parameters {
+// One pipeline, whatever number of buttons, each drawn with uniforms of its
+// own.
+enum GlowButtonFace: DrawingKind {
+    struct Item {
+        var rectangle: Rect
         var color: Color
         var isPressed: Bool
         var isHovered: Bool
     }
 
+    typealias Resource = GlowButtonResource
+
+    static func prepare(_ items: [Item], resource: GlowButtonResource, in context: PrepareContext) throws -> [UInt32] {
+        items.map { resource.uniforms(for: $0, in: context) }
+    }
+
+    static func encode(_ prepared: [UInt32], resource: GlowButtonResource, in context: EncodeContext) throws {
+        context.pass.setPipeline(resource.pipeline)
+        for offset in prepared {
+            context.pass.setBindGroup(groupIndex: 0, group: resource.bindGroup, dynamicOffsets: [offset])
+            context.pass.draw(vertexCount: 4, instanceCount: 1, firstVertex: 0, firstInstance: 0)
+        }
+    }
+}
+
+final class GlowButtonResource: MadeGraphicsResource {
     // How far around the button its glow goes, in points.
     private static let glow: Float = 14
 
-    private let pipeline: RenderPipeline
-    private let uniforms: Dawn.Buffer
-    private let bindGroup: BindGroup
+    let pipeline: RenderPipeline
+    let bindGroup: BindGroup
+    private let slots: UniformSlots
+    private unowned let compositor: Compositor
 
-    init(device: Device, format: TextureFormat) throws {
+    init(compositor: Compositor) throws {
+        self.compositor = compositor
+        let device = compositor.device
+        let format = compositor.format
         let shaderModule = try device.createShaderModule(
             descriptor: ShaderModuleDescriptor(
                 nextInChain: ShaderSourceWGSL(
@@ -116,13 +139,13 @@ final class GlowButtonFace: GPUDrawing {
                 entries: [
                     BindGroupLayoutEntry(
                         binding: 0, visibility: [.vertex, .fragment],
-                        buffer: BufferBindingLayout(type: .uniform, minBindingSize: 64))
+                        buffer: BufferBindingLayout(type: .uniform, hasDynamicOffset: true, minBindingSize: 64))
                 ]))
-        uniforms = try device.createBuffer(
-            descriptor: BufferDescriptor(label: "glow button", usage: [.uniform, .copyDst], size: 64))
+        slots = try UniformSlots(device: device, label: "glow button")
         bindGroup = try device.createBindGroup(
             descriptor: BindGroupDescriptor(
-                label: "glow button", layout: bindGroupLayout, entries: [BindGroupEntry(binding: 0, buffer: uniforms)]))
+                label: "glow button", layout: bindGroupLayout,
+                entries: [BindGroupEntry(binding: 0, buffer: slots.buffer, size: 64)]))
         pipeline = try device.createRenderPipeline(
             descriptor: RenderPipelineDescriptor(
                 label: "glow button",
@@ -135,18 +158,19 @@ final class GlowButtonFace: GPUDrawing {
                     targets: [ColorTargetState(format: format, blend: .alphaBlending)])))
     }
 
-    func draw(_ parameters: Parameters, in context: GPUDrawContext) throws {
-        let color = parameters.color
-        let values: [Float] = [
-            context.x, context.y, context.width, context.height,
-            context.screenWidth, context.screenHeight, Float(context.time.truncatingRemainder(dividingBy: 1000)),
-            parameters.isPressed ? 1 : 0,
-            Float(color.r), Float(color.g), Float(color.b), Float(color.a),
-            parameters.isHovered ? 1 : 0, context.scale, Self.glow, 0,
-        ]
-        values.withUnsafeBytes { context.device.getQueue().writeBuffer(uniforms, bufferOffset: 0, data: $0) }
-        context.pass.setPipeline(pipeline)
-        context.pass.setBindGroup(groupIndex: 0, group: bindGroup)
-        context.pass.draw(vertexCount: 4, instanceCount: 1, firstVertex: 0, firstInstance: 0)
+    func beginFrame() {
+        slots.reset()
+    }
+
+    fileprivate func uniforms(for item: GlowButtonFace.Item, in context: PrepareContext) -> UInt32 {
+        let (r, color) = (item.rectangle, item.color)
+        return slots.write(
+            [
+                r.x, r.y, r.width, r.height,
+                context.width, context.height, Float(compositor.time.truncatingRemainder(dividingBy: 1000)),
+                item.isPressed ? 1 : 0,
+                Float(color.r), Float(color.g), Float(color.b), Float(color.a),
+                item.isHovered ? 1 : 0, compositor.scale, Self.glow, 0,
+            ], queue: context.queue)
     }
 }

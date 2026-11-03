@@ -27,14 +27,14 @@ struct ButtonNode: Node {
 
     private static let padding = (horizontal: Float(12), vertical: Float(6))
 
-    func size(proposedWidth: Float?, in renderer: TextRenderer) -> (width: Float, height: Float) {
+    func size(proposedWidth: Float?, in renderer: Compositor) -> (width: Float, height: Float) {
         let size = label.size(proposedWidth: proposedWidth.map { $0 - Self.padding.horizontal * 2 }, in: renderer)
         return (size.width + Self.padding.horizontal * 2, size.height + Self.padding.vertical * 2)
     }
 
     // Where it is drawn is where it is clicked, so its action runs as it is
     // drawn, and what it changes shows in the next frame.
-    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: TextRenderer) throws {
+    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: Compositor) throws {
         let size = size(proposedWidth: proposedWidth, in: renderer)
         if graph.clicks.contains(where: { (x..<x + size.width).contains($0.x) && (y..<y + size.height).contains($0.y) }) {
             action()

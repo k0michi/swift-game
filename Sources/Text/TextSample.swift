@@ -17,11 +17,11 @@ struct TextSample: AsyncMain {
         let device = try await adapter.requestDevice()
         var configuration = try configureSurface(surface, device: device, adapter: adapter, window: window)
 
-        let renderer = try TextRenderer(
-            device: device, format: configuration.format, font: try await readAsset("NotoSansJP-Regular.otf"),
-            scale: getWindowDisplayScale(window: window))
+        let renderer = Compositor(
+            device: device, format: configuration.format, scale: try getWindowDisplayScale(window: window))
+        renderer.register(try Typesetter(compositor: renderer, font: try await readAsset("NotoSansJP-Regular.otf")))
 
-        let graph = ViewGraph(renderer: renderer, textInput: TextInput(window: window))
+        let graph = ViewGraph(compositor: renderer, textInput: TextInput(window: window))
         let clock = ContinuousClock()
         let start = clock.now
         var frame = 0
@@ -57,9 +57,10 @@ struct TextSample: AsyncMain {
             frame += 1
             let elapsed = (clock.now - start).components
             graph.time = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+            renderer.time = graph.time
 
             // In the middle of the window.
-            renderer.begin()
+            renderer.beginFrame()
             let screen = single(graph.update(Screen(frame: frame)))
             let size = screen.size(proposedWidth: nil, in: renderer)
             let width = Float(configuration.width) / renderer.scale
@@ -70,15 +71,9 @@ struct TextSample: AsyncMain {
 
             if let surfaceTexture = try? surface.getCurrentTexture() {
                 let encoder = try device.createCommandEncoder()
-                let pass = try encoder.beginRenderPass(
-                    descriptor: RenderPassDescriptor(
-                        colorAttachments: [
-                            RenderPassColorAttachment(
-                                view: try surfaceTexture.createView(), loadOp: .clear, storeOp: .store,
-                                clearValue: Color(r: 0.05, g: 0.05, b: 0.08, a: 1))
-                        ]))
-                try renderer.end(into: pass, width: configuration.width, height: configuration.height)
-                pass.end()
+                try renderer.render(
+                    into: try surfaceTexture.createView(), width: configuration.width, height: configuration.height,
+                    clearColor: Color(r: 0.05, g: 0.05, b: 0.08, a: 1), encoder: encoder, present: PresentKind.self)
                 device.getQueue().submit([try encoder.finish()])
                 try surface.present()
             }

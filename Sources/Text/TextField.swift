@@ -46,7 +46,7 @@ struct TextFieldNode: Node {
 
     private static let padding = (horizontal: Float(8), vertical: Float(6))
 
-    func size(proposedWidth: Float?, in renderer: TextRenderer) -> (width: Float, height: Float) {
+    func size(proposedWidth: Float?, in renderer: Compositor) -> (width: Float, height: Float) {
         let run = renderer.run(" ", points: field.points)
         return (
             proposedWidth.map { min($0, field.width) } ?? field.width,
@@ -54,7 +54,7 @@ struct TextFieldNode: Node {
         )
     }
 
-    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: TextRenderer) throws {
+    func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: Compositor) throws {
         let size = size(proposedWidth: proposedWidth, in: renderer)
         let inner = (x: x + Self.padding.horizontal, width: size.width - Self.padding.horizontal * 2)
         var fieldState = state.value
@@ -112,8 +112,8 @@ struct TextFieldNode: Node {
             let accent = Color(r: 0.4, g: 0.6, b: 1, a: 1)
             renderer.fill(x: x, y: y + size.height - 2, width: size.width, height: 2, color: accent)
         }
-        renderer.clip = (inner.x, y, inner.width, size.height)
-        defer { renderer.clip = nil }
+        renderer.pushClip(Rect(x: inner.x, y: y, width: inner.width, height: size.height))
+        defer { renderer.popClip() }
 
         let selection = fieldState.editing.selection
         if focused && !selection.isEmpty && fieldState.composition.isEmpty {
