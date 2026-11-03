@@ -21,11 +21,18 @@ struct TextSample: AsyncMain {
             device: device, format: configuration.format, font: try await readAsset("NotoSansJP-Regular.otf"),
             scale: getWindowDisplayScale(window: window))
 
-        let graph = ViewGraph(renderer: renderer)
+        let graph = ViewGraph(renderer: renderer, textInput: TextInput(window: window))
+        let clock = ContinuousClock()
+        let start = clock.now
         var frame = 0
         while true {
             while let event = pollEvent() {
                 if event.type == .quit || event.type == .windowCloseRequested { return }
+                if let update = graph.textInput.handle(event) {
+                    graph.inputs.append(.text(update))
+                } else if let event = event as? KeyboardEvent, event.down {
+                    graph.inputs.append(.key(event))
+                }
                 if let event = event as? MouseButtonEvent, event.down {
                     graph.clicks.append((event.x, event.y))
                 }
@@ -37,6 +44,8 @@ struct TextSample: AsyncMain {
                 }
             }
             frame += 1
+            let elapsed = (clock.now - start).components
+            graph.time = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
 
             // In the middle of the window.
             renderer.begin()
@@ -46,7 +55,7 @@ struct TextSample: AsyncMain {
             let height = Float(configuration.height) / renderer.scale
             try screen.draw(
                 x: (width - size.width) / 2, y: (height - size.height) / 2, proposedWidth: nil, in: renderer)
-            graph.clicks.removeAll()
+            try graph.endFrame()
 
             if let surfaceTexture = try? surface.getCurrentTexture() {
                 let encoder = try device.createCommandEncoder()
@@ -74,10 +83,15 @@ struct TextSample: AsyncMain {
 struct Screen: View {
     var frame: Int
     @State private var showsSecond = true
+    @State private var name = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Hello, world!").font(size: 28)
+            HStack(spacing: 12) {
+                TextField("Text", text: $name)
+                // Text(name.isEmpty ? "名前を入力してください" : "こんにちは、\(name)さん")
+            }
             Text("あのイーハトーヴォのすきとおった風、夏でも底に冷たさをもつ青いそら、うつくしい森で飾られたモリーオ市、郊外のぎらぎらひかる草の波。")
             Counter(title: "A")
             if showsSecond {

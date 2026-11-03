@@ -1,3 +1,6 @@
+import GameToolkit
+import SDL3
+
 // SwiftUI's state, for views rebuilt every frame: a view's @State lives in the
 // ViewGraph, under the view's identity, from the first frame the view is in to
 // the last, and a @Binding reads and writes state that another view keeps.
@@ -13,22 +16,73 @@ struct Identity: Hashable {
     }
 }
 
+/// What a view that has the focus is given, in the order it came.
+enum InputEvent {
+    case key(KeyboardEvent)
+    case text(TextInputUpdate)
+}
+
 /// Evaluates views into nodes, keeping their state from frame to frame, and
-/// what they are given to act on in a frame: the clicks in it.
+/// what they are given to act on in a frame: its clicks, and the keys and
+/// text for the view with the focus, which a click gives.
 @MainActor
 final class ViewGraph {
     let renderer: TextRenderer
+    let textInput: TextInput
     /// Whether a state has changed since the frame was built, for an app that
     /// does not build a frame until something changes.
     var needsUpdate = true
     /// The clicks of the frame being built, in points.
     var clicks: [(x: Float, y: Float)] = []
+    /// The keys and text of the frame being built.
+    var inputs: [InputEvent] = []
+    /// When the frame is, in seconds, for what blinks or moves.
+    var time: Double = 0
+    /// The view that has the focus.
+    private(set) var focus: Identity?
+    private var focusClaimed = false
+    private var focusDrawn = false
 
     private var storage: [StateKey: AnyObject] = [:]
     private var visited = Set<StateKey>()
 
-    init(renderer: TextRenderer) {
+    init(renderer: TextRenderer, textInput: TextInput) {
         self.renderer = renderer
+        self.textInput = textInput
+    }
+
+    /// Gives the view at `identity` the focus, as a click on it does.
+    func claimFocus(_ identity: Identity) {
+        if focus != identity {
+            focus = identity
+            needsUpdate = true
+        }
+        focusClaimed = true
+    }
+
+    /// Whether the view at `identity` has the focus, which it says when it is
+    /// drawn, for the focus to go when the view does.
+    func hasFocus(_ identity: Identity) -> Bool {
+        guard focus == identity else { return false }
+        focusDrawn = true
+        return true
+    }
+
+    /// Ends the frame, after it is drawn: a click on nothing, or the view's
+    /// going, takes the focus away, and text input is on while a view has it.
+    func endFrame() throws {
+        if !clicks.isEmpty && !focusClaimed || !focusDrawn {
+            focus = nil
+        }
+        if focus != nil && !textInput.isActive {
+            try textInput.start()
+        } else if focus == nil && textInput.isActive {
+            try textInput.stop()
+        }
+        clicks.removeAll(keepingCapacity: true)
+        inputs.removeAll(keepingCapacity: true)
+        focusClaimed = false
+        focusDrawn = false
     }
 
     /// The nodes of `root` for this frame. The state of the views that were in
@@ -62,6 +116,12 @@ final class ViewGraph {
         return resolve([view.body], at: identity)
     }
 
+    /// What a primitive view at `identity` keeps from frame to frame, made
+    /// with `initial` the first time.
+    func state<Value>(at identity: Identity, initial: Value) -> StateBox<Value> {
+        box(StateKey(identity: identity, property: -1), initial: initial)
+    }
+
     // The box of `key`, made with `initial` the first time.
     fileprivate func box<Value>(_ key: StateKey, initial: Value) -> StateBox<Value> {
         visited.insert(key)
@@ -86,7 +146,7 @@ private struct StateKey: Hashable {
     var property: Int
 }
 
-private final class StateBox<Value> {
+final class StateBox<Value> {
     var value: Value
 
     init(_ value: Value) {
