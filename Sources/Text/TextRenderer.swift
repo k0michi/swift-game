@@ -65,10 +65,11 @@ final class TextRenderer {
     private var previousRuns: [RunKey: ShapedRun] = [:]
 
     // Each instance is a rectangle in pixels, the atlas texel at its
-    // top-left corner, how many texels it spans, a color, and the rectangle
-    // in pixels it is clipped to. A filled rectangle spans no texels, of the
-    // white one in the atlas's last corner.
-    private static let floatsPerInstance = 16
+    // top-left corner, how many texels it spans, a color, the rectangle in
+    // pixels it is clipped to, and the radius in pixels of its corners. A
+    // filled rectangle spans no texels, of the white one in the atlas's last
+    // corner.
+    private static let floatsPerInstance = 20
 
     /// The rectangle in points that what is drawn is clipped to, if any.
     var clip: (x: Float, y: Float, width: Float, height: Float)?
@@ -121,6 +122,8 @@ final class TextRenderer {
                             @location(0) texel: vec2f,
                             @location(1) color: vec4f,
                             @location(2) clip: vec4f,
+                            @location(3) rectangle: vec4f,
+                            @location(4) shape: vec2f,
                         }
 
                         // A corner of the glyph's rectangle, in a strip of two
@@ -132,7 +135,8 @@ final class TextRenderer {
                             @location(1) texel: vec2f,
                             @location(2) texels: vec2f,
                             @location(3) color: vec4f,
-                            @location(4) clip: vec4f
+                            @location(4) clip: vec4f,
+                            @location(5) shape: vec4f
                         ) -> VertexOutput {
                             let corner = vec2f(f32(index & 1u), f32(index >> 1u));
                             let pixel = rectangle.xy + corner * rectangle.zw;
@@ -141,21 +145,40 @@ final class TextRenderer {
                             output.texel = texel + corner * texels;
                             output.color = color;
                             output.clip = clip;
+                            output.rectangle = rectangle;
+                            output.shape = shape.xy;
                             return output;
                         }
 
-                        // The glyph's pixels, one to one with the screen's.
+                        // The glyph's pixels, one to one with the screen's, and
+                        // rounded corners' edges smoothed over a pixel.
                         @fragment
                         fn fragmentMain(
                             @builtin(position) position: vec4f,
                             @location(0) texel: vec2f,
                             @location(1) color: vec4f,
-                            @location(2) clip: vec4f
+                            @location(2) clip: vec4f,
+                            @location(3) rectangle: vec4f,
+                            @location(4) shape: vec2f
                         ) -> @location(0) vec4f {
                             if (any(position.xy < clip.xy) || any(position.xy >= clip.zw)) {
                                 discard;
                             }
-                            return vec4f(color.rgb, color.a * textureLoad(atlas, vec2i(floor(texel)), 0).r);
+                            var coverage = textureLoad(atlas, vec2i(floor(texel)), 0).r;
+                            // Rounded corners, and an outline as wide as the
+                            // second, inside.
+                            let radius = shape.x;
+                            let lineWidth = shape.y;
+                            if (radius > 0.0 || lineWidth > 0.0) {
+                                let half = rectangle.zw * 0.5;
+                                let corner = abs(position.xy - rectangle.xy - half) - half + radius;
+                                let distance = length(max(corner, vec2f(0.0))) + min(max(corner.x, corner.y), 0.0) - radius;
+                                coverage *= clamp(0.5 - distance, 0.0, 1.0);
+                                if (lineWidth > 0.0) {
+                                    coverage *= clamp(0.5 + distance + lineWidth, 0.0, 1.0);
+                                }
+                            }
+                            return vec4f(color.rgb, color.a * coverage);
                         }
                         """),
                 label: "text"))
@@ -194,6 +217,7 @@ final class TextRenderer {
                                 VertexAttribute(format: .float32x2, offset: 6 * floatSize, shaderLocation: 2),
                                 VertexAttribute(format: .float32x4, offset: 8 * floatSize, shaderLocation: 3),
                                 VertexAttribute(format: .float32x4, offset: 12 * floatSize, shaderLocation: 4),
+                                VertexAttribute(format: .float32x4, offset: 16 * floatSize, shaderLocation: 5),
                             ])
                     ]),
                 primitive: PrimitiveState(topology: .triangleStrip),
@@ -273,21 +297,39 @@ final class TextRenderer {
                 Float(glyph.width), Float(glyph.height),
                 Float(glyph.x), Float(glyph.y), Float(glyph.width), Float(glyph.height),
                 Float(color.r), Float(color.g), Float(color.b), Float(color.a),
-            ] + clipInPixels
+            ] + clipInPixels + [0, 0, 0, 0]
         }
     }
 
     // Has a rectangle filled, from `x`, `y` in points, `width` by `height`,
-    // in `color`, which is not premultiplied, on whole pixels.
-    func fill(x: Float, y: Float, width: Float, height: Float, color: Color) {
+    // in `color`, which is not premultiplied, on whole pixels, with corners
+    // rounded `cornerRadius` points.
+    func fill(x: Float, y: Float, width: Float, height: Float, color: Color, cornerRadius: Float = 0) {
+        appendShape(x: x, y: y, width: width, height: height, color: color, cornerRadius: cornerRadius, lineWidth: 0)
+    }
+
+    // Has the outline of a rectangle drawn, `lineWidth` points wide inside it.
+    func stroke(
+        x: Float, y: Float, width: Float, height: Float, color: Color, lineWidth: Float, cornerRadius: Float = 0
+    ) {
+        appendShape(
+            x: x, y: y, width: width, height: height, color: color, cornerRadius: cornerRadius, lineWidth: lineWidth)
+    }
+
+    private func appendShape(
+        x: Float, y: Float, width: Float, height: Float, color: Color, cornerRadius: Float, lineWidth: Float
+    ) {
         let left = (x * scale).rounded()
         let top = (y * scale).rounded()
+        let width = ((x + width) * scale).rounded() - left
+        let height = ((y + height) * scale).rounded() - top
+        guard width > 0, height > 0 else { return }
         let white = Float(Self.atlasSize - 1) + 0.5
         instances += [
-            left, top, ((x + width) * scale).rounded() - left, ((y + height) * scale).rounded() - top,
+            left, top, width, height,
             white, white, 0, 0,
             Float(color.r), Float(color.g), Float(color.b), Float(color.a),
-        ] + clipInPixels
+        ] + clipInPixels + [min(cornerRadius * scale, min(width, height) / 2), lineWidth * scale, 0, 0]
     }
 
     // Records the frame's text into `pass`, over a screen `width` by `height`
