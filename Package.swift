@@ -165,6 +165,7 @@ let package = Package(
         .library(name: "FreeType", targets: ["FreeType"]),
         .library(name: "HarfBuzz", targets: ["HarfBuzz"]),
         .library(name: "LineBreaking", targets: ["LineBreaking"]),
+        .library(name: "TextEditing", targets: ["TextEditing"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
@@ -175,6 +176,8 @@ let package = Package(
         // UAX #14, from tables that scripts/generate-line-break-properties.swift
         // writes.
         .target(name: "LineBreaking"),
+        // Editing a line of text, a Character at a time.
+        .target(name: "TextEditing"),
         // Depends on nothing but the standard library and swift-numerics, so that
         // it can move to a package of its own. scripts/generate-vector-math.swift
         // writes most of it.
@@ -417,6 +420,10 @@ let package = Package(
             dependencies: ["FreeType"],
             resources: [.copy("Resources")],
             swiftSettings: [.unsafeFlags(freeTypeSwiftCompilerFlags)]
+        ),
+        .testTarget(
+            name: "TextEditingTests",
+            dependencies: ["TextEditing"]
         ),
         .testTarget(
             name: "LineBreakingTests",
