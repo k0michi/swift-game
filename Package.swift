@@ -13,10 +13,12 @@ let sdlFlagsRoot = "\(dependenciesRoot)/sdl3"
 let dawnFlagsRoot = "\(dependenciesRoot)/dawn"
 let stbFlagsRoot = "\(dependenciesRoot)/stb"
 let freeTypeFlagsRoot = "\(dependenciesRoot)/freetype"
+let harfBuzzFlagsRoot = "\(dependenciesRoot)/harfbuzz"
 let sdlBuildScript = isEmscripten ? "./scripts/emscripten/build-sdl.sh" : "./scripts/build-sdl.sh"
 let dawnBuildScript = isEmscripten ? "./scripts/emscripten/build-dawn.sh" : "./scripts/build-dawn.sh"
 let stbBuildScript = isEmscripten ? "./scripts/emscripten/build-stb.sh" : "./scripts/build-stb.sh"
 let freeTypeBuildScript = isEmscripten ? "./scripts/emscripten/build-freetype.sh" : "./scripts/build-freetype.sh"
+let harfBuzzBuildScript = isEmscripten ? "./scripts/emscripten/build-harfbuzz.sh" : "./scripts/build-harfbuzz.sh"
 
 func readSDLFlags(named name: String) -> [String] {
     let path = "\(sdlFlagsRoot)/\(name)-flags.txt"
@@ -100,6 +102,19 @@ let freeTypeSwiftCompilerFlags = freeTypeCompilerFlags.flatMap { ["-Xcc", $0] }
 // The path of the static library.
 let freeTypeLinkerFlags = readFreeTypeFlags(named: "linker")
 
+func readHarfBuzzFlags(named name: String) -> [String] {
+    let path = "\(harfBuzzFlagsRoot)/\(name)-flags.txt"
+    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fatalError("HarfBuzz build metadata is missing. Run \(harfBuzzBuildScript) first.")
+    }
+    return contents.split(whereSeparator: \.isNewline).map(String.init)
+}
+
+let harfBuzzCompilerFlags = readHarfBuzzFlags(named: "compiler")
+let harfBuzzSwiftCompilerFlags = harfBuzzCompilerFlags.flatMap { ["-Xcc", $0] }
+// The path of the static library.
+let harfBuzzLinkerFlags = readHarfBuzzFlags(named: "linker")
+
 // Echo plays through SDL3 on the desktop, and through the browser's Web Audio
 // on the web.
 let echoOutput: [Target.Dependency] = isEmscripten ? [] : ["EchoSDL3"]
@@ -148,6 +163,7 @@ let package = Package(
         .library(name: "StbRectPack", targets: ["StbRectPack"]),
         .library(name: "StbTrueType", targets: ["StbTrueType"]),
         .library(name: "FreeType", targets: ["FreeType"]),
+        .library(name: "HarfBuzz", targets: ["HarfBuzz"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
@@ -265,6 +281,17 @@ let package = Package(
             name: "FreeType",
             dependencies: ["CFreeType"],
             swiftSettings: [.unsafeFlags(freeTypeSwiftCompilerFlags)]
+        ),
+        // HarfBuzz, built by scripts/build-harfbuzz.sh.
+        .target(
+            name: "CHarfBuzz",
+            cSettings: [.unsafeFlags(harfBuzzCompilerFlags)],
+            linkerSettings: [.unsafeFlags(harfBuzzLinkerFlags)]
+        ),
+        .target(
+            name: "HarfBuzz",
+            dependencies: ["CHarfBuzz"],
+            swiftSettings: [.unsafeFlags(harfBuzzSwiftCompilerFlags)]
         ),
         .target(
             name: "Dawn",
@@ -384,6 +411,12 @@ let package = Package(
             dependencies: ["FreeType"],
             resources: [.copy("Resources")],
             swiftSettings: [.unsafeFlags(freeTypeSwiftCompilerFlags)]
+        ),
+        .testTarget(
+            name: "HarfBuzzTests",
+            dependencies: ["HarfBuzz"],
+            resources: [.copy("Resources")],
+            swiftSettings: [.unsafeFlags(harfBuzzSwiftCompilerFlags)]
         ),
         .testTarget(
             name: "ProcessMemoryTests",
