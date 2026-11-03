@@ -18,6 +18,15 @@ func loadDescription(project: URL, work: URL) throws -> Build {
     let sources = try FileManager.default.contentsOfDirectory(atPath: sourceDirectory.path)
         .filter { $0.hasSuffix(".swift") }.sorted()
         .map { sourceDirectory.appendingPathComponent($0) }
+    // Built again by another compiler, whose modules this one cannot read.
+    let compiler = directory.appendingPathComponent("compiler")
+    let compilerVersion = try output(of: ["swiftc", "--version"])
+    if (try? String(contentsOf: compiler, encoding: .utf8)) != compilerVersion {
+        try? FileManager.default.removeItem(at: directory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try compilerVersion.write(to: compiler, atomically: true, encoding: .utf8)
+    }
+
     let library = directory.appendingPathComponent("libBuildDescription.a")
     if try isOutdated(library, inputs: sources) {
         try run(

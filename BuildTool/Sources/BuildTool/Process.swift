@@ -25,6 +25,8 @@ func output(of command: [String], in directory: URL? = nil) throws -> String {
     let process = try makeProcess(command, in: directory, environment: [:])
     let pipe = Pipe()
     process.standardOutput = pipe
+    // Such as swift-driver's version, which swiftc --version writes there.
+    process.standardError = FileHandle.nullDevice
     try process.run()
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()

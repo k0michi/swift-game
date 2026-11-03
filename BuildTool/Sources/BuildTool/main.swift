@@ -7,6 +7,8 @@ import Foundation
 //   build           generates, runs swift build, and puts the assets beside the
 //                   executables
 //   run <product>   builds the product and runs it
+//   test            generates, and runs swift test in Build.swift's test
+//                   environment
 
 var arguments = Array(CommandLine.arguments.dropFirst())
 var projectPath = FileManager.default.currentDirectoryPath
@@ -25,7 +27,8 @@ func generate(project: URL) throws -> (Build, [String: URL]) {
 
     var artifacts: [CMakeTarget: CMakeArtifacts] = [:]
     for cmakeProject in description.cmakeProjects {
-        let built = try build(cmakeProject, in: work, macOSDeploymentTarget: description.macOSDeploymentTarget)
+        let built = try build(
+            cmakeProject, root: project, in: work, macOSDeploymentTarget: description.macOSDeploymentTarget)
         for (target, artifact) in built {
             artifacts[cmakeProject.target(target)] = artifact
         }
@@ -77,6 +80,11 @@ do {
         try buildPackage(project: project, ["--product", product] + swiftBuildArguments)
         let binPath = try binPath(project: project, swiftBuildArguments)
         try run([URL(fileURLWithPath: binPath).appendingPathComponent(product).path])
+    case "test":
+        let (description, _) = try generate(project: project)
+        try run(
+            ["swift", "test", "--package-path", project.path] + commandArguments,
+            environment: description.testEnvironment)
     default:
         throw BuildToolError("Unknown command \(command)")
     }

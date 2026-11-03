@@ -1,5 +1,11 @@
 import CFreeType
+import CHarfBuzz
+import CSDL3
 import Foundation
+
+let version = SDL_GetVersion()
+print("SDL \(version / 1_000_000).\(version / 1000 % 1000).\(version % 1000)")
+print("HarfBuzz \(String(cString: hb_version_string()))")
 
 // Reads the font that BuildTool put beside the executable.
 let directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()

@@ -4,22 +4,39 @@ import Foundation
 /// What a built CMake target gives the targets linking it.
 struct CMakeArtifacts {
     var includeDirectories: [String]
-    var libraries: [String]
+    /// Flags for swiftc to link the target and all it needs.
+    var linkerFlags: [String]
 }
 
-/// Fetches `project` at its revision, configures and builds its targets with
-/// Ninja and the Swift toolchain's clang, and reads where they are from
-/// CMake's file API.
-func build(_ project: CMakeProject, in work: URL, macOSDeploymentTarget: String?) throws -> [String: CMakeArtifacts] {
+/// Fetches `project`, configures and builds its targets with Ninja and the
+/// Swift toolchain's clang, and reads what they give what links them from
+/// CMake's file API, with what the project declares besides.
+func build(
+    _ project: CMakeProject, root: URL, in work: URL, macOSDeploymentTarget: String?
+) throws -> [String: CMakeArtifacts] {
     let directory = work.appendingPathComponent("cmake").appendingPathComponent(project.name)
-    let source = directory.appendingPathComponent("source")
     let build = directory.appendingPathComponent("build")
-    try fetch(project, into: source)
+    let source: URL
+    switch project.source {
+    case .git(let url, let revision):
+        source = directory.appendingPathComponent("source")
+        try fetch(url, revision: revision, into: source)
+    case .path(let path):
+        source = URL(fileURLWithPath: path, relativeTo: root).standardizedFileURL
+    }
 
-    // Asking for the code model before configuring has CMake write it.
+    // Asking for the code model before configuring has CMake write it. A new
+    // query has Ninja configure again, so it is made only once.
     let query = build.appendingPathComponent(".cmake/api/v1/query/codemodel-v2")
-    try FileManager.default.createDirectory(at: query.deletingLastPathComponent(), withIntermediateDirectories: true)
-    FileManager.default.createFile(atPath: query.path, contents: nil)
+    if !FileManager.default.fileExists(atPath: query.path) {
+        try FileManager.default.createDirectory(at: query.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: query.path, contents: nil)
+    }
+    let probes = directory.appendingPathComponent("probes.cmake")
+    // Left alone when unchanged, as Ninja configures again when it is newer.
+    if (try? String(contentsOf: probes, encoding: .utf8)) != probeScript {
+        try probeScript.write(to: probes, atomically: true, encoding: .utf8)
+    }
 
     let toolchain = try executable(named: "swiftc").deletingLastPathComponent()
     var configure = [
@@ -28,36 +45,84 @@ func build(_ project: CMakeProject, in work: URL, macOSDeploymentTarget: String?
         "-DBUILD_SHARED_LIBS=OFF",
         "-DCMAKE_C_COMPILER=\(toolchain.appendingPathComponent("clang").path)",
         "-DCMAKE_CXX_COMPILER=\(toolchain.appendingPathComponent("clang++").path)",
+        "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=\(probes.path)",
+        "-DBUILDTOOL_TARGETS=\(project.targets.joined(separator: ";"))",
     ]
     if let macOSDeploymentTarget {
         configure.append("-DCMAKE_OSX_DEPLOYMENT_TARGET=\(macOSDeploymentTarget)")
     }
     configure += project.options.sorted { $0.key < $1.key }.map { "-D\($0.key)=\($0.value)" }
-    try run(configure)
+
+    // Configured again only when how it is configured, or the CMake doing it,
+    // changes. Ninja configures again by itself when the project's own CMake
+    // files change.
+    let stamp = directory.appendingPathComponent("configured")
+    let configuration =
+        (configure + [try output(of: ["cmake", "--version"]), probeScript]).joined(separator: "\n")
+    if (try? String(contentsOf: stamp, encoding: .utf8)) != configuration
+        || !FileManager.default.fileExists(atPath: build.appendingPathComponent("CMakeCache.txt").path)
+    {
+        try? FileManager.default.removeItem(at: stamp)
+        try run(configure)
+        try configuration.write(to: stamp, atomically: true, encoding: .utf8)
+    }
     try run(["cmake", "--build", build.path, "--parallel"] + project.targets.flatMap { ["--target", $0] })
 
-    return try readCodeModel(build: build, targets: project.targets)
+    var artifacts = try readCodeModel(build: build, targets: project.targets)
+    for target in project.targets {
+        artifacts[target]!.includeDirectories += project.includeDirectories.map {
+            URL(fileURLWithPath: $0, relativeTo: root).standardizedFileURL.path
+        }
+        artifacts[target]!.linkerFlags += project.linkerFlags
+    }
+    return artifacts
 }
 
-// A shallow fetch of the one revision, unless it is checked out already.
-private func fetch(_ project: CMakeProject, into source: URL) throws {
+// For each target to read, an executable that links it and is never built:
+// what CMake's file API says that executable compiles and links with is what
+// the target gives what links it, through all it depends on.
+private let probeScript = """
+    # Written by BuildTool.
+    cmake_language(DEFER CALL _buildtool_add_probes)
+    function(_buildtool_add_probes)
+        get_property(languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+        if("C" IN_LIST languages)
+            set(source "${CMAKE_BINARY_DIR}/buildtool-probe.c")
+        else()
+            set(source "${CMAKE_BINARY_DIR}/buildtool-probe.cpp")
+        endif()
+        if(NOT EXISTS "${source}")
+            file(WRITE "${source}" "int main(void) { return 0; }\\n")
+        endif()
+        foreach(target IN LISTS BUILDTOOL_TARGETS)
+            string(MAKE_C_IDENTIFIER "${target}" identifier)
+            add_executable(buildtool-probe-${identifier} EXCLUDE_FROM_ALL "${source}")
+            target_link_libraries(buildtool-probe-${identifier} PRIVATE ${target})
+        endforeach()
+    endfunction()
+
+    """
+
+// A shallow fetch of the one revision, unless it is checked out already. The
+// revision can be an annotated tag's, whose commit is what is checked out.
+private func fetch(_ url: String, revision: String, into source: URL) throws {
     if FileManager.default.fileExists(atPath: source.appendingPathComponent(".git").path),
         let head = try? output(of: ["git", "-C", source.path, "rev-parse", "HEAD"]),
-        head.trimmingCharacters(in: .whitespacesAndNewlines) == project.revision
+        let commit = try? output(of: ["git", "-C", source.path, "rev-parse", "--verify", "\(revision)^{commit}"]),
+        head == commit
     {
         return
     }
     try? FileManager.default.removeItem(at: source)
     try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
     try run(["git", "init", "--quiet"], in: source)
-    try run(["git", "remote", "add", "origin", project.git], in: source)
-    try run(["git", "fetch", "--quiet", "--depth", "1", "origin", project.revision], in: source)
+    try run(["git", "remote", "add", "origin", url], in: source)
+    try run(["git", "fetch", "--quiet", "--depth", "1", "origin", revision], in: source)
     try run(["git", "checkout", "--quiet", "FETCH_HEAD"], in: source)
 }
 
-// The include directories each target compiles with, and its artifacts.
-// The file API has no interface include directories, so those a target
-// compiles with stand in for them.
+// Each target's probe's include directories, and its libraries and their
+// search paths, without the probe's own linker flags.
 private func readCodeModel(build: URL, targets: [String]) throws -> [String: CMakeArtifacts] {
     let reply = build.appendingPathComponent(".cmake/api/v1/reply")
     guard
@@ -75,24 +140,81 @@ private func readCodeModel(build: URL, targets: [String]) throws -> [String: CMa
     }
     let codeModel = try readJSON(reply.appendingPathComponent(codeModelFile))
     let configuration = (codeModel["configurations"] as? [[String: Any]])?.first ?? [:]
+    let files = Dictionary(
+        (configuration["targets"] as? [[String: Any]] ?? []).compactMap { entry -> (String, String)? in
+            guard let name = entry["name"] as? String, let file = entry["jsonFile"] as? String else { return nil }
+            return (name, file)
+        },
+        uniquingKeysWith: { first, _ in first })
 
     var artifacts: [String: CMakeArtifacts] = [:]
-    for entry in configuration["targets"] as? [[String: Any]] ?? [] {
-        guard let name = entry["name"] as? String, targets.contains(name), let file = entry["jsonFile"] as? String
-        else { continue }
-        let target = try readJSON(reply.appendingPathComponent(file))
-        let includes = (target["compileGroups"] as? [[String: Any]] ?? [])
+    for target in targets {
+        guard let file = files["buildtool-probe-\(cIdentifier(target))"] else {
+            throw BuildToolError("CMake has no target \(target)")
+        }
+        let probe = try readJSON(reply.appendingPathComponent(file))
+        let includes = (probe["compileGroups"] as? [[String: Any]] ?? [])
             .flatMap { $0["includes"] as? [[String: Any]] ?? [] }
             .compactMap { $0["path"] as? String }
-        let libraries = (target["artifacts"] as? [[String: Any]] ?? [])
-            .compactMap { $0["path"] as? String }
-            .map { $0.hasPrefix("/") ? $0 : build.appendingPathComponent($0).path }
-        artifacts[name] = CMakeArtifacts(includeDirectories: unique(includes), libraries: libraries)
-    }
-    for target in targets where artifacts[target] == nil {
-        throw BuildToolError("CMake has no target \(target)")
+        let fragments = ((probe["link"] as? [String: Any])?["commandFragments"] as? [[String: Any]] ?? [])
+            .filter { ["libraries", "libraryPath", "frameworkPath"].contains($0["role"] as? String) }
+            .compactMap { $0["fragment"] as? String }
+        artifacts[target] = CMakeArtifacts(
+            includeDirectories: unique(includes),
+            linkerFlags: fragments.flatMap { swiftcLinkerFlags(fromFragment: $0, build: build) })
     }
     return artifacts
+}
+
+// A link command's fragment, such as "libfreetype.a", "-framework Cocoa" or
+// "-Wl,-weak_framework,Metal", as swiftc takes it: paths made absolute, and
+// what is for the C compiler's driver handed to the linker.
+private func swiftcLinkerFlags(fromFragment fragment: String, build: URL) -> [String] {
+    words(fragment).flatMap { word -> [String] in
+        if word.hasPrefix("-Wl,") {
+            return word.dropFirst(4).split(separator: ",").flatMap { ["-Xlinker", String($0)] }
+        }
+        if word == "-pthread" {
+            return ["-lpthread"]
+        }
+        if word.hasPrefix("-") || word.hasPrefix("/") {
+            return [word]
+        }
+        // A framework's name, after -framework, stays as it is.
+        if !word.contains("/") && !word.contains(".") {
+            return [word]
+        }
+        return [build.appendingPathComponent(word).path]
+    }
+}
+
+// The words of a fragment, which CMake quotes when they have spaces.
+private func words(_ fragment: String) -> [String] {
+    var words: [String] = []
+    var word = ""
+    var quoted = false
+    for character in fragment {
+        switch character {
+        case "\"":
+            quoted.toggle()
+        case " " where !quoted:
+            if !word.isEmpty { words.append(word) }
+            word = ""
+        default:
+            word.append(character)
+        }
+    }
+    if !word.isEmpty { words.append(word) }
+    return words
+}
+
+// What CMake's string(MAKE_C_IDENTIFIER) makes of `string`.
+private func cIdentifier(_ string: String) -> String {
+    var identifier = String(string.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "_" })
+    if identifier.first?.isNumber == true {
+        identifier = "_" + identifier
+    }
+    return identifier
 }
 
 private func readJSON(_ url: URL) throws -> [String: Any] {
