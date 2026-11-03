@@ -18,6 +18,25 @@ void game_toolkit_web_fetch(const char *url, void *context, game_toolkit_web_fet
 // Copies the bytes fetched under `id` into `bytes`, and forgets them.
 void game_toolkit_web_take(int id, unsigned char *bytes);
 
+// Called with what the text input element brings: with a `kind` of 0, the
+// text an input method is composing, empty when it is done, and of 1, text
+// entered. `text` is UTF-8, which game_toolkit_web_free frees.
+typedef void (*game_toolkit_web_text_input_changed)(void *context, int kind, char *text);
+
+// Focuses an input element of its own, which it makes the first time, for the
+// browser and its input methods to enter text into, and calls `changed` with
+// `context` with what they enter, until game_toolkit_web_stop_text_input.
+void game_toolkit_web_start_text_input(void *context, game_toolkit_web_text_input_changed changed);
+
+void game_toolkit_web_stop_text_input(void);
+
+// Places the input element `x`, `y` CSS pixels from the canvas's top-left
+// corner, `width` by `height`, where the input method shows what it composes.
+void game_toolkit_web_set_text_input_area(double x, double y, double width, double height);
+
+// Frees what the browser allocated for C.
+void game_toolkit_web_free(void *pointer);
+
 #endif
 
 #endif
