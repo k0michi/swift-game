@@ -39,8 +39,9 @@ EM_JS(void, game_toolkit_web_take, (int id, unsigned char *bytes), {
     Module.gameToolkitFetched.delete(id);
 });
 // An invisible input element, which the browser's input methods compose
-// into. Keys pressed while they compose stay away from SDL, which would take
-// them for its own; SDL, which listens on the window, gets the rest. Each
+// into. Keys pressed while they compose, and keypresses, stay away from SDL,
+// which would take them for its own; SDL, which listens on the window, gets
+// the rest. Each
 // entry is sent, and the element emptied, so that it holds only what is being
 // composed.
 EM_JS(void, game_toolkit_web_start_text_input, (void *context, game_toolkit_web_text_input_changed changed), {
@@ -66,6 +67,9 @@ EM_JS(void, game_toolkit_web_start_text_input, (void *context, game_toolkit_web_
         };
         input.addEventListener('keydown', keepFromSDL);
         input.addEventListener('keyup', keepFromSDL);
+        // SDL takes keypresses for its own text, and keeps them from the
+        // element, which brings the same text, so that they never reach it.
+        input.addEventListener('keypress', (event) => event.stopPropagation());
         input.addEventListener('compositionstart', () => { composing = true; });
         input.addEventListener('compositionupdate', (event) => send(0, event.data));
         input.addEventListener('compositionend', (event) => {
