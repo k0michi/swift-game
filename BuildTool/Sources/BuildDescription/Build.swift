@@ -41,6 +41,7 @@ public struct Build: Codable, Sendable {
     // BuildTool names the file in the environment to write the description
     // to, as JSON.
     static let outputVariable = "BUILDTOOL_DESCRIPTION_OUTPUT"
+    static let platformVariable = "BUILDTOOL_PLATFORM"
 
     private static func write(_ build: Build) {
         guard let path = ProcessInfo.processInfo.environment[outputVariable] else { return }

@@ -1,10 +1,10 @@
 import BuildDescription
 import Foundation
 
-/// Reads `Build.swift` in `project`: compiles BuildDescription into a library,
-/// compiles Build.swift against it, and runs it to write what it declares,
-/// as SwiftPM does with Package.swift and PackageDescription.
-func loadDescription(project: URL, work: URL) throws -> Build {
+/// Reads `Build.swift` in `project` for `platform`: compiles BuildDescription
+/// into a library, compiles Build.swift against it, and runs it to write what
+/// it declares, as SwiftPM does with Package.swift and PackageDescription.
+func loadDescription(project: URL, work: URL, platform: Platform) throws -> Build {
     let manifest = project.appendingPathComponent("Build.swift")
     guard FileManager.default.fileExists(atPath: manifest.path) else {
         throw BuildToolError("\(manifest.path) is missing")
@@ -27,7 +27,11 @@ func loadDescription(project: URL, work: URL) throws -> Build {
         try compilerVersion.write(to: compiler, atomically: true, encoding: .utf8)
     }
 
-    let library = directory.appendingPathComponent("libBuildDescription.a")
+    #if os(Windows)
+        let library = directory.appendingPathComponent("BuildDescription.lib")
+    #else
+        let library = directory.appendingPathComponent("libBuildDescription.a")
+    #endif
     if try isOutdated(library, inputs: sources) {
         try run(
             ["swiftc", "-parse-as-library", "-module-name", "BuildDescription", "-emit-library", "-static",
@@ -35,16 +39,18 @@ func loadDescription(project: URL, work: URL) throws -> Build {
              "-o", library.path] + sources.map(\.path))
     }
 
-    let executable = directory.appendingPathComponent("build-description")
+    let executable = directory.appendingPathComponent(executableName("build-description"))
     if try isOutdated(executable, inputs: [manifest, library]) {
         try run(
             ["swiftc", "-I", directory.path, "-L", directory.path, "-lBuildDescription", "-o", executable.path,
              manifest.path])
     }
 
-    let json = directory.appendingPathComponent("description.json")
+    let json = work.appendingPathComponent("description.json")
     try? FileManager.default.removeItem(at: json)
-    try run([executable.path], in: project, environment: ["BUILDTOOL_DESCRIPTION_OUTPUT": json.path])
+    try run(
+        [executable.path], in: project,
+        environment: ["BUILDTOOL_DESCRIPTION_OUTPUT": json.path, "BUILDTOOL_PLATFORM": platform.rawValue])
     guard FileManager.default.fileExists(atPath: json.path) else {
         throw BuildToolError("Build.swift declares no Build")
     }

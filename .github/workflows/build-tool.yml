@@ -1,0 +1,105 @@
+name: BuildTool
+
+env:
+  SWIFT_VERSION: 6.3.3
+
+on:
+  push:
+    paths:
+      - BuildTool/**
+      - cmake/HarfBuzz/**
+      - .github/workflows/build-tool.yml
+  pull_request:
+    paths:
+      - BuildTool/**
+      - cmake/HarfBuzz/**
+      - .github/workflows/build-tool.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # BuildTool's example, built and run on each platform.
+  example:
+    name: example (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-swift
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+
+      - name: Install Ninja
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo apt-get install --yes ninja-build
+
+      - name: Build BuildTool
+        shell: bash
+        run: swift build --package-path BuildTool
+
+      - name: Run the example
+        shell: bash
+        run: BuildTool/.build/debug/buildtool --project-path BuildTool/Examples/Hello run hello
+
+  example-web:
+    name: example (web)
+    runs-on: ubuntu-24.04
+    env:
+      SWIFT_SNAPSHOT: swift-DEVELOPMENT-SNAPSHOT-2026-10-17-a
+      SWIFT_EMSCRIPTEN_SDK: swift-DEVELOPMENT-SNAPSHOT-2026-10-17-a_wasm-emscripten
+      SWIFT_EMSCRIPTEN_SDK_CHECKSUM: 71c9f690771cb553a68685e6fd8669f390f938801d75de363ccb2da48e568bfe
+      # The version the Swift SDK was built with.
+      EMSDK_VERSION: 6.0.13
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The SDK's modules work only with the compiler of the same snapshot.
+      - name: Install the Swift snapshot
+        shell: bash
+        run: |
+          toolchain="$RUNNER_TEMP/swift"
+          mkdir -p "$toolchain"
+          curl -fsSL "https://download.swift.org/development/ubuntu2404/$SWIFT_SNAPSHOT/$SWIFT_SNAPSHOT-ubuntu24.04.tar.gz" |
+            tar xz --strip-components=1 -C "$toolchain"
+          echo "$toolchain/usr/bin" >> "$GITHUB_PATH"
+
+      - name: Install the Swift SDK for Emscripten
+        shell: bash
+        run: |
+          swift sdk install \
+            "https://github.com/k0michi/swift-emscripten-sdk/releases/download/$SWIFT_SNAPSHOT/$SWIFT_EMSCRIPTEN_SDK.artifactbundle.tar.gz" \
+            --checksum "$SWIFT_EMSCRIPTEN_SDK_CHECKSUM"
+
+      - name: Install Emscripten
+        shell: bash
+        run: |
+          emsdk="$RUNNER_TEMP/emsdk"
+          git clone --depth 1 https://github.com/emscripten-core/emsdk "$emsdk"
+          "$emsdk/emsdk" install "$EMSDK_VERSION"
+          "$emsdk/emsdk" activate "$EMSDK_VERSION"
+          echo "EMSDK=$emsdk" >> "$GITHUB_ENV"
+          echo "$emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Install Ninja
+        shell: bash
+        run: sudo apt-get install --yes ninja-build
+
+      - name: Build BuildTool
+        shell: bash
+        run: swift build --package-path BuildTool
+
+      - name: Build the example and run it in Node
+        shell: bash
+        run: |
+          BuildTool/.build/debug/buildtool --project-path BuildTool/Examples/Hello \
+            --platform emscripten --swift-sdk "$SWIFT_EMSCRIPTEN_SDK" build
+          node BuildTool/Examples/Hello/.build/wasm32-unknown-emscripten/debug/hello.js

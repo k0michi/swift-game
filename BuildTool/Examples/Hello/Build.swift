@@ -7,6 +7,8 @@ let sdl = CMakeProject(
     options: [
         "SDL_SHARED": "OFF", "SDL_STATIC": "ON", "SDL_TEST_LIBRARY": "OFF", "SDL_TESTS": "OFF",
         "SDL_EXAMPLES": "OFF",
+        // Without X11 or Wayland, which the example does not open a window on.
+        "SDL_UNIX_CONSOLE_BUILD": platform == .linux ? "ON" : "OFF",
     ],
     targets: ["SDL3-static"])
 
@@ -21,8 +23,11 @@ let freeType = CMakeProject(
     targets: ["freetype"])
 
 // HarfBuzz has no CMake project of its own to build harfbuzz.cc alone, so
-// swift-game's is used.
-let harfBuzz = CMakeProject("harfbuzz", path: "../../../cmake/HarfBuzz", targets: ["harfbuzz"])
+// swift-game's is used. On Linux it needs the C++ library, which swiftc does
+// not link and CMake does not say.
+let harfBuzz = CMakeProject(
+    "harfbuzz", path: "../../../cmake/HarfBuzz", targets: ["harfbuzz"],
+    linkerFlags: platform == .linux ? ["-lstdc++"] : [])
 
 let notoSansJP = Download(
     "NotoSansJP-Regular.otf",
@@ -39,5 +44,7 @@ let build = Build(
         .target(name: "CFreeType", linking: [freeType.target("freetype")]),
         .target(name: "CHarfBuzz", linking: [harfBuzz.target("harfbuzz")]),
         .executableTarget(
-            name: "Hello", product: "hello", dependencies: ["CSDL3", "CFreeType", "CHarfBuzz"], assets: [notoSansJP]),
+            name: "Hello", product: "hello", dependencies: ["CSDL3", "CFreeType", "CHarfBuzz"],
+            // Emscripten's, for its link, which BuildTool does.
+            linkerFlags: platform == .emscripten ? ["-sALLOW_MEMORY_GROWTH=1"] : [], assets: [notoSansJP]),
     ])
