@@ -9,7 +9,7 @@ struct TextSample: AsyncMain {
     static func run() async throws {
         let system = try `init`(flags: [.video])
         defer { withExtendedLifetime(system) {} }
-        let window = try createWindow(title: "text", w: 640, h: 480, flags: platformWindowFlags([.highPixelDensity]))
+        let window = try createWindow(title: "text", w: 640, h: 560, flags: platformWindowFlags([.highPixelDensity]))
 
         let instance = try createInstance()
         let surface = try instance.createSurface(from: window)
@@ -33,8 +33,19 @@ struct TextSample: AsyncMain {
                 } else if let event = event as? KeyboardEvent, event.down {
                     graph.inputs.append(.key(event))
                 }
-                if let event = event as? MouseButtonEvent, event.down {
-                    graph.clicks.append((event.x, event.y))
+                if let event = event as? MouseMotionEvent {
+                    graph.pointer = (event.x, event.y)
+                }
+                if let event = event as? MouseButtonEvent {
+                    graph.pointer = (event.x, event.y)
+                    if event.down {
+                        graph.clicks.append((event.x, event.y))
+                    } else {
+                        graph.releases.append((event.x, event.y))
+                    }
+                }
+                if event.type == .windowMouseLeave {
+                    graph.pointer = nil
                 }
                 if event.type == .windowPixelSizeChanged {
                     configuration = (try? configureSurface(surface, device: device, adapter: adapter, window: window)) ?? configuration
@@ -84,6 +95,7 @@ struct Screen: View {
     var frame: Int
     @State private var showsSecond = true
     @State private var name = ""
+    @State private var pressed = "まだ何も押されていません"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -93,6 +105,17 @@ struct Screen: View {
                 // Text(name.isEmpty ? "名前を入力してください" : "こんにちは、\(name)さん")
             }
             Text("あのイーハトーヴォのすきとおった風、夏でも底に冷たさをもつ青いそら、うつくしい森で飾られたモリーオ市、郊外のぎらぎらひかる草の波。")
+            // Buttons whose faces a shader of their own draws.
+            HStack(spacing: 24) {
+                GlowButton(title: "はじめる", color: Color(r: 0.95, g: 0.45, b: 0.15, a: 1)) {
+                    pressed = "「はじめる」が押されました"
+                }
+                GlowButton(title: "つづきから", color: Color(r: 0.2, g: 0.5, b: 0.95, a: 1)) {
+                    pressed = "「つづきから」が押されました"
+                }
+            }
+            .padding(horizontal: 0, vertical: 6)
+            Text(pressed).font(size: 14).foregroundColor(Color(r: 0.7, g: 0.7, b: 0.7, a: 1))
             Counter(title: "A")
             if showsSecond {
                 Counter(title: "B")
