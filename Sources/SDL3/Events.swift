@@ -184,6 +184,21 @@ public struct QuitEvent: Event {
     public let timestamp: UInt64
 }
 
+// SDL_UserEvent, without its data pointers
+public struct UserEvent: Event {
+    public let type: EventType
+    public let timestamp: UInt64
+    public let windowID: WindowID
+    public let code: Int32
+
+    public init(type: EventType, timestamp: UInt64 = 0, windowID: WindowID = WindowID(rawValue: 0), code: Int32) {
+        self.type = type
+        self.timestamp = timestamp
+        self.windowID = windowID
+        self.code = code
+    }
+}
+
 // SDL_Event
 public struct UnknownEvent: Event {
     public let type: EventType
@@ -286,6 +301,13 @@ private func makeEvent(from event: SDL_Event) -> any Event {
             integerX: event.wheel.integer_x,
             integerY: event.wheel.integer_y
         )
+    case EventType.user.rawValue ... EventType.last.rawValue:
+        return UserEvent(
+            type: type,
+            timestamp: event.user.timestamp,
+            windowID: WindowID(rawValue: event.user.windowID),
+            code: event.user.code
+        )
     case EventType.quit.rawValue:
         return QuitEvent(type: type, timestamp: event.quit.timestamp)
     case EventType.terminating.rawValue ... EventType.systemThemeChanged.rawValue:
@@ -306,4 +328,23 @@ public func pumpEvents() {
 public func pollEvent() -> (any Event)? {
     var event = SDL_Event()
     return SDL_PollEvent(&event) ? makeEvent(from: event) : nil
+}
+
+// SDL_RegisterEvents: the first of `numevents` event types for the app's own
+// events, or nil when there are not that many left.
+public func registerEvents(numevents: Int32) -> EventType? {
+    let first = SDL_RegisterEvents(numevents)
+    return first == 0 ? nil : EventType(rawValue: first)
+}
+
+// SDL_PushEvent, of a user event
+public func pushEvent(event: UserEvent) throws {
+    var sdlEvent = SDL_Event()
+    sdlEvent.user.type = event.type.rawValue
+    sdlEvent.user.timestamp = event.timestamp
+    sdlEvent.user.windowID = event.windowID.rawValue
+    sdlEvent.user.code = event.code
+    guard SDL_PushEvent(&sdlEvent) else {
+        throw SDLError(operation: "SDL_PushEvent")
+    }
 }
