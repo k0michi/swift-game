@@ -54,6 +54,9 @@ public struct EventType: RawRepresentable, Equatable, Hashable, Sendable {
     public static let keymapChanged = Self(rawValue: 0x304)
     public static let keyboardAdded = Self(rawValue: 0x305)
     public static let keyboardRemoved = Self(rawValue: 0x306)
+    public static let textEditingCandidates = Self(rawValue: 0x307)
+    public static let screenKeyboardShown = Self(rawValue: 0x308)
+    public static let screenKeyboardHidden = Self(rawValue: 0x309)
 
     public static let mouseMotion = Self(rawValue: 0x400)
     public static let mouseButtonDown = Self(rawValue: 0x401)
@@ -61,6 +64,8 @@ public struct EventType: RawRepresentable, Equatable, Hashable, Sendable {
     public static let mouseWheel = Self(rawValue: 0x403)
     public static let mouseAdded = Self(rawValue: 0x404)
     public static let mouseRemoved = Self(rawValue: 0x405)
+
+    public static let clipboardUpdate = Self(rawValue: 0x900)
 
     public static let pollSentinel = Self(rawValue: 0x7F00)
     public static let user = Self(rawValue: 0x8000)
@@ -100,6 +105,36 @@ public struct KeyboardEvent: Event {
     public let raw: UInt16
     public let down: Bool
     public let `repeat`: Bool
+}
+
+// SDL_TextEditingEvent: the text being composed, as by an input method, with
+// what in it is selected, `start` and `length` being -1 when nothing is.
+public struct TextEditingEvent: Event {
+    public let type: EventType
+    public let timestamp: UInt64
+    public let windowID: WindowID
+    public let text: String
+    public let start: Int32
+    public let length: Int32
+}
+
+// SDL_TextEditingCandidatesEvent, which comes when the app draws the
+// candidates itself, as SDL_HINT_IME_IMPLEMENTED_UI asks
+public struct TextEditingCandidatesEvent: Event {
+    public let type: EventType
+    public let timestamp: UInt64
+    public let windowID: WindowID
+    public let candidates: [String]
+    public let selectedCandidate: Int32
+    public let horizontal: Bool
+}
+
+// SDL_TextInputEvent
+public struct TextInputEvent: Event {
+    public let type: EventType
+    public let timestamp: UInt64
+    public let windowID: WindowID
+    public let text: String
 }
 
 // SDL_MouseMotionEvent
@@ -181,6 +216,35 @@ private func makeEvent(from event: SDL_Event) -> any Event {
             raw: event.key.raw,
             down: event.key.down,
             repeat: event.key.repeat
+        )
+    // The texts are copied, as SDL frees them with the next events.
+    case EventType.textEditing.rawValue:
+        return TextEditingEvent(
+            type: type,
+            timestamp: event.edit.timestamp,
+            windowID: WindowID(rawValue: event.edit.windowID),
+            text: event.edit.text.map { String(cString: $0) } ?? "",
+            start: event.edit.start,
+            length: event.edit.length
+        )
+    case EventType.textEditingCandidates.rawValue:
+        let candidates = event.edit_candidates
+        return TextEditingCandidatesEvent(
+            type: type,
+            timestamp: candidates.timestamp,
+            windowID: WindowID(rawValue: candidates.windowID),
+            candidates: (0..<Int(candidates.num_candidates)).compactMap { index in
+                candidates.candidates?[index].map { String(cString: $0) }
+            },
+            selectedCandidate: candidates.selected_candidate,
+            horizontal: candidates.horizontal
+        )
+    case EventType.textInput.rawValue:
+        return TextInputEvent(
+            type: type,
+            timestamp: event.text.timestamp,
+            windowID: WindowID(rawValue: event.text.windowID),
+            text: event.text.text.map { String(cString: $0) } ?? ""
         )
     case EventType.mouseMotion.rawValue:
         return MouseMotionEvent(
