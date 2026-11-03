@@ -23,11 +23,36 @@ extension Never: View {
 /// A view that is not made of others, but resolves into nodes itself.
 @MainActor
 protocol PrimitiveView: View where Body == Never {
-    func makeNodes(in graph: ViewGraph, at identity: Identity) -> [any Node]
+    func makeNodes(in context: ResolveContext) -> [any Node]
 }
 
 extension PrimitiveView {
     var body: Never { return fatalError("\(Self.self) has no body") }
+}
+
+/// Where a view is resolved: its graph, its identity, and its environment.
+@MainActor
+struct ResolveContext {
+    let graph: ViewGraph
+    var identity: Identity
+    var environment: EnvironmentValues
+
+    /// The context of a view under this one's, by `component`.
+    func appending(_ component: AnyHashable) -> ResolveContext {
+        var context = self
+        context.identity = identity.appending(component)
+        return context
+    }
+
+    /// The nodes of `views`, each at its place under this view.
+    func resolve(_ views: [any View]) -> [any Node] {
+        graph.resolve(views, in: self)
+    }
+
+    /// The nodes of `view`, as one.
+    func resolveOne(_ view: any View) -> any Node {
+        single(resolve([view]))
+    }
 }
 
 /// What a view resolves into, which lays out and draws in points. Its parent
@@ -70,8 +95,8 @@ struct Group: PrimitiveView {
         self.content = content()
     }
 
-    func makeNodes(in graph: ViewGraph, at identity: Identity) -> [any Node] {
-        graph.resolve(content, at: identity)
+    func makeNodes(in context: ResolveContext) -> [any Node] {
+        context.resolve(content)
     }
 }
 
@@ -80,8 +105,8 @@ struct IdentifiedView: PrimitiveView {
     var content: any View
     var id: AnyHashable
 
-    func makeNodes(in graph: ViewGraph, at identity: Identity) -> [any Node] {
-        graph.resolve([content], at: identity.appending(id))
+    func makeNodes(in context: ResolveContext) -> [any Node] {
+        context.appending(id).resolve([content])
     }
 }
 
@@ -110,11 +135,12 @@ enum VerticalAlignment {
 
 // Lines of text, broken where they are too wide for the width proposed, and
 // at newlines, the font's line height apart. It is as wide as its widest line,
-// and as high as its first line's ascender to its last one's descender.
-struct Text: PrimitiveView, Node {
+// and as high as its first line's ascender to its last one's descender. Its
+// size and color are the environment's unless it is given its own.
+struct Text: PrimitiveView {
     var string: String
-    var points: Float = 17
-    var color = Color(r: 1, g: 1, b: 1, a: 1)
+    var points: Float?
+    var color: Color?
     var alignment = HorizontalAlignment.leading
 
     init(_ string: String) {
@@ -140,9 +166,20 @@ struct Text: PrimitiveView, Node {
         return text
     }
 
-    func makeNodes(in graph: ViewGraph, at identity: Identity) -> [any Node] {
-        [self]
+    func makeNodes(in context: ResolveContext) -> [any Node] {
+        [
+            TextNode(
+                string: string, points: points ?? context.environment.fontSize,
+                color: color ?? context.environment.foregroundColor, alignment: alignment)
+        ]
     }
+}
+
+struct TextNode: Node {
+    var string: String
+    var points: Float
+    var color: Color
+    var alignment: HorizontalAlignment
 
     func size(proposedWidth: Float?, in renderer: TextRenderer) -> (width: Float, height: Float) {
         let lines = renderer.lines(string, points: points, width: proposedWidth)
@@ -176,8 +213,8 @@ struct VStack: PrimitiveView {
         self.content = content()
     }
 
-    func makeNodes(in graph: ViewGraph, at identity: Identity) -> [any Node] {
-        [VStackNode(alignment: alignment, spacing: spacing, content: graph.resolve(content, at: identity))]
+    func makeNodes(in context: ResolveContext) -> [any Node] {
+        [VStackNode(alignment: alignment, spacing: spacing, content: context.resolve(content))]
     }
 }
 
@@ -218,8 +255,8 @@ struct HStack: PrimitiveView {
         self.content = content()
     }
 
-    func makeNodes(in graph: ViewGraph, at identity: Identity) -> [any Node] {
-        [HStackNode(alignment: alignment, spacing: spacing, content: graph.resolve(content, at: identity))]
+    func makeNodes(in context: ResolveContext) -> [any Node] {
+        [HStackNode(alignment: alignment, spacing: spacing, content: context.resolve(content))]
     }
 }
 
@@ -260,28 +297,30 @@ func single(_ nodes: [any Node]) -> any Node {
     nodes.count == 1 ? nodes[0] : VStackNode(alignment: .leading, spacing: 0, content: nodes)
 }
 
-// A view with `amount` points around it, proposed what is left of the width.
+// A view with space around it, proposed what is left of the width.
 struct Padding: PrimitiveView {
     var content: any View
-    var amount: Float
+    var horizontal: Float
+    var vertical: Float
 
-    func makeNodes(in graph: ViewGraph, at identity: Identity) -> [any Node] {
-        [PaddingNode(content: single(graph.resolve([content], at: identity)), amount: amount)]
+    func makeNodes(in context: ResolveContext) -> [any Node] {
+        [PaddingNode(content: context.resolveOne(content), horizontal: horizontal, vertical: vertical)]
     }
 }
 
 struct PaddingNode: Node {
     var content: any Node
-    var amount: Float
+    var horizontal: Float
+    var vertical: Float
 
     func size(proposedWidth: Float?, in renderer: TextRenderer) -> (width: Float, height: Float) {
-        let size = content.size(proposedWidth: proposedWidth.map { $0 - amount * 2 }, in: renderer)
-        return (size.width + amount * 2, size.height + amount * 2)
+        let size = content.size(proposedWidth: proposedWidth.map { $0 - horizontal * 2 }, in: renderer)
+        return (size.width + horizontal * 2, size.height + vertical * 2)
     }
 
     func draw(x: Float, y: Float, proposedWidth: Float?, in renderer: TextRenderer) throws {
         try content.draw(
-            x: x + amount, y: y + amount, proposedWidth: proposedWidth.map { $0 - amount * 2 }, in: renderer)
+            x: x + horizontal, y: y + vertical, proposedWidth: proposedWidth.map { $0 - horizontal * 2 }, in: renderer)
     }
 }
 
@@ -292,8 +331,8 @@ struct Frame: PrimitiveView {
     var width: Float
     var alignment: HorizontalAlignment
 
-    func makeNodes(in graph: ViewGraph, at identity: Identity) -> [any Node] {
-        [FrameNode(content: single(graph.resolve([content], at: identity)), width: width, alignment: alignment)]
+    func makeNodes(in context: ResolveContext) -> [any Node] {
+        [FrameNode(content: context.resolveOne(content), width: width, alignment: alignment)]
     }
 }
 
@@ -318,8 +357,8 @@ struct Background: PrimitiveView {
     var content: any View
     var color: Color
 
-    func makeNodes(in graph: ViewGraph, at identity: Identity) -> [any Node] {
-        [BackgroundNode(content: single(graph.resolve([content], at: identity)), color: color)]
+    func makeNodes(in context: ResolveContext) -> [any Node] {
+        [BackgroundNode(content: context.resolveOne(content), color: color)]
     }
 }
 
@@ -340,7 +379,11 @@ struct BackgroundNode: Node {
 
 extension View {
     func padding(_ amount: Float = 16) -> Padding {
-        Padding(content: self, amount: amount)
+        Padding(content: self, horizontal: amount, vertical: amount)
+    }
+
+    func padding(horizontal: Float = 0, vertical: Float = 0) -> Padding {
+        Padding(content: self, horizontal: horizontal, vertical: vertical)
     }
 
     func frame(width: Float, alignment: HorizontalAlignment = .center) -> Frame {

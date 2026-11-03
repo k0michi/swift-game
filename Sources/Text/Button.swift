@@ -15,8 +15,8 @@ struct Button: PrimitiveView {
         self.action = action
     }
 
-    func makeNodes(in graph: ViewGraph, at identity: Identity) -> [any Node] {
-        [ButtonNode(label: single(graph.resolve([label], at: identity)), action: action, graph: graph)]
+    func makeNodes(in context: ResolveContext) -> [any Node] {
+        [ButtonNode(label: context.resolveOne(label), action: action, graph: context.graph)]
     }
 }
 
