@@ -348,13 +348,15 @@ let package = Package(
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
             ] + customExecutorSettings
         ),
-        // Japanese text rasterized by FreeType, drawn from a texture.
+        // English and Japanese text shaped by HarfBuzz and rasterized by
+        // FreeType, drawn from a texture.
         .executableTarget(
             name: "Text",
-            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "GameToolkit", "FreeType"],
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "GameToolkit", "FreeType", "HarfBuzz"],
             swiftSettings: [
                 .unsafeFlags(
-                    sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags + freeTypeSwiftCompilerFlags),
+                    sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags + freeTypeSwiftCompilerFlags
+                        + harfBuzzSwiftCompilerFlags),
             ] + customExecutorSettings
         ),
         // Echo on the browser's Web Audio, run in headless Chromium by
