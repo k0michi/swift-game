@@ -9,11 +9,10 @@ struct CMakeArtifacts {
 }
 
 /// Fetches `project`, configures and builds its targets with Ninja for
-/// `platform`, with the Swift toolchain's clang or clang-cl, or with
-/// Emscripten's through emcmake, and reads what they give what links them
-/// from CMake's file API, with what the project declares besides.
+/// `platform`, which chooses the compilers, and reads what they give what
+/// links them from CMake's file API, with what the project declares besides.
 func build(
-    _ project: CMakeProject, platform: Platform, root: URL, in work: URL, macOSDeploymentTarget: String?
+    _ project: CMakeProject, for platform: any TargetPlatform, description: Build, root: URL, in work: URL
 ) throws -> [String: CMakeArtifacts] {
     let directory = work.appendingPathComponent("cmake").appendingPathComponent(project.name)
     let build = directory.appendingPathComponent("build")
@@ -39,30 +38,15 @@ func build(
         try probeScript.write(to: probes, atomically: true, encoding: .utf8)
     }
 
-    var configure = [
-        "cmake", "-G", "Ninja", "-S", source.path, "-B", build.path, "--no-warn-unused-cli",
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DBUILD_SHARED_LIBS=OFF",
-        "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=\(probes.path)",
-        "-DBUILDTOOL_TARGETS=\(project.targets.joined(separator: ";"))",
-    ]
-    let toolchain = try executable(named: "swiftc").deletingLastPathComponent()
-    switch platform {
-    case .macOS, .linux:
-        configure += [
-            "-DCMAKE_C_COMPILER=\(toolchain.appendingPathComponent("clang").path)",
-            "-DCMAKE_CXX_COMPILER=\(toolchain.appendingPathComponent("clang++").path)",
-        ]
-    case .windows:
-        let clangCL = toolchain.appendingPathComponent("clang-cl.exe").path
-        configure += ["-DCMAKE_C_COMPILER=\(clangCL)", "-DCMAKE_CXX_COMPILER=\(clangCL)"]
-    case .emscripten:
-        configure.insert("emcmake", at: 0)
-    }
-    if platform == .macOS, let macOSDeploymentTarget {
-        configure.append("-DCMAKE_OSX_DEPLOYMENT_TARGET=\(macOSDeploymentTarget)")
-    }
-    configure += project.options.sorted { $0.key < $1.key }.map { "-D\($0.key)=\($0.value)" }
+    let configure = try platform.cmakeConfigureCommand(
+        [
+            "cmake", "-G", "Ninja", "-S", source.path, "-B", build.path, "--no-warn-unused-cli",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DBUILD_SHARED_LIBS=OFF",
+            "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=\(probes.path)",
+            "-DBUILDTOOL_TARGETS=\(project.targets.joined(separator: ";"))",
+        ] + project.options.sorted { $0.key < $1.key }.map { "-D\($0.key)=\($0.value)" },
+        build: description)
 
     // Configured again only when how it is configured, or the CMake doing it,
     // changes. Ninja configures again by itself when the project's own CMake
@@ -134,7 +118,9 @@ private func fetch(_ url: String, revision: String, into source: URL) throws {
 
 // Each target's probe's include directories, and its libraries and their
 // search paths, without the probe's own linker flags.
-private func readCodeModel(build: URL, targets: [String], platform: Platform) throws -> [String: CMakeArtifacts] {
+private func readCodeModel(
+    build: URL, targets: [String], platform: any TargetPlatform
+) throws -> [String: CMakeArtifacts] {
     let reply = build.appendingPathComponent(".cmake/api/v1/reply")
     guard
         let index = try FileManager.default.contentsOfDirectory(atPath: reply.path)
@@ -172,36 +158,13 @@ private func readCodeModel(build: URL, targets: [String], platform: Platform) th
             .compactMap { $0["fragment"] as? String }
         artifacts[target] = CMakeArtifacts(
             includeDirectories: unique(includes),
-            linkerFlags: fragments.flatMap { linkerFlags(fromFragment: $0, build: build, platform: platform) })
+            linkerFlags: fragments.flatMap { fragment in
+                platform.linkerFlags(fromFragment: words(fragment)) {
+                    isAbsolutePath($0) ? $0 : build.appendingPathComponent($0).path
+                }
+            })
     }
     return artifacts
-}
-
-// A link command's fragment, such as "libfreetype.a", "-framework Cocoa",
-// "-Wl,-weak_framework,Metal" or "kernel32.lib", as swiftc takes it, with
-// paths made absolute. On the desktop, what is for the C compiler's driver
-// goes to the linker; Emscripten's link hands it to emcc instead.
-private func linkerFlags(fromFragment fragment: String, build: URL, platform: Platform) -> [String] {
-    words(fragment).flatMap { word -> [String] in
-        if word.hasPrefix("-") {
-            if platform != .emscripten, word.hasPrefix("-Wl,") {
-                return word.dropFirst(4).split(separator: ",").flatMap { ["-Xlinker", String($0)] }
-            }
-            return [word == "-pthread" && platform != .emscripten ? "-lpthread" : word]
-        }
-        if isAbsolutePath(word) {
-            return [word]
-        }
-        // A library of the system, such as kernel32.lib, which the linker finds.
-        if platform == .windows, word.hasSuffix(".lib"), !word.contains("/") {
-            return ["-l" + word.dropLast(4)]
-        }
-        // A framework's name, after -framework, stays as it is.
-        if !word.contains("/") && !word.contains(".") {
-            return [word]
-        }
-        return [build.appendingPathComponent(word).path]
-    }
 }
 
 // The words of a fragment, which CMake quotes when they have spaces.

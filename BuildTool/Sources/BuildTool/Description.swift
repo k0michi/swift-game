@@ -27,23 +27,20 @@ func loadDescription(project: URL, work: URL, platform: Platform) throws -> Buil
         try compilerVersion.write(to: compiler, atomically: true, encoding: .utf8)
     }
 
-    #if os(Windows)
-        let library = directory.appendingPathComponent("BuildDescription.lib")
-    #else
-        let library = directory.appendingPathComponent("libBuildDescription.a")
-    #endif
+    let library = directory.appendingPathComponent(staticLibraryName("BuildDescription"))
     if try isOutdated(library, inputs: sources) {
         try run(
-            ["swiftc", "-parse-as-library", "-module-name", "BuildDescription", "-emit-library", "-static",
-             "-emit-module", "-emit-module-path", directory.appendingPathComponent("BuildDescription.swiftmodule").path,
-             "-o", library.path] + sources.map(\.path))
+            ["swiftc"] + (try hostSDKArguments())
+                + ["-parse-as-library", "-module-name", "BuildDescription", "-emit-library", "-static"]
+                + ["-emit-module", "-emit-module-path", directory.appendingPathComponent("BuildDescription.swiftmodule").path]
+                + ["-o", library.path] + sources.map(\.path))
     }
 
     let executable = directory.appendingPathComponent(executableName("build-description"))
     if try isOutdated(executable, inputs: [manifest, library]) {
         try run(
-            ["swiftc", "-I", directory.path, "-L", directory.path, "-lBuildDescription", "-o", executable.path,
-             manifest.path])
+            ["swiftc"] + (try hostSDKArguments())
+                + ["-I", directory.path, "-L", directory.path, "-lBuildDescription", "-o", executable.path, manifest.path])
     }
 
     let json = work.appendingPathComponent("description.json")

@@ -1,22 +1,42 @@
 import BuildDescription
 import Foundation
 
-/// How swift build builds for Emscripten with the Swift SDK named `sdk`.
-struct Emscripten {
+/// Emscripten, with the Swift SDK for wasm32-unknown-emscripten that
+/// `--swift-sdk` names, and emcmake and emcc on the PATH. SwiftPM compiles
+/// the targets, and BuildTool links each executable into a page.
+struct Emscripten: TargetPlatform {
     let sdk: String
     let work: URL
 
-    /// What swift build is given besides its own arguments. The native build
-    /// system is the one that knows the Emscripten triple, and writes the plan
-    /// that `link` reads.
-    var swiftBuildArguments: [String] {
+    init(options: Options) throws {
+        guard let sdk = options.swiftSDK else {
+            throw BuildToolError("Building for emscripten needs --swift-sdk")
+        }
+        self.sdk = sdk
+        work = options.project.appendingPathComponent(".build/buildtool/emscripten")
+    }
+
+    var platform: Platform { .emscripten }
+
+    func cmakeConfigureCommand(_ arguments: [String], build: Build) throws -> [String] {
+        ["emcmake"] + arguments
+    }
+
+    // emcc's flags stay for emcc.
+    func linkerFlags(fromFragment words: [String], resolve: (String) -> String) -> [String] {
+        words.indices.map { words[$0].hasPrefix("-") || isFlagValue(words, at: $0) ? words[$0] : resolve(words[$0]) }
+    }
+
+    /// The native build system is the one that knows the Emscripten triple,
+    /// and writes the plan that `link` reads.
+    var swiftArguments: [String] {
         ["--swift-sdk", sdk, "--build-system", "native"]
     }
 
     /// SwiftPM compiles C targets with $CC for both the host, for build tools
     /// and macros, and the target, so $CC is a script that sends wasm32's to
     /// emcc and the rest to the toolchain's clang.
-    func environment() throws -> [String: String] {
+    func swiftEnvironment() throws -> [String: String] {
         let script = work.appendingPathComponent("cc")
         let contents = """
             #!/bin/sh
@@ -40,31 +60,44 @@ struct Emscripten {
         return ["CC": script.path, "BUILDTOOL_HOST_CC": clang.path]
     }
 
+    // Each executable's target alone, for SwiftPM not to link it, and then
+    // BuildTool's link.
+    func buildExecutables(_ executables: [Target], generated: Generated, swift: SwiftPM) throws {
+        let binPath = try swift.binPath()
+        for target in executables {
+            try BuildTool.run(swift.command("build", ["--target", target.name]), environment: swiftEnvironment())
+            try link(
+                product: target.product ?? target.name, target: target, generated: generated, project: swift.project,
+                binPath: binPath)
+        }
+    }
+
+    func run(product: String, swift: SwiftPM) throws {
+        throw BuildToolError("An emscripten build runs in a browser; build it and serve its bin path")
+    }
+
     /// Links the executable product `product` of `target` into HTML,
     /// JavaScript and wasm in `binPath`. SwiftPM's own link names its output
     /// .wasm, which has emcc make a standalone module without the JavaScript
     /// runtime, so the objects SwiftPM planned to link are linked here, with
     /// the libraries of the CMake targets that `target` and what it depends
     /// on link. Flags other than libraries go to emcc.
-    func link(
-        product: String, target: Target, build: Build, artifacts: [CMakeTarget: CMakeArtifacts], project: URL,
-        configuration: String, binPath: URL
-    ) throws {
-        let objects = try plannedObjects(product: product, project: project, configuration: configuration)
+    private func link(product: String, target: Target, generated: Generated, project: URL, binPath: URL) throws {
+        let objects = try plannedObjects(product: product, project: project, configuration: binPath.lastPathComponent)
         let list = work.appendingPathComponent("\(product).objects")
         try objects.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'\n" }.joined()
             .write(to: list, atomically: true, encoding: .utf8)
 
         var flags: [String] = []
-        for target in closure(of: target, in: build) {
-            flags += target.linking.flatMap { artifacts[$0]?.linkerFlags ?? [] } + target.linkerFlags
+        for target in closure(of: target, in: generated.build) {
+            flags += target.linking.flatMap { generated.artifacts[$0]?.linkerFlags ?? [] } + target.linkerFlags
         }
         let linkerFlags = flags.flatMap { flag -> [String] in
             flag.hasPrefix("-l") || isAbsolutePath(flag) ? [flag] : ["-Xlinker-driver", flag]
         }
 
         let sdkRoot = try sdkPath("sdkRootPath")
-        try run(
+        try BuildTool.run(
             [
                 "swiftc", "-o", binPath.appendingPathComponent("\(product).html").path,
                 "-module-name", product.replacingOccurrences(of: "-", with: "_"),
@@ -112,20 +145,4 @@ struct Emscripten {
         }
         throw BuildToolError("The Swift SDK \(sdk) has no \(key)")
     }
-}
-
-/// `target` and the targets it depends on, through theirs.
-func closure(of target: Target, in build: Build) -> [Target] {
-    let targets = Dictionary(uniqueKeysWithValues: build.targets.map { ($0.name, $0) })
-    var visited = Set<String>()
-    var result: [Target] = []
-    func visit(_ target: Target) {
-        guard visited.insert(target.name).inserted else { return }
-        result.append(target)
-        for case .target(let name) in target.dependencies {
-            if let dependency = targets[name] { visit(dependency) }
-        }
-    }
-    visit(target)
-    return result
 }

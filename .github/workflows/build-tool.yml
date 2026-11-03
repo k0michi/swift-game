@@ -41,12 +41,14 @@ jobs:
         shell: bash
         run: sudo apt-get install --yes ninja-build
 
+      # PowerShell, as Git's bash on Windows has a link of its own before the
+      # linker that swiftc makes static libraries with.
       - name: Build BuildTool
-        shell: bash
+        shell: pwsh
         run: swift build --package-path BuildTool
 
       - name: Run the example
-        shell: bash
+        shell: pwsh
         run: BuildTool/.build/debug/buildtool --project-path BuildTool/Examples/Hello run hello
 
   example-web:
