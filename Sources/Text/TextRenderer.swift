@@ -65,8 +65,9 @@ final class TextRenderer {
     private var previousRuns: [RunKey: ShapedRun] = [:]
 
     // Each instance is a rectangle in pixels, the atlas texel at its
-    // top-left corner and a color.
-    private static let floatsPerInstance = 10
+    // top-left corner, how many texels it spans, and a color. A filled
+    // rectangle spans none, of the white texel in the atlas's last corner.
+    private static let floatsPerInstance = 12
     private var instances: [Float] = []
     private var instanceBuffer: Dawn.Buffer?
     private var instanceBufferSize: UInt64 = 0
@@ -81,12 +82,21 @@ final class TextRenderer {
         face = try newMemoryFace(library: library, fileBase: font)
         shaper = fontCreate(face: faceCreate(blob: blobCreate(data: font), index: 0))
 
-        atlas = try device.createTexture(
+        let atlas = try device.createTexture(
             descriptor: TextureDescriptor(
                 usage: [.textureBinding, .copyDst], dimension: .`2D`,
                 size: Extent3D(
                     width: UInt32(Self.atlasSize), height: UInt32(Self.atlasSize), depthOrArrayLayers: 1),
                 format: .r8Unorm))
+        // The texel that filled rectangles are drawn from.
+        [UInt8(255)].withUnsafeBytes { data in
+            device.getQueue().writeTexture(
+                destination: TexelCopyTextureInfo(
+                    texture: atlas, origin: Origin3D(x: UInt32(Self.atlasSize - 1), y: UInt32(Self.atlasSize - 1))),
+                data: data, dataLayout: TexelCopyBufferLayout(bytesPerRow: 1, rowsPerImage: 1),
+                writeSize: Extent3D(width: 1, height: 1, depthOrArrayLayers: 1))
+        }
+        self.atlas = atlas
         screen = try device.createBuffer(
             descriptor: BufferDescriptor(label: "screen", usage: [.uniform, .copyDst], size: 8))
 
@@ -110,13 +120,14 @@ final class TextRenderer {
                             @builtin(vertex_index) index: u32,
                             @location(0) rectangle: vec4f,
                             @location(1) texel: vec2f,
-                            @location(2) color: vec4f
+                            @location(2) texels: vec2f,
+                            @location(3) color: vec4f
                         ) -> VertexOutput {
                             let corner = vec2f(f32(index & 1u), f32(index >> 1u));
                             let pixel = rectangle.xy + corner * rectangle.zw;
                             var output: VertexOutput;
                             output.position = vec4f(pixel.x / screen.x * 2.0 - 1.0, 1.0 - pixel.y / screen.y * 2.0, 0.0, 1.0);
-                            output.texel = texel + corner * rectangle.zw;
+                            output.texel = texel + corner * texels;
                             output.color = color;
                             return output;
                         }
@@ -160,7 +171,8 @@ final class TextRenderer {
                             attributes: [
                                 VertexAttribute(format: .float32x4, offset: 0, shaderLocation: 0),
                                 VertexAttribute(format: .float32x2, offset: 4 * floatSize, shaderLocation: 1),
-                                VertexAttribute(format: .float32x4, offset: 6 * floatSize, shaderLocation: 2),
+                                VertexAttribute(format: .float32x2, offset: 6 * floatSize, shaderLocation: 2),
+                                VertexAttribute(format: .float32x4, offset: 8 * floatSize, shaderLocation: 3),
                             ])
                     ]),
                 primitive: PrimitiveState(topology: .triangleStrip),
@@ -238,10 +250,23 @@ final class TextRenderer {
             instances += [
                 Float(left + (glyphX + 32) >> 6 + glyph.left), Float(baseline - (glyphY + 32) >> 6 - glyph.top),
                 Float(glyph.width), Float(glyph.height),
-                Float(glyph.x), Float(glyph.y),
+                Float(glyph.x), Float(glyph.y), Float(glyph.width), Float(glyph.height),
                 Float(color.r), Float(color.g), Float(color.b), Float(color.a),
             ]
         }
+    }
+
+    // Has a rectangle filled, from `x`, `y` in points, `width` by `height`,
+    // in `color`, which is not premultiplied, on whole pixels.
+    func fill(x: Float, y: Float, width: Float, height: Float, color: Color) {
+        let left = (x * scale).rounded()
+        let top = (y * scale).rounded()
+        let white = Float(Self.atlasSize - 1) + 0.5
+        instances += [
+            left, top, ((x + width) * scale).rounded() - left, ((y + height) * scale).rounded() - top,
+            white, white, 0, 0,
+            Float(color.r), Float(color.g), Float(color.b), Float(color.a),
+        ]
     }
 
     // Records the frame's text into `pass`, over a screen `width` by `height`
@@ -284,7 +309,8 @@ final class TextRenderer {
         if shelf.x + width > Self.atlasSize {
             shelf = (0, shelf.y + shelf.height + 1, 0)
         }
-        guard shelf.y + height <= Self.atlasSize else {
+        // The last row has the white texel.
+        guard shelf.y + height < Self.atlasSize - 1 else {
             atlasIsFull = true
             return nil
         }
