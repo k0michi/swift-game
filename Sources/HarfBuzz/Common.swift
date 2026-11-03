@@ -17,23 +17,28 @@ public struct Script: RawRepresentable, Equatable, Sendable {
         self.rawValue = rawValue
     }
 
+    // C enums are Int32 on Windows and UInt32 elsewhere.
+    init(_ script: hb_script_t) {
+        rawValue = UInt32(truncatingIfNeeded: script.rawValue)
+    }
+
     // HB_SCRIPT_INVALID
-    public static let invalid = Script(rawValue: HB_SCRIPT_INVALID.rawValue)
+    public static let invalid = Script(HB_SCRIPT_INVALID)
     // HB_SCRIPT_COMMON
-    public static let common = Script(rawValue: HB_SCRIPT_COMMON.rawValue)
+    public static let common = Script(HB_SCRIPT_COMMON)
     // HB_SCRIPT_LATIN
-    public static let latin = Script(rawValue: HB_SCRIPT_LATIN.rawValue)
+    public static let latin = Script(HB_SCRIPT_LATIN)
     // HB_SCRIPT_HIRAGANA
-    public static let hiragana = Script(rawValue: HB_SCRIPT_HIRAGANA.rawValue)
+    public static let hiragana = Script(HB_SCRIPT_HIRAGANA)
     // HB_SCRIPT_KATAKANA
-    public static let katakana = Script(rawValue: HB_SCRIPT_KATAKANA.rawValue)
+    public static let katakana = Script(HB_SCRIPT_KATAKANA)
     // HB_SCRIPT_HAN
-    public static let han = Script(rawValue: HB_SCRIPT_HAN.rawValue)
+    public static let han = Script(HB_SCRIPT_HAN)
 }
 
 // hb_script_from_string
 public func scriptFromString(str: String) -> Script {
-    Script(rawValue: hb_script_from_string(str, -1).rawValue)
+    Script(hb_script_from_string(str, -1))
 }
 
 // hb_language_t

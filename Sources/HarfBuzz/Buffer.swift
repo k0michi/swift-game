@@ -54,22 +54,23 @@ public func bufferGuessSegmentProperties(buffer: Buffer) {
 
 // hb_buffer_set_direction
 public func bufferSetDirection(buffer: Buffer, direction: Direction) {
-    hb_buffer_set_direction(buffer.pointer, hb_direction_t(rawValue: direction.rawValue))
+    // C enums are Int32 on Windows and UInt32 elsewhere.
+    hb_buffer_set_direction(buffer.pointer, hb_direction_t(hb_direction_t.RawValue(truncatingIfNeeded: direction.rawValue)))
 }
 
 // hb_buffer_get_direction
 public func bufferGetDirection(buffer: Buffer) -> Direction {
-    Direction(rawValue: hb_buffer_get_direction(buffer.pointer).rawValue) ?? .invalid
+    Direction(rawValue: UInt32(truncatingIfNeeded: hb_buffer_get_direction(buffer.pointer).rawValue)) ?? .invalid
 }
 
 // hb_buffer_set_script
 public func bufferSetScript(buffer: Buffer, script: Script) {
-    hb_buffer_set_script(buffer.pointer, hb_script_t(rawValue: script.rawValue))
+    hb_buffer_set_script(buffer.pointer, hb_script_t(hb_script_t.RawValue(truncatingIfNeeded: script.rawValue)))
 }
 
 // hb_buffer_get_script
 public func bufferGetScript(buffer: Buffer) -> Script {
-    Script(rawValue: hb_buffer_get_script(buffer.pointer).rawValue)
+    Script(hb_buffer_get_script(buffer.pointer))
 }
 
 // hb_buffer_set_language
