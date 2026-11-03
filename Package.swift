@@ -12,9 +12,11 @@ let dependenciesRoot = "\(packageRoot)/.build/dependencies" + (isEmscripten ? "/
 let sdlFlagsRoot = "\(dependenciesRoot)/sdl3"
 let dawnFlagsRoot = "\(dependenciesRoot)/dawn"
 let stbFlagsRoot = "\(dependenciesRoot)/stb"
+let freeTypeFlagsRoot = "\(dependenciesRoot)/freetype"
 let sdlBuildScript = isEmscripten ? "./scripts/emscripten/build-sdl.sh" : "./scripts/build-sdl.sh"
 let dawnBuildScript = isEmscripten ? "./scripts/emscripten/build-dawn.sh" : "./scripts/build-dawn.sh"
 let stbBuildScript = isEmscripten ? "./scripts/emscripten/build-stb.sh" : "./scripts/build-stb.sh"
+let freeTypeBuildScript = isEmscripten ? "./scripts/emscripten/build-freetype.sh" : "./scripts/build-freetype.sh"
 
 func readSDLFlags(named name: String) -> [String] {
     let path = "\(sdlFlagsRoot)/\(name)-flags.txt"
@@ -85,6 +87,19 @@ let stbVorbisLinkerFlags = readStbFlags(named: "stb_vorbis-linker")
 let stbRectPackLinkerFlags = readStbFlags(named: "stb_rect_pack-linker")
 let stbTrueTypeLinkerFlags = readStbFlags(named: "stb_truetype-linker")
 
+func readFreeTypeFlags(named name: String) -> [String] {
+    let path = "\(freeTypeFlagsRoot)/\(name)-flags.txt"
+    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fatalError("FreeType build metadata is missing. Run \(freeTypeBuildScript) first.")
+    }
+    return contents.split(whereSeparator: \.isNewline).map(String.init)
+}
+
+let freeTypeCompilerFlags = readFreeTypeFlags(named: "compiler")
+let freeTypeSwiftCompilerFlags = freeTypeCompilerFlags.flatMap { ["-Xcc", $0] }
+// The path of the static library.
+let freeTypeLinkerFlags = readFreeTypeFlags(named: "linker")
+
 // Echo plays through SDL3 on the desktop, and through the browser's Web Audio
 // on the web.
 let echoOutput: [Target.Dependency] = isEmscripten ? [] : ["EchoSDL3"]
@@ -131,6 +146,7 @@ let package = Package(
         .library(name: "StbVorbis", targets: ["StbVorbis"]),
         .library(name: "StbRectPack", targets: ["StbRectPack"]),
         .library(name: "StbTrueType", targets: ["StbTrueType"]),
+        .library(name: "FreeType", targets: ["FreeType"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.3.0"),
@@ -238,6 +254,17 @@ let package = Package(
             dependencies: ["CStbTrueType"],
             swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
         ),
+        // FreeType, built by scripts/build-freetype.sh.
+        .target(
+            name: "CFreeType",
+            cSettings: [.unsafeFlags(freeTypeCompilerFlags)],
+            linkerSettings: [.unsafeFlags(freeTypeLinkerFlags)]
+        ),
+        .target(
+            name: "FreeType",
+            dependencies: ["CFreeType"],
+            swiftSettings: [.unsafeFlags(freeTypeSwiftCompilerFlags)]
+        ),
         .target(
             name: "Dawn",
             dependencies: ["CDawn", "Interop"],
@@ -341,6 +368,12 @@ let package = Package(
             exclude: ["make-test-font.py"],
             resources: [.copy("Resources")],
             swiftSettings: [.unsafeFlags(stbSwiftCompilerFlags)]
+        ),
+        .testTarget(
+            name: "FreeTypeTests",
+            dependencies: ["FreeType"],
+            resources: [.copy("Resources")],
+            swiftSettings: [.unsafeFlags(freeTypeSwiftCompilerFlags)]
         ),
         .testTarget(
             name: "ProcessMemoryTests",
