@@ -356,7 +356,7 @@ let package = Package(
         // FreeType, drawn from a texture.
         .executableTarget(
             name: "Text",
-            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "GameToolkit", "FreeType", "HarfBuzz"],
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "GameToolkit", "FreeType", "HarfBuzz", "LineBreaking"],
             swiftSettings: [
                 .unsafeFlags(
                     sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags + freeTypeSwiftCompilerFlags
