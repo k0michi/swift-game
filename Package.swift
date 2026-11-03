@@ -13,10 +13,12 @@ let sdlFlagsRoot = "\(dependenciesRoot)/sdl3"
 let dawnFlagsRoot = "\(dependenciesRoot)/dawn"
 let stbFlagsRoot = "\(dependenciesRoot)/stb"
 let freeTypeFlagsRoot = "\(dependenciesRoot)/freetype"
+let notoSansJPFlagsRoot = "\(dependenciesRoot)/noto-sans-jp"
 let sdlBuildScript = isEmscripten ? "./scripts/emscripten/build-sdl.sh" : "./scripts/build-sdl.sh"
 let dawnBuildScript = isEmscripten ? "./scripts/emscripten/build-dawn.sh" : "./scripts/build-dawn.sh"
 let stbBuildScript = isEmscripten ? "./scripts/emscripten/build-stb.sh" : "./scripts/build-stb.sh"
 let freeTypeBuildScript = isEmscripten ? "./scripts/emscripten/build-freetype.sh" : "./scripts/build-freetype.sh"
+let notoSansJPBuildScript = isEmscripten ? "./scripts/emscripten/build-noto-sans-jp.sh" : "./scripts/build-noto-sans-jp.sh"
 
 func readSDLFlags(named name: String) -> [String] {
     let path = "\(sdlFlagsRoot)/\(name)-flags.txt"
@@ -100,6 +102,15 @@ let freeTypeSwiftCompilerFlags = freeTypeCompilerFlags.flatMap { ["-Xcc", $0] }
 // The path of the static library.
 let freeTypeLinkerFlags = readFreeTypeFlags(named: "linker")
 
+// The directory of the font, downloaded by scripts/build-noto-sans-jp.sh.
+let notoSansJPCompilerFlags: [String] = {
+    let path = "\(notoSansJPFlagsRoot)/compiler-flags.txt"
+    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fatalError("Noto Sans JP build metadata is missing. Run \(notoSansJPBuildScript) first.")
+    }
+    return contents.split(whereSeparator: \.isNewline).map(String.init)
+}()
+
 // Echo plays through SDL3 on the desktop, and through the browser's Web Audio
 // on the web.
 let echoOutput: [Target.Dependency] = isEmscripten ? [] : ["EchoSDL3"]
@@ -131,6 +142,7 @@ let package = Package(
         .executable(name: "swift-game", targets: ["SwiftGame"]),
         .executable(name: "shooter", targets: ["Shooter"]),
         .executable(name: "pong", targets: ["Pong"]),
+        .executable(name: "text", targets: ["Text"]),
         .library(name: "GameToolkit", targets: ["GameToolkit"]),
         .library(name: "SDL3", targets: ["SDL3"]),
         .library(name: "Dawn", targets: ["Dawn"]),
@@ -318,6 +330,20 @@ let package = Package(
             dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule],
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
+            ] + customExecutorSettings
+        ),
+        // Noto Sans JP, in the program.
+        .target(
+            name: "CNotoSansJP",
+            cSettings: [.unsafeFlags(notoSansJPCompilerFlags)]
+        ),
+        // Japanese text rasterized by FreeType, drawn from a texture.
+        .executableTarget(
+            name: "Text",
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "GameToolkit", "FreeType", "CNotoSansJP"],
+            swiftSettings: [
+                .unsafeFlags(
+                    sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags + freeTypeSwiftCompilerFlags),
             ] + customExecutorSettings
         ),
         // Echo on the browser's Web Audio, run in headless Chromium by
