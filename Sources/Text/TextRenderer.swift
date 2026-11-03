@@ -45,7 +45,9 @@ final class TextRenderer {
     // Pixels to the point, which the window's display sets.
     var scale: Float
 
-    private let device: Device
+    let device: Device
+    /// The format of the texture it draws into.
+    let format: TextureFormat
     private let library: Library
     private let face: FreeType.Face
     private let shaper: HarfBuzz.Font
@@ -86,6 +88,7 @@ final class TextRenderer {
 
     init(device: Device, format: TextureFormat, font: [UInt8], scale: Float) throws {
         self.device = device
+        self.format = format
         self.scale = scale
         library = try initFreeType()
         face = try newMemoryFace(library: library, fileBase: font)
@@ -206,6 +209,7 @@ final class TextRenderer {
     // glyphs if the atlas ran out of room.
     func begin() {
         instances.removeAll(keepingCapacity: true)
+        customDraws.removeAll(keepingCapacity: true)
         previousRuns = runs
         runs = [:]
         if atlasIsFull {
@@ -290,29 +294,56 @@ final class TextRenderer {
         ] + clipInPixels
     }
 
-    // Records the frame's text into `pass`, over a screen `width` by `height`
-    // pixels.
+    // Draws recorded with WebGPU by others, each after the instances before
+    // it, and before those after it.
+    private var customDraws: [(instance: Int, draw: (RenderPassEncoder, Float, Float) throws -> Void)] = []
+
+    /// Has `draw` record its own drawing into the frame's render pass, which
+    /// it is given with the screen's width and height in pixels, over what is
+    /// drawn before it and under what is drawn after it. It may set the pass's
+    /// pipeline, bind groups, buffers, viewport and scissor rectangle, which
+    /// are set back after it.
+    func drawCustom(_ draw: @escaping (RenderPassEncoder, Float, Float) throws -> Void) {
+        customDraws.append((instances.count / Self.floatsPerInstance, draw))
+    }
+
+    // Records the frame's text and rectangles into `pass`, and the custom
+    // draws among them, over a screen `width` by `height` pixels.
     func end(into pass: RenderPassEncoder, width: UInt32, height: UInt32) throws {
-        guard !instances.isEmpty else { return }
         let queue = device.getQueue()
-        [Float(width), Float(height)].withUnsafeBytes { queue.writeBuffer(screen, bufferOffset: 0, data: $0) }
-
-        let byteCount = UInt64(instances.count * MemoryLayout<Float>.stride)
-        if byteCount > instanceBufferSize {
-            var size = max(instanceBufferSize, 4096)
-            while size < byteCount { size *= 2 }
-            instanceBuffer = try device.createBuffer(
-                descriptor: BufferDescriptor(label: "glyphs", usage: [.vertex, .copyDst], size: size))
-            instanceBufferSize = size
+        let count = instances.count / Self.floatsPerInstance
+        if count > 0 {
+            [Float(width), Float(height)].withUnsafeBytes { queue.writeBuffer(screen, bufferOffset: 0, data: $0) }
+            let byteCount = UInt64(instances.count * MemoryLayout<Float>.stride)
+            if byteCount > instanceBufferSize {
+                var size = max(instanceBufferSize, 4096)
+                while size < byteCount { size *= 2 }
+                instanceBuffer = try device.createBuffer(
+                    descriptor: BufferDescriptor(label: "glyphs", usage: [.vertex, .copyDst], size: size))
+                instanceBufferSize = size
+            }
+            instances.withUnsafeBytes { queue.writeBuffer(instanceBuffer!, bufferOffset: 0, data: $0) }
         }
-        instances.withUnsafeBytes { queue.writeBuffer(instanceBuffer!, bufferOffset: 0, data: $0) }
 
-        pass.setPipeline(pipeline)
-        pass.setBindGroup(groupIndex: 0, group: bindGroup)
-        pass.setVertexBuffer(slot: 0, buffer: instanceBuffer!, offset: 0, size: byteCount)
-        pass.draw(
-            vertexCount: 4, instanceCount: UInt32(instances.count / Self.floatsPerInstance), firstVertex: 0,
-            firstInstance: 0)
+        func drawInstances(_ range: Range<Int>) {
+            guard !range.isEmpty else { return }
+            pass.setPipeline(pipeline)
+            pass.setBindGroup(groupIndex: 0, group: bindGroup)
+            pass.setVertexBuffer(
+                slot: 0, buffer: instanceBuffer!, offset: 0,
+                size: UInt64(count * Self.floatsPerInstance * MemoryLayout<Float>.stride))
+            pass.draw(
+                vertexCount: 4, instanceCount: UInt32(range.count), firstVertex: 0, firstInstance: UInt32(range.lowerBound))
+        }
+        var drawn = 0
+        for (instance, draw) in customDraws {
+            drawInstances(drawn..<instance)
+            drawn = instance
+            try draw(pass, Float(width), Float(height))
+            pass.setViewport(x: 0, y: 0, width: Float(width), height: Float(height), minDepth: 0, maxDepth: 1)
+            pass.setScissorRect(x: 0, y: 0, width: width, height: height)
+        }
+        drawInstances(drawn..<count)
     }
 
     // The glyph in the atlas, which it is rasterized into the first time,
