@@ -4,8 +4,10 @@ import Dawn
 // and the compositor, which knows no kind, runs the list. It groups adjacent
 // items of a kind under one clip, has each group prepared before any pass, and
 // encodes the groups in order, ending the pass before a kind that reads what
-// has been drawn behind it. Nothing it draws is built in: text and rectangles
-// are kinds like any other.
+// has been drawn behind it. What is recorded into a layer is drawn into a
+// texture of its own first, for a kind to draw as it will: faded, blurred,
+// with a shadow. Nothing it draws is built in: text and rectangles are kinds
+// like any other.
 
 /// What a kind of drawing, or anything else, keeps from frame to frame and
 /// shares among all that use it: pipelines, an atlas, caches. There is one of
@@ -43,6 +45,10 @@ protocol DrawingKind {
     /// Gets a group of items ready, before any pass: uploads and the like.
     static func prepare(_ items: [Item], resource: Resource, in context: PrepareContext) throws -> Prepared
 
+    /// Its work in passes of its own, before any pass of what it is drawn
+    /// into: with layers, which are drawn by then.
+    static func encodeAhead(_ prepared: Prepared, resource: Resource, in context: AheadContext) throws
+
     /// For a kind that reads its backdrop: its work with what has been drawn,
     /// between the pass before it and the one it is encoded in.
     static func encodeOffscreen(_ prepared: Prepared, resource: Resource, in context: OffscreenContext) throws
@@ -53,6 +59,8 @@ protocol DrawingKind {
 
 extension DrawingKind {
     static var readsBackdrop: Bool { false }
+
+    static func encodeAhead(_ prepared: Prepared, resource: Resource, in context: AheadContext) throws {}
 
     static func encodeOffscreen(_ prepared: Prepared, resource: Resource, in context: OffscreenContext) throws {}
 }
@@ -77,10 +85,30 @@ struct Rect: Equatable {
     }
 }
 
+/// What was recorded with `Compositor.layer(_:)`, drawn into a texture of its
+/// own as big as what is drawn into, clear but for what was drawn, its colours
+/// premultiplied by their alpha: for a kind whose item holds it to draw.
+struct Layer: Hashable {
+    fileprivate let index: Int
+}
+
 struct PrepareContext {
     let device: Device
     let queue: Queue
     /// The size of what is drawn into, in pixels.
+    let width: Float
+    let height: Float
+    fileprivate let layers: [Int: TextureView]
+
+    /// The texture `layer` is drawn into.
+    func texture(of layer: Layer) -> TextureView {
+        layers[layer.index]!
+    }
+}
+
+struct AheadContext {
+    let device: Device
+    let encoder: CommandEncoder
     let width: Float
     let height: Float
 }
@@ -112,12 +140,19 @@ final class Compositor {
     var time: Double = 0
 
     private var resources: [ObjectIdentifier: GraphicsResource] = [:]
-    private var entries: [Entry] = []
+    // The frame's display list, then each layer's.
+    private var lists: [[Entry]] = [[]]
+    // The lists being recorded into, the innermost last.
+    private var recording = [0]
+    // The layers in the order they were finished, inner ones before outer.
+    private var finished: [Int] = []
     private var kinds: [ObjectIdentifier: KindFunctions] = [:]
     private var clipStack: [Rect] = []
     // What the frame is drawn into, before it is copied onto the surface, for
     // a kind that reads its backdrop to sample.
     private var target: (texture: Texture, view: TextureView, width: UInt32, height: UInt32)?
+    // What layers are drawn into, as many as a frame has had.
+    private var layerTextures: (views: [TextureView], width: UInt32, height: UInt32) = ([], 0, 0)
 
     init(device: Device, format: TextureFormat, scale: Float) {
         self.device = device
@@ -148,7 +183,9 @@ final class Compositor {
 
     /// Starts a frame's display list.
     func beginFrame() {
-        entries.removeAll(keepingCapacity: true)
+        lists = [[]]
+        recording = [0]
+        finished.removeAll()
         clipStack.removeAll()
         for resource in resources.values {
             resource.beginFrame()
@@ -161,7 +198,21 @@ final class Compositor {
         if kinds[id] == nil {
             kinds[id] = KindFunctions(kind, compositor: self)
         }
-        entries.append(Entry(kind: id, item: item, clip: clipStack.last))
+        lists[recording.last!].append(Entry(kind: id, item: item, clip: clipStack.last))
+    }
+
+    /// Records what `body` records into a layer of its own, which a kind
+    /// whose item holds it draws.
+    func layer(_ body: () throws -> Void) rethrows -> Layer {
+        let index = lists.count
+        lists.append([])
+        recording.append(index)
+        defer {
+            recording.removeLast()
+            finished.append(index)
+        }
+        try body()
+        return Layer(index: index)
     }
 
     /// The clip, in points, that what is recorded is in, if any.
@@ -197,53 +248,26 @@ final class Compositor {
         let target = try target(width: width, height: height)
         let size = (width: Float(width), height: Float(height))
         let queue = device.getQueue()
+        var views = [0: target.view]
+        for (index, view) in zip(1..<lists.count, try layerViews(count: lists.count - 1, width: width, height: height)) {
+            views[index] = view
+        }
 
-        // Adjacent items of a kind under one clip are a group, but for kinds
-        // that read their backdrop, whose items are each one.
-        var groups: [(kind: ObjectIdentifier, clip: Rect?, items: [Any])] = []
-        for entry in entries {
-            if let last = groups.last, last.kind == entry.kind, last.clip == entry.clip,
-                !kinds[entry.kind]!.readsBackdrop
-            {
-                groups[groups.count - 1].items.append(entry.item)
-            } else {
-                groups.append((entry.kind, entry.clip, [entry.item]))
-            }
+        // Layers first, inner ones before outer, and the frame last; every
+        // group of them prepared before any pass.
+        let order = finished + [0]
+        let prepareContext = PrepareContext(
+            device: device, queue: queue, width: size.width, height: size.height, layers: views)
+        let lists = try order.map { index in
+            let groups = groups(of: self.lists[index])
+            let prepared = try groups.map { try kinds[$0.kind]!.prepare($0.items, prepareContext) }
+            return (index, groups, prepared)
         }
-        let prepareContext = PrepareContext(device: device, queue: queue, width: size.width, height: size.height)
-        let prepared = try groups.map { try kinds[$0.kind]!.prepare($0.items, prepareContext) }
-
-        func beginPass(clearing: Bool) -> RenderPassEncoder {
-            try! encoder.beginRenderPass(
-                descriptor: RenderPassDescriptor(
-                    colorAttachments: [
-                        RenderPassColorAttachment(
-                            view: target.view, loadOp: clearing ? .clear : .load, storeOp: .store,
-                            clearValue: clearColor)
-                    ]))
+        for (index, groups, prepared) in lists {
+            try encode(
+                groups, prepared, into: views[index]!, width: width, height: height,
+                clearColor: index == 0 ? clearColor : Color(r: 0, g: 0, b: 0, a: 0), encoder: encoder)
         }
-        var pass = beginPass(clearing: true)
-        for (group, prepared) in zip(groups, prepared) {
-            let functions = kinds[group.kind]!
-            if functions.readsBackdrop {
-                pass.end()
-                try functions.encodeOffscreen(
-                    prepared,
-                    OffscreenContext(
-                        device: device, encoder: encoder, backdrop: target.view, width: size.width,
-                        height: size.height))
-                pass = beginPass(clearing: false)
-            }
-            if let clip = group.clip?.scaled(by: scale).intersection(Rect(x: 0, y: 0, width: size.width, height: size.height)) {
-                pass.setScissorRect(
-                    x: UInt32(clip.x.rounded()), y: UInt32(clip.y.rounded()), width: UInt32(clip.width.rounded()),
-                    height: UInt32(clip.height.rounded()))
-            }
-            try functions.encode(prepared, EncodeContext(device: device, pass: pass, width: size.width, height: size.height))
-            pass.setViewport(x: 0, y: 0, width: size.width, height: size.height, minDepth: 0, maxDepth: 1)
-            pass.setScissorRect(x: 0, y: 0, width: width, height: height)
-        }
-        pass.end()
 
         // What was drawn, onto the surface.
         let presentFunctions = KindFunctions(present, compositor: self)
@@ -260,6 +284,77 @@ final class Compositor {
         for resource in resources.values {
             resource.endFrame()
         }
+    }
+
+    // Adjacent items of a kind under one clip are a group, but for kinds that
+    // read their backdrop, whose items are each one.
+    private func groups(of entries: [Entry]) -> [ItemGroup] {
+        var groups: [ItemGroup] = []
+        for entry in entries {
+            if let last = groups.last, last.kind == entry.kind, last.clip == entry.clip,
+                !kinds[entry.kind]!.readsBackdrop
+            {
+                groups[groups.count - 1].items.append(entry.item)
+            } else {
+                groups.append(ItemGroup(kind: entry.kind, clip: entry.clip, items: [entry.item]))
+            }
+        }
+        return groups
+    }
+
+    private func encode(
+        _ groups: [ItemGroup], _ prepared: [Any], into view: TextureView, width: UInt32, height: UInt32,
+        clearColor: Color, encoder: CommandEncoder
+    ) throws {
+        let size = (width: Float(width), height: Float(height))
+        for (group, prepared) in zip(groups, prepared) {
+            try kinds[group.kind]!.encodeAhead(
+                prepared, AheadContext(device: device, encoder: encoder, width: size.width, height: size.height))
+        }
+        func beginPass(clearing: Bool) -> RenderPassEncoder {
+            try! encoder.beginRenderPass(
+                descriptor: RenderPassDescriptor(
+                    colorAttachments: [
+                        RenderPassColorAttachment(
+                            view: view, loadOp: clearing ? .clear : .load, storeOp: .store, clearValue: clearColor)
+                    ]))
+        }
+        var pass = beginPass(clearing: true)
+        for (group, prepared) in zip(groups, prepared) {
+            let functions = kinds[group.kind]!
+            if functions.readsBackdrop {
+                pass.end()
+                try functions.encodeOffscreen(
+                    prepared,
+                    OffscreenContext(
+                        device: device, encoder: encoder, backdrop: view, width: size.width, height: size.height))
+                pass = beginPass(clearing: false)
+            }
+            if let clip = group.clip?.scaled(by: scale).intersection(Rect(x: 0, y: 0, width: size.width, height: size.height)) {
+                pass.setScissorRect(
+                    x: UInt32(clip.x.rounded()), y: UInt32(clip.y.rounded()), width: UInt32(clip.width.rounded()),
+                    height: UInt32(clip.height.rounded()))
+            }
+            try functions.encode(prepared, EncodeContext(device: device, pass: pass, width: size.width, height: size.height))
+            pass.setViewport(x: 0, y: 0, width: size.width, height: size.height, minDepth: 0, maxDepth: 1)
+            pass.setScissorRect(x: 0, y: 0, width: width, height: height)
+        }
+        pass.end()
+    }
+
+    private func layerViews(count: Int, width: UInt32, height: UInt32) throws -> [TextureView] {
+        if layerTextures.width != width || layerTextures.height != height {
+            layerTextures = ([], width, height)
+        }
+        while layerTextures.views.count < count {
+            layerTextures.views.append(
+                try device.createTexture(
+                    descriptor: TextureDescriptor(
+                        label: "layer", usage: [.renderAttachment, .textureBinding], dimension: .`2D`,
+                        size: Extent3D(width: width, height: height, depthOrArrayLayers: 1), format: format)
+                ).createView())
+        }
+        return Array(layerTextures.views.prefix(count))
     }
 
     private func target(width: UInt32, height: UInt32) throws -> (texture: Texture, view: TextureView, width: UInt32, height: UInt32) {
@@ -282,11 +377,18 @@ private struct Entry {
     var clip: Rect?
 }
 
+private struct ItemGroup {
+    var kind: ObjectIdentifier
+    var clip: Rect?
+    var items: [Any]
+}
+
 // A kind's functions with its types erased, and its resource found.
 @MainActor
 private struct KindFunctions {
     let readsBackdrop: Bool
     let prepare: ([Any], PrepareContext) throws -> Any
+    let encodeAhead: (Any, AheadContext) throws -> Void
     let encodeOffscreen: (Any, OffscreenContext) throws -> Void
     let encode: (Any, EncodeContext) throws -> Void
 
@@ -294,6 +396,9 @@ private struct KindFunctions {
         readsBackdrop = K.readsBackdrop
         prepare = { items, context in
             try K.prepare(items.map { $0 as! K.Item }, resource: compositor.resource(K.Resource.self), in: context)
+        }
+        encodeAhead = { prepared, context in
+            try K.encodeAhead(prepared as! K.Prepared, resource: compositor.resource(K.Resource.self), in: context)
         }
         encodeOffscreen = { prepared, context in
             try K.encodeOffscreen(prepared as! K.Prepared, resource: compositor.resource(K.Resource.self), in: context)
