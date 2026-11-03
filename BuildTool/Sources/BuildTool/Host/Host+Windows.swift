@@ -1,7 +1,7 @@
 #if os(Windows)
     import Foundation
 
-    // How Windows names and finds executables and libraries.
+    // How Windows names and finds executables.
 
     /// The directories on the PATH, which Windows names Path and separates
     /// with semicolons.
@@ -18,10 +18,5 @@
     /// `name` as an executable is named.
     func executableName(_ name: String) -> String {
         name + ".exe"
-    }
-
-    /// The file of a static library called `name`, which `-l<name>` links.
-    func staticLibraryName(_ name: String) -> String {
-        "\(name).lib"
     }
 #endif

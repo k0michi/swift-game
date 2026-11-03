@@ -17,9 +17,4 @@
     func executableName(_ name: String) -> String {
         name
     }
-
-    /// The file of a static library called `name`, which `-l<name>` links.
-    func staticLibraryName(_ name: String) -> String {
-        "lib\(name).a"
-    }
 #endif

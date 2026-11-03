@@ -2,8 +2,10 @@ import BuildDescription
 import Foundation
 
 /// Reads `Build.swift` in `project` for `platform`: compiles BuildDescription
-/// into a library, compiles Build.swift against it, and runs it to write what
-/// it declares, as SwiftPM does with Package.swift and PackageDescription.
+/// into an object and a module, compiles Build.swift with them, and runs it to
+/// write what it declares, as SwiftPM does with Package.swift and
+/// PackageDescription. An object rather than a static library, which swiftc
+/// makes on Windows with whichever link is first on the PATH, as Git's is.
 func loadDescription(project: URL, work: URL, platform: Platform) throws -> Build {
     let manifest = project.appendingPathComponent("Build.swift")
     guard FileManager.default.fileExists(atPath: manifest.path) else {
@@ -27,20 +29,20 @@ func loadDescription(project: URL, work: URL, platform: Platform) throws -> Buil
         try compilerVersion.write(to: compiler, atomically: true, encoding: .utf8)
     }
 
-    let library = directory.appendingPathComponent(staticLibraryName("BuildDescription"))
-    if try isOutdated(library, inputs: sources) {
+    let object = directory.appendingPathComponent("BuildDescription.o")
+    if try isOutdated(object, inputs: sources) {
         try run(
             ["swiftc"] + (try hostSDKArguments())
-                + ["-parse-as-library", "-module-name", "BuildDescription", "-emit-library", "-static"]
+                + ["-parse-as-library", "-module-name", "BuildDescription", "-whole-module-optimization", "-c"]
                 + ["-emit-module", "-emit-module-path", directory.appendingPathComponent("BuildDescription.swiftmodule").path]
-                + ["-o", library.path] + sources.map(\.path))
+                + ["-o", object.path] + sources.map(\.path))
     }
 
     let executable = directory.appendingPathComponent(executableName("build-description"))
-    if try isOutdated(executable, inputs: [manifest, library]) {
+    if try isOutdated(executable, inputs: [manifest, object]) {
         try run(
             ["swiftc"] + (try hostSDKArguments())
-                + ["-I", directory.path, "-L", directory.path, "-lBuildDescription", "-o", executable.path, manifest.path])
+                + ["-I", directory.path, "-o", executable.path, manifest.path, object.path])
     }
 
     let json = work.appendingPathComponent("description.json")
