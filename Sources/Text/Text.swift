@@ -1,4 +1,3 @@
-import CNotoSansJP
 import Dawn
 import FreeType
 import GameToolkit
@@ -20,7 +19,8 @@ struct Text: AsyncMain {
         var configuration = try configureSurface(surface, device: device, adapter: adapter, window: window)
 
         // A third of the window high, in its pixels.
-        let image = try rasterize("aあ", pixelHeight: configuration.height / 3)
+        let font = try await readAsset("NotoSansJP-Regular.otf")
+        let image = try rasterize("aあ", font: font, pixelHeight: configuration.height / 3)
         let texture = try device.createTexture(
             descriptor: TextureDescriptor(
                 usage: [.textureBinding, .copyDst], dimension: .`2D`,
@@ -125,11 +125,11 @@ struct Text: AsyncMain {
 
     // One line of text in coverage from 0 to 255, as high as the font's
     // ascender to descender at pixelHeight pixels to the em.
-    static func rasterize(_ text: String, pixelHeight: UInt32) throws -> (pixels: [UInt8], width: UInt32, height: UInt32) {
+    static func rasterize(_ text: String, font: [UInt8], pixelHeight: UInt32) throws -> (
+        pixels: [UInt8], width: UInt32, height: UInt32
+    ) {
         let library = try initFreeType()
-        let face = try newMemoryFace(
-            library: library,
-            fileBase: Array(UnsafeBufferPointer(start: CNotoSansJP_Regular, count: CNotoSansJP_RegularSize)))
+        let face = try newMemoryFace(library: library, fileBase: font)
         try setPixelSizes(face: face, pixelWidth: 0, pixelHeight: pixelHeight)
         let ascender = face.size.metrics.ascender / 64
         let height = ascender - face.size.metrics.descender / 64
