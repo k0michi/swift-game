@@ -19,13 +19,16 @@ struct AtlasGlyph {
     var top: Int
 }
 
-// A string shaped at a size: its glyphs at their pen positions, and its
-// width, in 26.6 fixed point, and its ascender and descender in pixels.
+// A string shaped at a size: its glyphs at their pen positions, where each of
+// its clusters begins, by its UTF-8 offset in the string, and its width, in
+// 26.6 fixed point, and its ascender, descender and line height in pixels.
 struct ShapedRun {
     var glyphs: [(key: GlyphKey, x: Int, y: Int)]
+    var clusters: [(offset: Int, x: Int)]
     var width: Int
     var ascender: Int
     var descender: Int
+    var lineHeight: Int
 }
 
 private struct RunKey: Hashable {
@@ -195,18 +198,34 @@ final class TextRenderer {
         shape(font: shaper, buffer: buffer)
 
         var glyphs: [(key: GlyphKey, x: Int, y: Int)] = []
+        var clusters: [(offset: Int, x: Int)] = []
         var penX = 0
         for (info, position) in zip(bufferGetGlyphInfos(buffer: buffer), bufferGetGlyphPositions(buffer: buffer)) {
+            if clusters.last?.offset != Int(info.cluster) {
+                clusters.append((Int(info.cluster), penX))
+            }
             glyphs.append(
                 (GlyphKey(index: info.codepoint, pixelSize: key.pixelSize), penX + Int(position.xOffset),
                  Int(position.yOffset)))
             penX += Int(position.xAdvance)
         }
         let run = ShapedRun(
-            glyphs: glyphs, width: penX, ascender: face.size.metrics.ascender / 64,
-            descender: face.size.metrics.descender / 64)
+            glyphs: glyphs, clusters: clusters, width: penX, ascender: face.size.metrics.ascender / 64,
+            descender: face.size.metrics.descender / 64, lineHeight: face.size.metrics.height / 64)
         runs[key] = run
         return run
+    }
+
+    // `text` shaped at `points` to the em, in lines no wider than `width`
+    // points, if there is a width, broken where `lineBreaks` allows, and at
+    // its newlines.
+    func lines(_ text: String, points: Float, width: Float?) -> [ShapedRun] {
+        let paragraph = run(text, points: points)
+        let maximum = width.map { Int(($0 * scale * 64).rounded(.down)) }
+        let bytes = Array(text.utf8)
+        return wrap(text, clusters: paragraph.clusters, width: paragraph.width, maximum: maximum).map {
+            run(String(decoding: bytes[$0], as: UTF8.self), points: points)
+        }
     }
 
     // Has `run` drawn with its top-left corner at `x`, `y` in points, in
