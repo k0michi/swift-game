@@ -96,6 +96,7 @@ struct Screen: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Hello, world!").font(size: 28)
+                .shadow(color: Color(r: 0, g: 0, b: 0, a: 0.9), radius: 3, x: 2, y: 3)
             HStack(spacing: 12) {
                 TextField("Text", text: $name)
                 // Text(name.isEmpty ? "名前を入力してください" : "こんにちは、\(name)さん")
@@ -116,6 +117,12 @@ struct Screen: View {
                 Text("ガラス").font(size: 18).padding(horizontal: 22, vertical: 10)
                     .background(Color(r: 1, g: 1, b: 1, a: interaction.isPressed ? 0.3 : interaction.isHovered ? 0.2 : 0.1))
                     .backdropBlur(radius: 12)
+            }
+            // Effects on what is drawn as one: a glow, opacity, a blur.
+            HStack(spacing: 16) {
+                Text("光る文字").shadow(color: Color(r: 0.3, g: 0.9, b: 1, a: 1), radius: 6)
+                Button("半透明") {}.opacity(0.5)
+                Text("ぼかし").blur(radius: 2)
             }
             Text(pressed).font(size: 14).foregroundColor(Color(r: 0.7, g: 0.7, b: 0.7, a: 1))
             // Over frosted glass: what is under it blurred, and tinted.
