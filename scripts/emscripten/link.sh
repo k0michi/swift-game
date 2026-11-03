@@ -49,7 +49,8 @@ for flags in "$repository_root/.build/dependencies/emscripten/sdl3/linker-flags.
     "$repository_root/.build/dependencies/emscripten/stb/stb_image_write-linker-flags.txt" \
     "$repository_root/.build/dependencies/emscripten/stb/stb_vorbis-linker-flags.txt" \
     "$repository_root/.build/dependencies/emscripten/stb/stb_rect_pack-linker-flags.txt" \
-    "$repository_root/.build/dependencies/emscripten/stb/stb_truetype-linker-flags.txt"; do
+    "$repository_root/.build/dependencies/emscripten/stb/stb_truetype-linker-flags.txt" \
+    "$repository_root/.build/dependencies/emscripten/freetype/linker-flags.txt"; do
     while IFS= read -r flag; do
         case "$flag" in
         "") ;;
