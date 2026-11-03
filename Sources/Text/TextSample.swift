@@ -9,7 +9,7 @@ struct TextSample: AsyncMain {
     static func run() async throws {
         let system = try `init`(flags: [.video])
         defer { withExtendedLifetime(system) {} }
-        let window = try createWindow(title: "text", w: 640, h: 560, flags: platformWindowFlags([.highPixelDensity]))
+        let window = try createWindow(title: "text", w: 640, h: 640, flags: platformWindowFlags([.highPixelDensity]))
 
         let instance = try createInstance()
         let surface = try instance.createSurface(from: window)
@@ -61,6 +61,7 @@ struct TextSample: AsyncMain {
 
             // In the middle of the window.
             renderer.beginFrame()
+            renderer.draw(Orbs.self, Orbs.Item(time: graph.time))
             let screen = single(graph.update(Screen(frame: frame)))
             let size = screen.size(proposedWidth: nil, in: renderer)
             let width = Float(configuration.width) / renderer.scale
@@ -110,12 +111,24 @@ struct Screen: View {
                 }
             }
             .padding(horizontal: 0, vertical: 6)
-            Text(pressed).font(size: 14).foregroundColor(Color(r: 0.7, g: 0.7, b: 0.7, a: 1))
-            Counter(title: "A")
-            if showsSecond {
-                Counter(title: "B")
+            // A button under which, and only under which, is blurred.
+            Pressable(action: { pressed = "「ガラス」が押されました" }) { interaction in
+                Text("ガラス").font(size: 18).padding(horizontal: 22, vertical: 10)
+                    .background(Color(r: 1, g: 1, b: 1, a: interaction.isPressed ? 0.3 : interaction.isHovered ? 0.2 : 0.1))
+                    .backdropBlur(radius: 12)
             }
-            Button(showsSecond ? "B を消す" : "B を出す") { showsSecond.toggle() }
+            Text(pressed).font(size: 14).foregroundColor(Color(r: 0.7, g: 0.7, b: 0.7, a: 1))
+            // Over frosted glass: what is under it blurred, and tinted.
+            VStack(alignment: .leading, spacing: 14) {
+                Counter(title: "A")
+                if showsSecond {
+                    Counter(title: "B")
+                }
+                Button(showsSecond ? "B を消す" : "B を出す") { showsSecond.toggle() }
+            }
+            .padding(horizontal: 16, vertical: 16)
+            .background(Color(r: 1, g: 1, b: 1, a: 0.12))
+            .backdropBlur(radius: 16)
             Text("\(frame) フレーム目").font(size: 14).foregroundColor(Color(r: 0.7, g: 0.7, b: 0.7, a: 1))
         }
         .frame(width: 400, alignment: .leading)
