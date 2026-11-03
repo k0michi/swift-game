@@ -13,10 +13,11 @@ struct SwiftPM {
         ["swift", subcommand, "--package-path", project.path] + platform.swiftArguments + extra + arguments
     }
 
-    /// Where swift build puts what it builds.
+    /// Where swift build puts what it builds: the last line it writes, which
+    /// ends in CR LF on Windows.
     func binPath() throws -> URL {
         let path = try output(of: command("build", ["--show-bin-path"]))
-            .split(separator: "\n").last.map(String.init) ?? ""
+            .split(whereSeparator: \.isNewline).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
         return URL(fileURLWithPath: path)
     }
 }

@@ -140,8 +140,8 @@ struct Emscripten: TargetPlatform {
     private func sdkPath(_ key: String) throws -> String {
         let configuration = try output(
             of: ["swift", "sdk", "configure", "--show-configuration", sdk, "wasm32-unknown-emscripten"])
-        for line in configuration.split(separator: "\n") where line.hasPrefix("\(key): ") {
-            return String(line.dropFirst(key.count + 2))
+        for line in configuration.split(whereSeparator: \.isNewline) where line.hasPrefix("\(key): ") {
+            return line.dropFirst(key.count + 2).trimmingCharacters(in: .whitespaces)
         }
         throw BuildToolError("The Swift SDK \(sdk) has no \(key)")
     }
