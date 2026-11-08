@@ -1,5 +1,6 @@
 import Dawn
 import GameToolkit
+import MainLoop
 import VectorMath
 
 /// What the scene's shaders read each frame.
@@ -723,6 +724,127 @@ final class Renderer {
         print(
             "Loaded \(chunks.count) chunks of \(world.chunksX * world.chunksZ) in \(clock.now - start): \(triangleCount) triangles, \(world.lights.count) lamps, \(voxels.denseBytes / 1_000_000) MB of voxels."
         )
+    }
+
+    // MARK: Measuring
+
+    /// Times, for the chunks around a point, what making a chunk asks of the
+    /// GPU, and prints it. Each piece is repeated and the wait for the GPU
+    /// divided among the repeats, as in a browser the wait can only be seen
+    /// to end at a frame.
+    func measureGPU(around focus: Vector3<Float>, instance: Instance) async throws {
+        while let current = job {
+            job = nil
+            job = try runJobStep(current)
+        }
+        let fence = try device.createBuffer(descriptor: BufferDescriptor(usage: .copySrc, size: 4))
+        let fenceCopy = try device.createBuffer(descriptor: BufferDescriptor(usage: [.mapRead, .copyDst], size: 4))
+        func finishGPU() async throws {
+            let encoder = try device.createCommandEncoder()
+            encoder.copyBufferToBuffer(source: fence, destination: fenceCopy, size: 4)
+            queue.submit([try encoder.finish()])
+            let mapped = Flag()
+            Task {
+                do {
+                    try await fenceCopy.mapAsync(mode: .read)
+                } catch {
+                    mapped.error = error
+                }
+                mapped.isSet = true
+            }
+            while !mapped.isSet {
+                instance.processEvents()
+                #if os(Emscripten)
+                    await nextFrame()
+                #else
+                    await Task.yield()
+                #endif
+            }
+            if let error = mapped.error { throw error }
+            fenceCopy.unmap()
+        }
+        func milliseconds(_ duration: Duration) -> Double {
+            let (seconds, attoseconds) = duration.components
+            return Double(seconds) * 1000 + Double(attoseconds) / 1e15
+        }
+        struct Samples {
+            var cpu: [Double] = []
+            var total: [Double] = []
+        }
+        let clock = ContinuousClock()
+        /// Runs `piece` some times over, then waits for the GPU.
+        func timed(_ repeats: Int, into samples: inout Samples, _ piece: () throws -> Void) async throws {
+            try await finishGPU()
+            let start = clock.now
+            for _ in 0..<repeats {
+                try piece()
+            }
+            let issued = clock.now
+            try await finishGPU()
+            samples.cpu.append(milliseconds(issued - start) / Double(repeats))
+            samples.total.append(milliseconds(clock.now - start) / Double(repeats))
+        }
+
+        var bakes = Samples()
+        var groundSlices = Samples()
+        var airSlices = Samples()
+        var meshes = Samples()
+        var meshBytes: [Int] = []
+        let center = Self.chunk(at: focus)
+        let size = SceneChunk.size
+        for z in -2...2 {
+            for x in -2...2 {
+                let chunk = center &+ SIMD2(x, z)
+                guard let index = world.index(of: chunk), isMeshed[index] else { continue }
+                for aroundZ in -1...1 {
+                    for aroundX in -1...1 {
+                        let around = chunk &+ SIMD2(aroundX, aroundZ)
+                        for slice in 0..<voxels.sliceCount {
+                            uploadSlice(slice, of: around, into: bakeOccupancyTexture, chunksAcross: Self.bakeWindowChunks)
+                        }
+                    }
+                }
+                try await timed(16, into: &bakes) { try bake(chunk) }
+                try await timed(16, into: &groundSlices) {
+                    uploadSlice(0, of: chunk, into: bakeOccupancyTexture, chunksAcross: Self.bakeWindowChunks)
+                }
+                try await timed(16, into: &airSlices) {
+                    uploadSlice(voxels.sliceCount - 1, of: chunk, into: bakeOccupancyTexture, chunksAcross: Self.bakeWindowChunks)
+                }
+                var meshing = ChunkMeshing(x: chunk.x * size, z: chunk.y * size, voxels: voxels)
+                while meshing.step() {}
+                if let made = meshing.finished() {
+                    meshBytes.append((made.opaque.vertices.count + made.opaque.indices.count + made.glass.vertices.count + made.glass.indices.count) * 4)
+                    var kept: [Mesh?] = []
+                    try await timed(8, into: &meshes) {
+                        kept.append(try Self.upload(made.opaque, device: device, queue: queue))
+                        kept.append(try Self.upload(made.glass, device: device, queue: queue))
+                    }
+                    withExtendedLifetime(kept) {}
+                }
+                await nextFrame()
+            }
+        }
+        // What the texture holds is no longer known.
+        bakeSlots = [SIMD2<Int>?](repeating: nil, count: bakeSlots.count)
+
+        func report(_ name: String, _ samples: Samples) {
+            func text(_ value: Double) -> String { "\(Double(Int(value * 100)) / 100)" }
+            func line(_ values: [Double]) -> String {
+                let sorted = values.sorted()
+                guard let last = sorted.last else { return "none" }
+                return "median \(text(sorted[sorted.count / 2])), max \(text(last))"
+            }
+            print("  \(name): issuing \(line(samples.cpu)) ms; through the GPU \(line(samples.total)) ms")
+        }
+        print("gpu cost of making a chunk, \(bakes.total.count) chunks:")
+        report("sky bake", bakes)
+        report("voxel slice, ground (512 KB)", groundSlices)
+        report("voxel slice, air (512 KB)", airSlices)
+        report("mesh buffers", meshes)
+        if !meshBytes.isEmpty {
+            print("  mesh size: \(meshBytes.reduce(0, +) / meshBytes.count / 1000) KB on average, \((meshBytes.max() ?? 0) / 1000) KB at most")
+        }
     }
 
     /// Makes the targets for a screen `width` by `height` pixels, if they

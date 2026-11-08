@@ -29,6 +29,9 @@ let canvasSize = Vector2<Float>(1280, 720)
 /// fixed views and quits, and `--extra-lamps N` adds lamps that light nothing,
 /// to time many of them.
 ///
+/// G, or `--measure-gpu` to quit after it, times what making a chunk asks of
+/// the GPU.
+///
 /// `--hour H`, `--focus X Y Z`, `--zoom METERS`, `--yaw DEGREES` and
 /// `--pitch DEGREES` set where it starts, `--first-person` starts walking,
 /// `--at X Z` and `--look YAW PITCH` set where and which way, and `--screenshot` saves a
@@ -98,6 +101,11 @@ struct LightLab: AsyncMain {
         }
         // Timing and screenshots want the same world every time.
         try await renderer.load(around: startFocus, everything: screenshotsAndQuits || arguments.contains("--benchmark"))
+        if arguments.contains("--measure-gpu") {
+            try await renderer.measureGPU(around: startFocus, instance: instance)
+            withExtendedLifetime((system, window, instance, adapter, device, surface, renderer, shapeRenderer)) {}
+            return
+        }
         if arguments.contains("--benchmark") {
             try await runBenchmark(
                 device: device, instance: instance, renderer: renderer, scene: scene, format: configuration.format)
@@ -144,6 +152,7 @@ struct LightLab: AsyncMain {
         // Counts down the frames until the other scene loads, so that the
         // notice of it is on the screen meanwhile.
         var framesUntilSwitch: Int?
+        var measuresGPU = false
         var frameCount = 0
         var elapsed: Float = 0
         var lastFrame = clock.now
@@ -168,6 +177,7 @@ struct LightLab: AsyncMain {
                     case .t: timeRuns.toggle()
                     case .b: bloomOn.toggle()
                     case .n where framesUntilSwitch == nil: framesUntilSwitch = 2
+                    case .g: measuresGPU = true
                     default: break
                     }
                 case let event as MouseButtonEvent where isFirstPerson && event.down:
@@ -204,6 +214,11 @@ struct LightLab: AsyncMain {
                 walker = FirstPerson(feet: Vector3(scene.spawn.x, Scene.streetLevel, scene.spawn.y), yaw: yaw)
                 walker.pitch = pitch
                 try await renderer.load(around: isFirstPerson ? walker.eye : camera.focus, everything: false)
+                lastFrame = clock.now
+            }
+            if measuresGPU {
+                measuresGPU = false
+                try await renderer.measureGPU(around: isFirstPerson ? walker.eye : camera.focus, instance: instance)
                 lastFrame = clock.now
             }
             if shouldConfigureSurface,
