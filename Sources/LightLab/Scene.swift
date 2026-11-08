@@ -42,9 +42,10 @@ struct Scene {
     private(set) var spawn = Vector2<Float>(16, 20)
 
     /// A town laid out from `seed`.
-    init(townSeed seed: UInt64) {
-        let town = Town(seed: seed)
-        voxels = SparseVoxels(tile: town.voxels, tiles: 1)
+    @MainActor
+    init(townSeed seed: UInt64) async {
+        let town = await Town(seed: seed)
+        voxels = await SparseVoxels(tile: town.voxels, tiles: 1)
         grid = VoxelGrid(width: 0, height: 0, depth: 0)
         lights = town.lights
         spawn = town.spawn
@@ -52,9 +53,10 @@ struct Scene {
     }
 
     /// `tiles` by `tiles` copies of the street corner, side by side.
-    init(tiles: Int) {
+    @MainActor
+    init(tiles: Int) async {
         let tile = Scene()
-        voxels = SparseVoxels(tile: tile.grid, tiles: tiles)
+        voxels = await SparseVoxels(tile: tile.grid, tiles: tiles)
         grid = VoxelGrid(width: 0, height: 0, depth: 0)
         middleTileOffset = Float(tiles / 2) * Self.size.width
         spawn += Vector2(repeating: middleTileOffset)
@@ -71,7 +73,7 @@ struct Scene {
     }
 
     private init() {
-        voxels = SparseVoxels(tile: VoxelGrid(width: 0, height: 0, depth: 0), tiles: 0)
+        voxels = SparseVoxels()
         grid = VoxelGrid(
             width: cells(Self.size.width), height: cells(Self.size.height), depth: cells(Self.size.depth))
         buildGround()

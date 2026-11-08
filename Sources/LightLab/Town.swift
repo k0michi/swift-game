@@ -66,7 +66,8 @@ struct Town {
     private(set) var spawn = Vector2<Float>(100, 100)
     var voxels: VoxelGrid { grid }
 
-    init(seed: UInt64) {
+    @MainActor
+    init(seed: UInt64) async {
         random = SeededRandom(seed: seed)
         grid = VoxelGrid(width: cells(Self.size), height: cells(Scene.size.height), depth: cells(Self.size))
         layOutRoads()
@@ -74,7 +75,7 @@ struct Town {
         buildRailway()
         buildMarkings()
         buildStreetFurniture()
-        buildBlocks()
+        await buildBlocks()
         let road = alongZ.min { abs($0.center - 100) < abs($1.center - 100) }!
         let cross = alongX.min { abs($0.center - 100) < abs($1.center - 100) }!
         spawn = Vector2(road.center, cross.center)
@@ -339,7 +340,9 @@ struct Town {
         var depth: Float { z1 - z0 }
     }
 
-    private mutating func buildBlocks() {
+    @MainActor
+    private mutating func buildBlocks() async {
+        var breather = Breather()
         let xObstacles = alongZ.map { (center: $0.center, half: $0.half) }
         let zObstacles = alongX.map { (center: $0.center, half: $0.half) } + [(railZ, Self.railHalf)]
         for (x0, x1) in stretches(between: xObstacles) where x1 - x0 >= 6 {
@@ -350,8 +353,13 @@ struct Town {
                     north: alongX.contains { $0.center + $0.half == z0 }, south: alongX.contains { $0.center - $0.half == z1 }
                 )
                 let largest = random.float(13, 22)
-                split(block, largest: largest) { town, lot in
-                    town.buildLot(lot, in: block, roadSides: roadSides)
+                var lots: [Rect] = []
+                split(block, largest: largest) { _, lot in
+                    lots.append(lot)
+                }
+                for lot in lots {
+                    buildLot(lot, in: block, roadSides: roadSides)
+                    await breather.breathe()
                 }
             }
         }

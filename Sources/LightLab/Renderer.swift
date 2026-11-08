@@ -42,8 +42,8 @@ final class Renderer {
     /// a power of two, for the shaders' wrapping around it to be a mask.
     static let windowChunks = 8
     static var windowVoxels: Int { windowChunks * SceneChunk.size }
-    /// How many chunks to write into the occupancy texture in a frame.
-    static let windowUploadsPerFrame = 2
+    /// How long a frame may spend moving the occupancy window.
+    static let windowBudget = Duration.milliseconds(2)
     /// How many voxels of the grid a cell of the sky's grid covers each way.
     static let skyCellSize = 4
 
@@ -84,20 +84,22 @@ final class Renderer {
     private let voxels: SparseVoxels
     private let occupancyTexture: Texture
     private let skyTexture: Texture
-    /// A move of the window that is under way.
+    /// A move of the window that is under way: the chunks still to write,
+    /// and the slice next to write of the last of them.
     private struct WindowMove {
         var center: SIMD2<Int>
-        var remaining: Int
+        var pending: [SIMD2<Int>]
+        var nextSlice = 0
     }
     private var windowCenter: SIMD2<Int>?
     private var windowMove: WindowMove?
-    /// Chunks worked out for the move under way, waiting to be written.
-    private var preparedChunks: [(chunk: SIMD2<Int>, occupancy: [UInt8])] = []
     /// Which chunk each slot of the occupancy texture holds.
     private var loadedChunks = [SIMD2<Int>?](repeating: nil, count: Renderer.windowChunks * Renderer.windowChunks)
     /// How many chunks and triangles the last frame drew from the camera.
     private(set) var drawnChunks = 0
     private(set) var drawnTriangles = 0
+    /// How many triangles the last frame drew from the sun.
+    private(set) var shadowTriangles = 0
     private var characterMesh: Mesh?
 
     /// Targets the size of the screen, made again when it changes.
@@ -333,7 +335,6 @@ final class Renderer {
                 glass: try Self.upload(chunk.glass, device: device, queue: queue))
         }
         triangleCount = meshes.chunks.reduce(0) { $0 + $1.opaque.triangleCount + $1.glass.triangleCount }
-        try bakeSkyVisibility()
     }
 
     /// How many triangles the scene is, without the person.
@@ -370,27 +371,27 @@ final class Renderer {
         return missing
     }
 
-    /// What light needs to know of a chunk: 0 air, 1 opaque, 2 glass.
-    private nonisolated static func occupancy(of chunk: SIMD2<Int>, in voxels: SparseVoxels) -> [UInt8] {
+    /// Writes one slice of a chunk's occupancy into its slot of the texture.
+    private func uploadSlice(_ slice: Int, of chunk: SIMD2<Int>) {
         let size = SceneChunk.size
-        return Mesher.opacity(
-            of: voxels.region(x: (chunk.x * size)..<((chunk.x + 1) * size), z: (chunk.y * size)..<((chunk.y + 1) * size)))
-    }
-
-    /// Writes a chunk's occupancy into its slot of the texture.
-    private func upload(_ chunk: SIMD2<Int>, occupancy: [UInt8]) {
-        let wide = Self.windowChunks
-        let size = SceneChunk.size
-        let (slotX, slotZ) = (Self.modulo(chunk.x), Self.modulo(chunk.y))
-        loadedChunks[slotZ * wide + slotX] = chunk
+        let occupancy = voxels.occupancySlice(
+            x: (chunk.x * size)..<((chunk.x + 1) * size), z: (chunk.y * size)..<((chunk.y + 1) * size), slice: slice)
+        let height = SparseVoxels.sliceHeight
         occupancy.withUnsafeBytes { data in
             queue.writeTexture(
                 destination: TexelCopyTextureInfo(
-                    texture: occupancyTexture, origin: Origin3D(x: UInt32(slotX * size), y: UInt32(slotZ * size), z: 0)),
+                    texture: occupancyTexture,
+                    origin: Origin3D(
+                        x: UInt32(Self.modulo(chunk.x) * size), y: UInt32(Self.modulo(chunk.y) * size),
+                        z: UInt32(slice * height))),
                 data: data,
                 dataLayout: TexelCopyBufferLayout(bytesPerRow: UInt32(size), rowsPerImage: UInt32(size)),
-                writeSize: Extent3D(width: UInt32(size), height: UInt32(size), depthOrArrayLayers: UInt32(voxels.height)))
+                writeSize: Extent3D(width: UInt32(size), height: UInt32(size), depthOrArrayLayers: UInt32(height)))
         }
+    }
+
+    private func slot(of chunk: SIMD2<Int>) -> Int {
+        Self.modulo(chunk.y) * Self.windowChunks + Self.modulo(chunk.x)
     }
 
     /// The voxels of the window around a chunk: the lowest x and z, and the
@@ -404,64 +405,82 @@ final class Renderer {
         Vector4(Float(low.x), Float(low.y), Float(high.x - low.x), Float(high.y - low.y))
     }
 
-    /// Holds the chunks around one in the occupancy texture at once, for
-    /// when there is nothing yet to show in the meantime.
-    @discardableResult
-    private func moveWindow(centerX: Int, centerZ: Int) throws -> Vector4<Float> {
-        for chunk in missingChunks(centerX: centerX, centerZ: centerZ) {
-            upload(chunk, occupancy: Self.occupancy(of: chunk, in: voxels))
-        }
-        let center = SIMD2(centerX, centerZ)
+    /// Finishes with the window around a chunk, once all of it is loaded.
+    private func settleWindow(at center: SIMD2<Int>) -> Vector4<Float> {
         windowCenter = center
         windowMove = nil
         let bounds = Self.windowBounds(center)
         return Self.windowUniform(low: bounds.low, high: bounds.high)
     }
 
-    /// Follows the camera without holding up a frame: the chunks to load are
-    /// worked out on other threads and written a few a frame. Until they all
-    /// are, the window shown is only what the old and new windows share, as
-    /// the chunks that leave give up their slots to those that come.
-    private func followCamera(centerX: Int, centerZ: Int) throws -> Vector4<Float> {
-        let center = SIMD2(centerX, centerZ)
-        guard let current = windowCenter, max(abs(center.x - current.x), abs(center.y - current.y)) < Self.windowChunks else {
-            return try moveWindow(centerX: centerX, centerZ: centerZ)
-        }
-        if windowMove == nil, center != current {
-            let missing = missingChunks(centerX: centerX, centerZ: centerZ)
-            windowMove = WindowMove(center: center, remaining: missing.count)
-            let voxels = voxels
-            for chunk in missing {
-                Task {
-                    let occupancy = await Task.detached { Self.occupancy(of: chunk, in: voxels) }.value
-                    preparedChunks.append((chunk, occupancy))
-                }
+    /// Holds the chunks around one in the occupancy texture at once, giving
+    /// way to the browser in between, for when there is nothing to show yet.
+    private func moveWindow(centerX: Int, centerZ: Int) async -> Vector4<Float> {
+        var breather = Breather()
+        for chunk in missingChunks(centerX: centerX, centerZ: centerZ) {
+            loadedChunks[slot(of: chunk)] = nil
+            for slice in 0..<voxels.sliceCount {
+                uploadSlice(slice, of: chunk)
+                await breather.breathe()
             }
+            loadedChunks[slot(of: chunk)] = chunk
+        }
+        return settleWindow(at: SIMD2(centerX, centerZ))
+    }
+
+    /// Follows the camera, spending only a little of each frame: the window
+    /// moves a slice of a chunk at a time. Until it is done, the window in
+    /// use is only what the old and new windows share, as the chunks that
+    /// leave give up their slots to those that come.
+    private func followCamera(centerX: Int, centerZ: Int) -> Vector4<Float> {
+        let center = SIMD2(centerX, centerZ)
+        guard let current = windowCenter else {
+            return Self.windowUniform(low: SIMD2(repeating: 0), high: SIMD2(repeating: 0))
+        }
+        if windowMove == nil {
+            guard center != current else {
+                let bounds = Self.windowBounds(current)
+                return Self.windowUniform(low: bounds.low, high: bounds.high)
+            }
+            windowMove = WindowMove(center: center, pending: missingChunks(centerX: centerX, centerZ: centerZ))
         }
         var bounds = Self.windowBounds(current)
-        guard let move = windowMove else {
+        guard var move = windowMove else {
             return Self.windowUniform(low: bounds.low, high: bounds.high)
         }
-        for _ in 0..<min(Self.windowUploadsPerFrame, preparedChunks.count) {
-            let (chunk, occupancy) = preparedChunks.removeFirst()
-            upload(chunk, occupancy: occupancy)
-            windowMove?.remaining -= 1
+        let clock = ContinuousClock()
+        let start = clock.now
+        repeat {
+            guard let chunk = move.pending.last else { break }
+            if move.nextSlice == 0 {
+                loadedChunks[slot(of: chunk)] = nil
+            }
+            uploadSlice(move.nextSlice, of: chunk)
+            move.nextSlice += 1
+            if move.nextSlice == voxels.sliceCount {
+                loadedChunks[slot(of: chunk)] = chunk
+                move.pending.removeLast()
+                move.nextSlice = 0
+            }
+        } while !move.pending.isEmpty && clock.now - start < Self.windowBudget
+        if move.pending.isEmpty {
+            return settleWindow(at: move.center)
         }
-        if windowMove?.remaining == 0 {
-            windowCenter = move.center
-            windowMove = nil
-            bounds = Self.windowBounds(move.center)
-            return Self.windowUniform(low: bounds.low, high: bounds.high)
-        }
+        windowMove = move
         let target = Self.windowBounds(move.center)
-        return Self.windowUniform(
-            low: pointwiseMax(bounds.low, target.low), high: pointwiseMin(bounds.high, target.high))
+        bounds.low = pointwiseMax(bounds.low, target.low)
+        bounds.high = pointwiseMin(bounds.high, target.high)
+        // Nothing shared: nothing is known to be ready yet.
+        if bounds.low.x >= bounds.high.x || bounds.low.y >= bounds.high.y {
+            return Self.windowUniform(low: SIMD2(repeating: 0), high: SIMD2(repeating: 0))
+        }
+        return Self.windowUniform(low: bounds.low, high: bounds.high)
     }
 
     /// Bakes how much of the sky each cell of a coarse grid sees, with a
     /// compute shader, a square of chunks at a time, with the window moved so
     /// that it holds what is around them.
-    private func bakeSkyVisibility() throws {
+    func bakeSkyVisibility() async throws {
         let module = try device.createShaderModule(
             descriptor: ShaderModuleDescriptor(
                 nextInChain: ShaderSourceWGSL(code: Shaders.skyVisibility), label: "sky visibility"))
@@ -479,7 +498,8 @@ final class Renderer {
         let chunksZ = (voxels.depth + chunkSize - 1) / chunkSize
         for stepZ in stride(from: 0, to: max(chunksZ, 1), by: chunksPerStep) {
             for stepX in stride(from: 0, to: max(chunksX, 1), by: chunksPerStep) {
-                let window = try moveWindow(centerX: stepX + chunksPerStep / 2, centerZ: stepZ + chunksPerStep / 2)
+                let window = await moveWindow(
+                    centerX: stepX + chunksPerStep / 2, centerZ: stepZ + chunksPerStep / 2)
                 let parameters: [Int32] = [
                     Int32(window.x), Int32(window.y), Int32(window.z), 0,
                     Int32(stepX * cellsPerChunk), Int32(stepZ * cellsPerChunk),
@@ -576,7 +596,7 @@ final class Renderer {
         let targets = try prepareTargets(width: width, height: height)
         var frame = baseFrame
         let chunkMeters = Float(SceneChunk.size) / Float(voxelsPerMeter)
-        frame.window = try followCamera(
+        frame.window = followCamera(
             centerX: Int((focus.x / chunkMeters).rounded(.down)), centerZ: Int((focus.z / chunkMeters).rounded(.down)))
         withUnsafeBytes(of: frame) { queue.writeBuffer(frameBuffer, bufferOffset: 0, data: $0) }
         materials.withUnsafeBytes { queue.writeBuffer(materialBuffer, bufferOffset: 0, data: $0) }
@@ -626,8 +646,10 @@ final class Renderer {
                     view: shadowView, depthLoadOp: .clear, depthStoreOp: .store, depthClearValue: 1)))
         shadowPass.setPipeline(shadowPipeline)
         shadowPass.setBindGroup(groupIndex: 0, group: shadowBindGroup)
+        shadowTriangles = 0
         for chunk in chunks where isInView(chunk, frame.sunViewProjection) {
             drawMesh(chunk.opaque, in: shadowPass)
+            shadowTriangles += Int(chunk.opaque?.indexCount ?? 0) / 3
         }
         drawMesh(characterMesh, in: shadowPass)
         shadowPass.end()

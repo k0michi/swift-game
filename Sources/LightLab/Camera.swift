@@ -45,6 +45,23 @@ struct Camera {
         return projection * view
     }
 
+    /// Where the corners of the view meet two heights, in meters: the
+    /// corners of what can be shown of anything between those heights.
+    func visiblePoints(aspectRatio: Float, heights: ClosedRange<Float>) -> [Vector3<Float>] {
+        let right = Vector3<Float>(screenRight.x, 0, screenRight.y)
+        let up = Vector3<Float>(screenUp.x * Float.sin(pitch), Float.cos(pitch), screenUp.y * Float.sin(pitch))
+        var points: [Vector3<Float>] = []
+        for across: Float in [-1, 1] {
+            for along: Float in [-1, 1] {
+                let start = focus + right * (across * zoom * aspectRatio) + up * (along * zoom)
+                for height in [heights.lowerBound, heights.upperBound] {
+                    points.append(start + forward * ((height - start.y) / forward.y))
+                }
+            }
+        }
+        return points
+    }
+
     /// Moves the focus so that the ground follows a drag of `delta` points on
     /// a canvas `canvasHeight` points tall.
     mutating func drag(by delta: Vector2<Float>, canvasHeight: Float) {

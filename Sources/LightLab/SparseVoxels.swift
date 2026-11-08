@@ -32,7 +32,9 @@ struct SparseVoxels: Sendable {
     /// `tiles` by `tiles` copies of `tile`, whose size is a whole number of
     /// sections. Each dense section has memory of its own, as those of a
     /// world without repeats would.
-    init(tile: VoxelGrid, tiles: Int) {
+    @MainActor
+    init(tile: VoxelGrid, tiles: Int) async {
+        var breather = Breather()
         let size = Self.sectionSize
         precondition(tile.width % size == 0 && tile.height % size == 0 && tile.depth % size == 0)
         width = tile.width * tiles
@@ -45,6 +47,7 @@ struct SparseVoxels: Sendable {
         sections.reserveCapacity(sectionsX * sectionsY * sectionsZ)
         for sy in 0..<sectionsY {
             for sz in 0..<sectionsZ {
+                await breather.breathe()
                 for sx in 0..<sectionsX {
                     let originX = sx * size % tile.width
                     let originZ = sz * size % tile.depth
@@ -68,6 +71,73 @@ struct SparseVoxels: Sendable {
             }
         }
         self.sections = sections
+    }
+
+    /// A world with nothing in it.
+    init() {
+        width = 0
+        height = 0
+        depth = 0
+        sectionsX = 0
+        sectionsY = 0
+        sectionsZ = 0
+        sections = []
+    }
+
+    /// How many layers of voxels make up one slice of `occupancySlice`.
+    static var sliceHeight: Int { sectionSize }
+
+    /// How many slices the world is, from the ground up.
+    var sliceCount: Int { sectionsY }
+
+    private static let kinds: [UInt8] = Materials.table.indices.map { index in
+        index == Int(Materials.air) ? 0 : Materials.isGlass(UInt8(index)) ? 2 : 1
+    }
+
+    /// What light needs to know of a slice of the columns over `x` and `z`,
+    /// `sliceHeight` voxels tall: 0 air, 1 opaque, 2 glass, x fastest, then z,
+    /// then y. Past the edges of the world there is air.
+    func occupancySlice(x: Range<Int>, z: Range<Int>, slice: Int) -> [UInt8] {
+        let size = Self.sectionSize
+        let (rowsWide, rowsDeep) = (x.count, z.count)
+        var output = [UInt8](repeating: 0, count: rowsWide * rowsDeep * size)
+        func section(_ value: Int) -> Int { value >= 0 ? value / size : -((-value + size - 1) / size) }
+        Self.kinds.withUnsafeBufferPointer { kinds in
+            output.withUnsafeMutableBufferPointer { output in
+                for sz in stride(from: max(section(z.lowerBound), 0), through: min(section(z.upperBound - 1), sectionsZ - 1), by: 1) {
+                    for sx in stride(from: max(section(x.lowerBound), 0), through: min(section(x.upperBound - 1), sectionsX - 1), by: 1) {
+                        let columnsX = max(sx * size, x.lowerBound)..<min((sx + 1) * size, x.upperBound)
+                        let columnsZ = max(sz * size, z.lowerBound)..<min((sz + 1) * size, z.upperBound)
+                        switch sections[(slice * sectionsZ + sz) * sectionsX + sx] {
+                        case .uniform(let material):
+                            let kind = kinds[Int(material)]
+                            guard kind != 0 else { continue }
+                            for y in 0..<size {
+                                for worldZ in columnsZ {
+                                    let start = (y * rowsDeep + worldZ - z.lowerBound) * rowsWide + columnsX.lowerBound - x.lowerBound
+                                    for offset in 0..<columnsX.count {
+                                        output[start + offset] = kind
+                                    }
+                                }
+                            }
+                        case .dense(let voxels):
+                            voxels.withUnsafeBufferPointer { voxels in
+                                for y in 0..<size {
+                                    for worldZ in columnsZ {
+                                        let start = (y * rowsDeep + worldZ - z.lowerBound) * rowsWide + columnsX.lowerBound - x.lowerBound
+                                        let row = (y * size + worldZ - sz * size) * size + columnsX.lowerBound - sx * size
+                                        for offset in 0..<columnsX.count {
+                                            output[start + offset] = kinds[Int(voxels[row + offset])]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return output
     }
 
     /// The material at a voxel: air outside the world, but for below it,

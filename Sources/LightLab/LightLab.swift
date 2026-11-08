@@ -340,8 +340,8 @@ struct LightLab: AsyncMain {
         let start = clock.now
         var scene: Scene
         switch choice {
-        case .tiles(let tiles): scene = Scene(tiles: tiles)
-        case .town(let seed): scene = Scene(townSeed: seed)
+        case .tiles(let tiles): scene = await Scene(tiles: tiles)
+        case .town(let seed): scene = await Scene(townSeed: seed)
         }
         // Lamps too far away to light anything, for timing many lamps.
         for _ in 0..<extraLamps {
@@ -356,6 +356,7 @@ struct LightLab: AsyncMain {
             "Voxels: \(scene.voxels.denseBytes / 1_000_000) MB in \(scene.voxels.denseCount) dense sections of \(scene.voxels.sectionCount)."
         )
         let renderer = try Renderer(device: device, surfaceFormat: format, scene: scene, meshes: meshes)
+        try await renderer.bakeSkyVisibility()
         let popped = Flag()
         Task {
             if let error = try? await device.popErrorScope() {
@@ -379,7 +380,7 @@ struct LightLab: AsyncMain {
         scene: Scene, time: TimeOfDay, lampCount: Int, camera: Camera, walker: FirstPerson?, aspect: Float
     ) -> FrameUniforms {
         let cells = LightGrid.dimensions(sceneWidth: scene.width, sceneDepth: scene.depth)
-        let sun = sunView(of: scene, toward: time.lightDirection)
+        let sun = sunView(of: scene, toward: time.lightDirection, fittedTo: walker == nil ? camera : nil, aspect: aspect)
         let (zenith, horizon) = time.skyColors
         let ground = Vector3<Float>(0.35, 0.3, 0.25) * (horizon.x + horizon.y + horizon.z) / 3
         return FrameUniforms(
@@ -453,20 +454,58 @@ struct LightLab: AsyncMain {
         return (materials, lights, litCount)
     }
 
-    /// The sun's view of the whole scene, for its shadow map, and how far to
-    /// offset depths in it to keep surfaces from shadowing themselves.
-    private static func sunView(of scene: Scene, toward direction: Vector3<Float>) -> (
-        viewProjection: Matrix4x4<Float>, bias: Float
-    ) {
+    /// The sun's view for its shadow map, and how far to offset depths in it
+    /// to keep surfaces from shadowing themselves. With `fittedTo`, it covers
+    /// only what that camera shows, for finer shadows and fewer chunks to
+    /// draw, as parallel sunlight can reach what is shown only from within
+    /// the same rectangle of the sun's view. Otherwise it covers the scene.
+    private static func sunView(
+        of scene: Scene, toward direction: Vector3<Float>, fittedTo camera: Camera?, aspect: Float
+    ) -> (viewProjection: Matrix4x4<Float>, bias: Float) {
         let center = Vector3<Float>(scene.width / 2, 4, scene.depth / 2)
         let up: Vector3<Float> = abs(direction.y) > 0.99 ? Vector3(0, 0, 1) : Vector3(0, 1, 0)
-        let extent = max(scene.width, scene.depth) * 0.8
-        let distance = extent * 2.5
+        let size = max(scene.width, scene.depth)
+        let distance = size * 2
         let view = Matrix4x4<Float>.lookAt(
             eye: center + direction * distance, target: center, up: up, handedness: .right)
         let far = distance * 2
+
+        func bounds(of points: [Vector3<Float>]) -> (low: Vector2<Float>, high: Vector2<Float>) {
+            var low = Vector2<Float>(repeating: .greatestFiniteMagnitude)
+            var high = -low
+            for point in points {
+                let seen = (view * Vector4(point, 1)).xy
+                low = min(low, seen)
+                high = max(high, seen)
+            }
+            return (low, high)
+        }
+        var sceneCorners: [Vector3<Float>] = []
+        for x in [0, scene.width] {
+            for y in [0, Scene.size.height] {
+                for z in [0, scene.depth] {
+                    sceneCorners.append(Vector3(x, y, z))
+                }
+            }
+        }
+        var (low, high) = bounds(of: sceneCorners)
+        if let camera {
+            let shown = bounds(of: camera.visiblePoints(aspectRatio: aspect, heights: 0...Scene.size.height))
+            low = max(low, shown.low)
+            high = min(high, shown.high)
+            // Whole meters of width, and whole texels of position, so that
+            // the shadows do not crawl as the view moves.
+            let middle = (low + high) / 2
+            let halfSize = Vector2<Float>(
+                ((high.x - low.x) / 2 + 1).rounded(.up), ((high.y - low.y) / 2 + 1).rounded(.up))
+            let texel = halfSize * (2 / Float(Renderer.shadowMapSize))
+            let snapped = Vector2(
+                (middle.x / texel.x).rounded() * texel.x, (middle.y / texel.y).rounded() * texel.y)
+            low = snapped - halfSize
+            high = snapped + halfSize
+        }
         let projection = Matrix4x4<Float>.orthographic(
-            left: -extent, right: extent, bottom: -extent, top: extent, near: 1, far: far, handedness: .right,
+            left: low.x, right: high.x, bottom: low.y, top: high.y, near: 1, far: far, handedness: .right,
             depth: .zeroToOne)
         return (projection * view, 0.096 / far)
     }
