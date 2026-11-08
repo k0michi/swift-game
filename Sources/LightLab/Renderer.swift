@@ -65,8 +65,16 @@ final class Renderer {
         var indices: Buffer
         var indexCount: UInt32
     }
-    private let opaqueMesh: Mesh?
-    private let glassMesh: Mesh?
+    private struct Chunk {
+        var minimum: Vector3<Float>
+        var maximum: Vector3<Float>
+        var opaque: Mesh?
+        var glass: Mesh?
+    }
+    private let chunks: [Chunk]
+    /// How many chunks and triangles the last frame drew from the camera.
+    private(set) var drawnChunks = 0
+    private(set) var drawnTriangles = 0
     private var characterMesh: Mesh?
 
     /// Targets the size of the screen, made again when it changes.
@@ -83,7 +91,7 @@ final class Renderer {
     }
     private var targets: Targets?
 
-    init(device: Device, surfaceFormat: TextureFormat, scene: Scene) throws {
+    init(device: Device, surfaceFormat: TextureFormat, scene: Scene, meshes: SceneMeshes) throws {
         self.device = device
         let queue = device.getQueue()
         self.queue = queue
@@ -118,10 +126,7 @@ final class Renderer {
                 size: Extent3D(
                     width: UInt32(grid.width), height: UInt32(grid.depth), depthOrArrayLayers: UInt32(grid.height)),
                 format: .r8Uint))
-        let kinds = grid.data.map { material -> UInt8 in
-            material == Materials.air ? 0 : Materials.isGlass(material) ? 2 : 1
-        }
-        kinds.withUnsafeBytes { data in
+        meshes.kinds.withUnsafeBytes { data in
             queue.writeTexture(
                 destination: TexelCopyTextureInfo(texture: occupancy), data: data,
                 dataLayout: TexelCopyBufferLayout(bytesPerRow: UInt32(grid.width), rowsPerImage: UInt32(grid.depth)),
@@ -149,7 +154,7 @@ final class Renderer {
                 label: "lamps", usage: [.textureBinding, .copyDst], dimension: .`2D`,
                 size: Extent3D(width: UInt32(Self.lightTextureWidth), height: lightTextureHeight, depthOrArrayLayers: 1),
                 format: .rgba32Float))
-        let lightGrid = LightGrid(lights: scene.lights, sceneWidth: Scene.size.width, sceneDepth: Scene.size.depth)
+        let lightGrid = LightGrid(lights: scene.lights, sceneWidth: scene.width, sceneDepth: scene.depth)
         let cellTexture = try device.createTexture(
             descriptor: TextureDescriptor(
                 label: "lamp cells", usage: [.textureBinding, .copyDst], dimension: .`2D`,
@@ -296,10 +301,13 @@ final class Renderer {
         compositePipeline = try postPipeline("composite", format: surfaceFormat)
 
         // The scene's meshes, which never change.
-        let (opaque, glass) = Mesher.mesh(scene.grid)
-        opaqueMesh = try Self.upload(opaque, device: device, queue: queue)
-        glassMesh = try Self.upload(glass, device: device, queue: queue)
-        triangleCount = opaque.triangleCount + glass.triangleCount
+        chunks = try meshes.chunks.map { chunk in
+            Chunk(
+                minimum: chunk.minimum, maximum: chunk.maximum,
+                opaque: try Self.upload(chunk.opaque, device: device, queue: queue),
+                glass: try Self.upload(chunk.glass, device: device, queue: queue))
+        }
+        triangleCount = meshes.chunks.reduce(0) { $0 + $1.opaque.triangleCount + $1.glass.triangleCount }
     }
 
     /// How many triangles the scene is, without the person.
@@ -335,19 +343,32 @@ final class Renderer {
         let pipeline = try device.createComputePipeline(
             descriptor: ComputePipelineDescriptor(
                 label: "sky visibility", compute: ComputeState(module: module, entryPoint: "main")))
-        let bindGroup = try device.createBindGroup(
-            descriptor: BindGroupDescriptor(
-                layout: try pipeline.getBindGroupLayout(groupIndex: 0),
-                entries: [BindGroupEntry(binding: 0, textureView: occupancy), BindGroupEntry(binding: 1, textureView: view)]
-            ))
-        let encoder = try device.createCommandEncoder()
-        let pass = try encoder.beginComputePass(descriptor: ComputePassDescriptor(label: "sky visibility"))
-        pass.setPipeline(pipeline)
-        pass.setBindGroup(groupIndex: 0, group: bindGroup)
-        pass.dispatchWorkgroups(
-            x: (size.width + 3) / 4, y: (size.height + 3) / 4, z: (size.depthOrArrayLayers + 3) / 4)
-        pass.end()
-        device.getQueue().submit([try encoder.finish()])
+        // In slabs, submitted apart, so that no one submission runs long
+        // enough for the GPU to give up on it.
+        let queue = device.getQueue()
+        let layout = try pipeline.getBindGroupLayout(groupIndex: 0)
+        let slabRows: UInt32 = 64
+        for row in stride(from: UInt32(0), to: size.height, by: Int(slabRows)) {
+            let slab = try device.createBuffer(descriptor: BufferDescriptor(usage: [.uniform, .copyDst], size: 16))
+            let origin: [UInt32] = [row, 0, 0, 0]
+            origin.withUnsafeBytes { queue.writeBuffer(slab, bufferOffset: 0, data: $0) }
+            let bindGroup = try device.createBindGroup(
+                descriptor: BindGroupDescriptor(
+                    layout: layout,
+                    entries: [
+                        BindGroupEntry(binding: 0, textureView: occupancy), BindGroupEntry(binding: 1, textureView: view),
+                        BindGroupEntry(binding: 2, buffer: slab),
+                    ]))
+            let encoder = try device.createCommandEncoder()
+            let pass = try encoder.beginComputePass(descriptor: ComputePassDescriptor(label: "sky visibility"))
+            pass.setPipeline(pipeline)
+            pass.setBindGroup(groupIndex: 0, group: bindGroup)
+            pass.dispatchWorkgroups(
+                x: (size.width + 3) / 4, y: (min(slabRows, size.height - row) + 3) / 4,
+                z: (size.depthOrArrayLayers + 3) / 4)
+            pass.end()
+            queue.submit([try encoder.finish()])
+        }
         return view
     }
 
@@ -433,6 +454,21 @@ final class Renderer {
         settings.withUnsafeBytes { queue.writeBuffer(settingsBuffer, bufferOffset: 0, data: $0) }
         try updateCharacter(character)
 
+        func isInView(_ chunk: Chunk, _ viewProjection: Matrix4x4<Float>) -> Bool {
+            var outside = (left: true, right: true, bottom: true, top: true)
+            for corner in 0..<8 {
+                let point = Vector4<Float>(
+                    corner & 1 == 0 ? chunk.minimum.x : chunk.maximum.x, corner & 2 == 0 ? chunk.minimum.y : chunk.maximum.y,
+                    corner & 4 == 0 ? chunk.minimum.z : chunk.maximum.z, 1)
+                let clip = viewProjection * point
+                outside.left = outside.left && clip.x < -clip.w
+                outside.right = outside.right && clip.x > clip.w
+                outside.bottom = outside.bottom && clip.y < -clip.w
+                outside.top = outside.top && clip.y > clip.w
+            }
+            return !(outside.left || outside.right || outside.bottom || outside.top)
+        }
+
         func drawMesh(_ mesh: Mesh?, in pass: RenderPassEncoder) {
             guard let mesh else { return }
             pass.setVertexBuffer(slot: 0, buffer: mesh.vertices, offset: 0, size: wholeSize)
@@ -448,7 +484,9 @@ final class Renderer {
                     view: shadowView, depthLoadOp: .clear, depthStoreOp: .store, depthClearValue: 1)))
         shadowPass.setPipeline(shadowPipeline)
         shadowPass.setBindGroup(groupIndex: 0, group: shadowBindGroup)
-        drawMesh(opaqueMesh, in: shadowPass)
+        for chunk in chunks where isInView(chunk, frame.sunViewProjection) {
+            drawMesh(chunk.opaque, in: shadowPass)
+        }
         drawMesh(characterMesh, in: shadowPass)
         shadowPass.end()
 
@@ -466,10 +504,17 @@ final class Renderer {
                     view: targets.depth, depthLoadOp: .clear, depthStoreOp: .discard, depthClearValue: 1)))
         scenePass.setBindGroup(groupIndex: 0, group: sceneBindGroup)
         scenePass.setPipeline(opaquePipeline)
-        drawMesh(opaqueMesh, in: scenePass)
+        let visible = chunks.filter { isInView($0, frame.viewProjection) }
+        drawnChunks = visible.count
+        drawnTriangles = visible.reduce(0) { $0 + Int(($1.opaque?.indexCount ?? 0) + ($1.glass?.indexCount ?? 0)) / 3 }
+        for chunk in visible {
+            drawMesh(chunk.opaque, in: scenePass)
+        }
         drawMesh(characterMesh, in: scenePass)
         scenePass.setPipeline(glassPipeline)
-        drawMesh(glassMesh, in: scenePass)
+        for chunk in visible {
+            drawMesh(chunk.glass, in: scenePass)
+        }
         scenePass.end()
 
         // Bloom: halve down the levels, then add each back into the next

@@ -22,7 +22,7 @@ let canvasSize = Vector2<Float>(1280, 720)
 /// look, after a click holds it; Esc lets it go.
 ///
 /// `--hour H`, `--focus X Y Z`, `--zoom METERS`, `--yaw DEGREES` and
-/// `--benchmark` times fixed views and quits, and `--extra-lamps N` adds lamps
+/// `--tiles N` lays out N by N copies of the street, `--benchmark` times fixed views and quits, and `--extra-lamps N` adds lamps
 /// that light nothing, to time many of them.
 ///
 /// `--pitch DEGREES` set where it starts, `--first-person` starts walking,
@@ -39,17 +39,22 @@ struct LightLab: AsyncMain {
         let instance = try createInstance()
         let surface = try instance.createSurface(from: window)
         let adapter = try await instance.requestAdapter(options: platformAdapterOptions())
-        let device = try await adapter.requestDevice()
+        // The voxels of a large scene take a texture larger than the defaults allow.
+        let device = try await adapter.requestDevice(usesAdapterLimits: true)
         let deviceDetails = (try? describe(adapter.getInfo())) ?? []
         var configuration = try configureSurface(surface, device: device, adapter: adapter, window: window)
 
         let clock = ContinuousClock()
         var start = clock.now
-        var scene = Scene()
+        func argument(after flag: String) -> Int? {
+            guard let index = CommandLine.arguments.firstIndex(of: flag), index + 1 < CommandLine.arguments.count else {
+                return nil
+            }
+            return Int(CommandLine.arguments[index + 1])
+        }
+        var scene = Scene(tiles: max(argument(after: "--tiles") ?? 1, 1))
         // Lamps too far away to light anything, for timing many lamps.
-        if let index = CommandLine.arguments.firstIndex(of: "--extra-lamps"), index + 1 < CommandLine.arguments.count,
-            let count = Int(CommandLine.arguments[index + 1])
-        {
+        if let count = argument(after: "--extra-lamps") {
             for _ in 0..<count {
                 scene.lights.append(
                     PointLight(position: Vector3(-1000, 2, -1000), color: Vector3(1, 1, 1), radius: 5, schedule: .always))
@@ -60,7 +65,9 @@ struct LightLab: AsyncMain {
         // Errors in making the pipelines show up once, here, rather than as
         // a warning about an invalid object each frame.
         device.pushErrorScope(.validation)
-        let renderer = try Renderer(device: device, surfaceFormat: configuration.format, scene: scene)
+        let meshes = await SceneMeshes.build(scene.grid)
+        print("Meshed \(meshes.chunks.count) chunks in \(clock.now - start).")
+        let renderer = try Renderer(device: device, surfaceFormat: configuration.format, scene: scene, meshes: meshes)
         let popped = Flag()
         Task {
             if let error = try? await device.popErrorScope() {
@@ -84,7 +91,9 @@ struct LightLab: AsyncMain {
             return values.count == count ? values : nil
         }
         var time = TimeOfDay(hour: values(after: "--hour", count: 1)?[0] ?? 17.5)
-        var camera = Camera(focus: Vector3(20, 1.5, 24))
+        // The middle copy of the street corner, when there are several.
+        let middle = scene.middleTileOffset
+        var camera = Camera(focus: Vector3(20 + middle, 1.5, 24 + middle))
         if let focus = values(after: "--focus", count: 3) {
             camera.focus = Vector3(focus[0], focus[1], focus[2])
         }
@@ -107,7 +116,7 @@ struct LightLab: AsyncMain {
         }
         // On the plaza, facing south, toward the road and the shops.
         let spawn = values(after: "--at", count: 2) ?? [16, 20]
-        var walker = FirstPerson(feet: Vector3(spawn[0], Scene.streetLevel, spawn[1]), yaw: .pi)
+        var walker = FirstPerson(feet: Vector3(spawn[0] + middle, Scene.streetLevel, spawn[1] + middle), yaw: .pi)
         if let look = values(after: "--look", count: 2) {
             walker.yaw = look[0] * .pi / 180
             walker.pitch = look[1] * .pi / 180
@@ -318,19 +327,20 @@ struct LightLab: AsyncMain {
     static func frameUniforms(
         scene: Scene, time: TimeOfDay, lampCount: Int, camera: Camera, walker: FirstPerson?, aspect: Float
     ) -> FrameUniforms {
-        let cells = LightGrid.dimensions(sceneWidth: Scene.size.width, sceneDepth: Scene.size.depth)
+        let cells = LightGrid.dimensions(sceneWidth: scene.width, sceneDepth: scene.depth)
+        let sun = sunView(of: scene, toward: time.lightDirection)
         let (zenith, horizon) = time.skyColors
         let ground = Vector3<Float>(0.35, 0.3, 0.25) * (horizon.x + horizon.y + horizon.z) / 3
         return FrameUniforms(
             viewProjection: walker?.viewProjection(aspectRatio: aspect) ?? camera.viewProjection(aspectRatio: aspect),
-            sunViewProjection: sunViewProjection(toward: time.lightDirection),
+            sunViewProjection: sun.viewProjection,
             sunDirection: Vector4(time.lightDirection, 0),
             sunColor: Vector4(time.lightColor, 0),
             skyColor: Vector4(zenith, 0),
             horizonColor: Vector4(horizon, 0),
             groundColor: Vector4(ground, 0),
             viewDirection: Vector4(walker?.forward ?? camera.forward, 0),
-            params: Vector4(Float(lampCount), time.exposure, 1.6, 0),
+            params: Vector4(Float(lampCount), time.exposure, 1.6, sun.bias),
             gridSize: Vector4(
                 Float(scene.grid.width), Float(scene.grid.height), Float(scene.grid.depth), Float(voxelsPerMeter)),
             eye: Vector4(walker?.eye ?? .zero, walker == nil ? 0 : 1),
@@ -392,17 +402,22 @@ struct LightLab: AsyncMain {
         return (materials, lights, litCount)
     }
 
-    /// The sun's view of the whole scene, for its shadow map.
-    private static func sunViewProjection(toward direction: Vector3<Float>) -> Matrix4x4<Float> {
-        let center = Vector3<Float>(Scene.size.width / 2, 4, Scene.size.depth / 2)
+    /// The sun's view of the whole scene, for its shadow map, and how far to
+    /// offset depths in it to keep surfaces from shadowing themselves.
+    private static func sunView(of scene: Scene, toward direction: Vector3<Float>) -> (
+        viewProjection: Matrix4x4<Float>, bias: Float
+    ) {
+        let center = Vector3<Float>(scene.width / 2, 4, scene.depth / 2)
         let up: Vector3<Float> = abs(direction.y) > 0.99 ? Vector3(0, 0, 1) : Vector3(0, 1, 0)
+        let extent = max(scene.width, scene.depth) * 0.8
+        let distance = extent * 2.5
         let view = Matrix4x4<Float>.lookAt(
-            eye: center + direction * 80, target: center, up: up, handedness: .right)
-        let extent: Float = 32
+            eye: center + direction * distance, target: center, up: up, handedness: .right)
+        let far = distance * 2
         let projection = Matrix4x4<Float>.orthographic(
-            left: -extent, right: extent, bottom: -extent, top: extent, near: 1, far: 160, handedness: .right,
+            left: -extent, right: extent, bottom: -extent, top: extent, near: 1, far: far, handedness: .right,
             depth: .zeroToOne)
-        return projection * view
+        return (projection * view, 0.096 / far)
     }
 
     /// Lines of status in the bottom-left corner.

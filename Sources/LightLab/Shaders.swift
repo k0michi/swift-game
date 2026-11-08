@@ -15,8 +15,8 @@ enum Shaders {
             groundColor: vec4f,
             // The direction the camera looks.
             viewDirection: vec4f,
-            // The number of lamps, the exposure, the strength of the light of
-            // the sky, and of bloom.
+            // The number of lamps lit, the exposure, the strength of the
+            // light of the sky, and the bias of the sun's shadow map.
             params: vec4f,
             // Voxels along x, y and z, and voxels a meter.
             gridSize: vec4f,
@@ -140,7 +140,7 @@ enum Shaders {
             for (var y = -1; y <= 1; y++) {
                 for (var x = -1; x <= 1; x++) {
                     sum += textureSampleCompareLevel(
-                        shadowMap, shadowSampler, uv + vec2f(f32(x), f32(y)) * texel, p.z - 0.0006);
+                        shadowMap, shadowSampler, uv + vec2f(f32(x), f32(y)) * texel, p.z - frame.params.w);
                 }
             }
             return sum / 9.0;
@@ -259,6 +259,8 @@ enum Shaders {
     static let skyVisibility = """
         @group(0) @binding(0) var occupancy: texture_3d<u32>;
         @group(0) @binding(1) var output: texture_storage_3d<rgba16float, write>;
+        // The row of the output, along z, that this dispatch starts at.
+        @group(0) @binding(2) var<uniform> slab: vec4u;
 
         const rayCount = 24u;
 
@@ -295,7 +297,8 @@ enum Shaders {
         }
 
         @compute @workgroup_size(4, 4, 4)
-        fn main(@builtin(global_invocation_id) id: vec3u) {
+        fn main(@builtin(global_invocation_id) invocation: vec3u) {
+            let id = invocation + vec3u(0u, slab.x, 0u);
             let dims = textureDimensions(output);
             if any(id >= dims) { return; }
             let fine = vec3i(textureDimensions(occupancy));

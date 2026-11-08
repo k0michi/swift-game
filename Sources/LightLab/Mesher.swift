@@ -30,20 +30,28 @@ struct VoxelMesh {
 /// material and even shading into rectangles.
 enum Mesher {
     /// How light treats each voxel: 0 air, 1 opaque, 2 glass.
-    private static func opacity(of grid: VoxelGrid) -> [UInt8] {
+    static func opacity(of grid: VoxelGrid) -> [UInt8] {
         grid.data.map { material in
             material == Materials.air ? 0 : Materials.isGlass(material) ? 2 : 1
         }
     }
 
-    /// Meshes `grid`, scaled by `scale` meters a voxel.
-    static func mesh(_ grid: VoxelGrid, scale: Float = 1 / Float(voxelsPerMeter)) -> (
+    /// Meshes `region` of `grid`, or all of it, scaled by `scale` meters a
+    /// voxel. `kinds` is the grid's `opacity`, if already known. Faces at the
+    /// edges of the region are culled against the rest of the grid.
+    static func mesh(
+        _ grid: VoxelGrid, kinds knownKinds: [UInt8]? = nil,
+        region: (x: Range<Int>, y: Range<Int>, z: Range<Int>)? = nil, scale: Float = 1 / Float(voxelsPerMeter)
+    ) -> (
         opaque: VoxelMesh, glass: VoxelMesh
     ) {
         var opaque = VoxelMesh()
         var glass = VoxelMesh()
-        let kinds = opacity(of: grid)
-        let extents = [grid.width, grid.height, grid.depth]
+        let kinds = knownKinds ?? opacity(of: grid)
+        let area = region ?? (0..<grid.width, 0..<grid.height, 0..<grid.depth)
+        let origins = [area.x.lowerBound, area.y.lowerBound, area.z.lowerBound]
+        let extents = [area.x.count, area.y.count, area.z.count]
+        let base = grid.index(origins[0], origins[1], origins[2])
         let strides = [1, grid.width * grid.depth, grid.width]
         let maxPlane = extents.max()!
         // Each cell of a slice: 0 for no face, or the material, its
@@ -85,19 +93,18 @@ enum Mesher {
                     for slice in 0..<extents[axis] {
                         for direction in [1, -1] {
                             let neighbor = slice + direction
-                            if axis == 1 && neighbor < 0 { continue }
                             var any = false
                             for v in 0..<vCount {
                                 for u in 0..<uCount {
-                                    let i = slice * stride + u * uStride + v * vStride
+                                    let i = base + slice * stride + u * uStride + v * vStride
                                     let own = kinds[i]
                                     var key: UInt32 = 0
                                     if own != 0 {
                                         // The voxel the face looks onto.
                                         var point = (0, 0, 0)
-                                        set(&point, axis, neighbor)
-                                        set(&point, uAxis, u)
-                                        set(&point, vAxis, v)
+                                        set(&point, axis, origins[axis] + neighbor)
+                                        set(&point, uAxis, origins[uAxis] + u)
+                                        set(&point, vAxis, origins[vAxis] + v)
                                         let other = kind(point.0, point.1, point.2)
                                         // Opaque faces show beside air and glass;
                                         // glass ones beside air alone.
@@ -129,7 +136,7 @@ enum Mesher {
                             }
                             guard any else { continue }
 
-                            let plane = Float(direction > 0 ? slice + 1 : slice)
+                            let plane = Float(origins[axis] + (direction > 0 ? slice + 1 : slice))
                             var normal = Vector3<Float>.zero
                             normal[axis] = Float(direction)
                             let packedNormal = VoxelMesh.packNormal(normal)
@@ -172,8 +179,8 @@ enum Mesher {
                                     for (corner, (cu, cv)) in corners.enumerated() {
                                         var position = Vector3<Float>.zero
                                         position[axis] = plane * scale
-                                        position[uAxis] = Float(cu) * scale
-                                        position[vAxis] = Float(cv) * scale
+                                        position[uAxis] = Float(origins[uAxis] + cu) * scale
+                                        position[vAxis] = Float(origins[vAxis] + cv) * scale
                                         if isGlass {
                                             glass.appendVertex(
                                                 position: position, normal: packedNormal, material: material,

@@ -20,15 +20,16 @@ extension LightLab {
     static func runBenchmark(
         device: Device, instance: Instance, renderer: Renderer, scene: Scene, format: TextureFormat
     ) async throws {
-        let center = Camera(focus: Vector3(20, 1.5, 24))
-        var close = Camera(focus: Vector3(30, 1, 30))
+        let middle = scene.middleTileOffset
+        let center = Camera(focus: Vector3(20 + middle, 1.5, 24 + middle))
+        var close = Camera(focus: Vector3(30 + middle, 1, 30 + middle))
         close.zoom = 6
         close.yaw = -60 * .pi / 180
         close.targetYaw = close.yaw
         close.pitch = 25 * .pi / 180
         var far = center
         far.zoom = 30
-        var walker = FirstPerson(feet: Vector3(24, Scene.streetLevel + 0.125, 23), yaw: 200 * .pi / 180)
+        var walker = FirstPerson(feet: Vector3(24 + middle, Scene.streetLevel + 0.125, 23 + middle), yaw: 200 * .pi / 180)
         walker.pitch = 2 * .pi / 180
         let views = [
             BenchmarkView(name: "day", hour: 14, camera: center),
@@ -86,7 +87,7 @@ extension LightLab {
             let median = samples[samples.count / 2]
             let high = samples[samples.count * 95 / 100]
             func text(_ value: Double) -> String { "\(Double(Int(value * 10)) / 10)" }
-            print("  \(view.name): median \(text(median)) ms, p95 \(text(high)) ms, \(lit.litCount) lamps lit")
+            print("  \(view.name): median \(text(median)) ms, p95 \(text(high)) ms, \(renderer.drawnChunks) chunks, \(renderer.drawnTriangles) triangles in view")
         }
     }
 }

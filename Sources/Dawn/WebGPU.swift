@@ -1979,7 +1979,10 @@ public final class Adapter: @unchecked Sendable {
     }
 
     // wgpuAdapterRequestDevice
-    public func requestDevice() async throws -> Device {
+    /// A device of the adapter. With `usesAdapterLimits`, it has all the limits
+    /// the adapter supports, rather than the defaults, which hold it to 256 MB
+    /// buffers, for one.
+    public func requestDevice(usesAdapterLimits: Bool = false) async throws -> Device {
         let result: DeviceRequestResult = await withCheckedContinuation { continuation in
             let context = DeviceRequestContext(continuation)
             let retainedContext = Unmanaged.passRetained(context).toOpaque()
@@ -1995,7 +1998,17 @@ public final class Adapter: @unchecked Sendable {
                     returning: DeviceRequestResult(status: status, device: device, message: decode(message))
                 )
             }
-            _ = wgpuAdapterRequestDevice(handle, nil, callbackInfo)
+            if usesAdapterLimits {
+                var limits = WGPULimits()
+                _ = wgpuAdapterGetLimits(handle, &limits)
+                withUnsafePointer(to: &limits) { limits in
+                    var descriptor = WGPUDeviceDescriptor()
+                    descriptor.requiredLimits = limits
+                    _ = wgpuAdapterRequestDevice(handle, &descriptor, callbackInfo)
+                }
+            } else {
+                _ = wgpuAdapterRequestDevice(handle, nil, callbackInfo)
+            }
         }
 
         guard result.status == WGPURequestDeviceStatus_Success, let handle = result.device else {
