@@ -22,6 +22,9 @@ let canvasSize = Vector2<Float>(1280, 720)
 /// look, after a click holds it; Esc lets it go.
 ///
 /// `--hour H`, `--focus X Y Z`, `--zoom METERS`, `--yaw DEGREES` and
+/// `--benchmark` times fixed views and quits, and `--extra-lamps N` adds lamps
+/// that light nothing, to time many of them.
+///
 /// `--pitch DEGREES` set where it starts, `--first-person` starts walking,
 /// `--at X Z` and `--look YAW PITCH` set where and which way, and `--screenshot` saves a
 /// screenshot after 150 frames, and quits.
@@ -42,7 +45,16 @@ struct LightLab: AsyncMain {
 
         let clock = ContinuousClock()
         var start = clock.now
-        let scene = Scene()
+        var scene = Scene()
+        // Lamps too far away to light anything, for timing many lamps.
+        if let index = CommandLine.arguments.firstIndex(of: "--extra-lamps"), index + 1 < CommandLine.arguments.count,
+            let count = Int(CommandLine.arguments[index + 1])
+        {
+            for _ in 0..<count {
+                scene.lights.append(
+                    PointLight(position: Vector3(-1000, 2, -1000), color: Vector3(1, 1, 1), radius: 5, schedule: .always))
+            }
+        }
         let built = clock.now - start
         start = clock.now
         // Errors in making the pipelines show up once, here, rather than as
@@ -87,6 +99,12 @@ struct LightLab: AsyncMain {
             camera.pitch = pitch[0] * .pi / 180
         }
         let screenshotsAndQuits = arguments.contains("--screenshot")
+        if arguments.contains("--benchmark") {
+            try await runBenchmark(
+                device: device, instance: instance, renderer: renderer, scene: scene, format: configuration.format)
+            withExtendedLifetime((system, window, instance, adapter, device, surface, renderer, shapeRenderer)) {}
+            return
+        }
         // On the plaza, facing south, toward the road and the shops.
         let spawn = values(after: "--at", count: 2) ?? [16, 20]
         var walker = FirstPerson(feet: Vector3(spawn[0], Scene.streetLevel, spawn[1]), yaw: .pi)
@@ -221,24 +239,10 @@ struct LightLab: AsyncMain {
             if showsCharacter { character.update(duration: seconds) }
 
             let schedule = ScheduleState(night: time.night, elapsed: elapsed)
-            let (materials, lights) = lighting(scene: scene, schedule: schedule)
-            let (zenith, horizon) = time.skyColors
-            let ground = Vector3<Float>(0.35, 0.3, 0.25) * (horizon.x + horizon.y + horizon.z) / 3
-            let aspect = canvasSize.x / canvasSize.y
-            let frame = FrameUniforms(
-                viewProjection: isFirstPerson
-                    ? walker.viewProjection(aspectRatio: aspect) : camera.viewProjection(aspectRatio: aspect),
-                sunViewProjection: sunViewProjection(toward: time.lightDirection),
-                sunDirection: Vector4(time.lightDirection, 0),
-                sunColor: Vector4(time.lightColor, 0),
-                skyColor: Vector4(zenith, 0),
-                horizonColor: Vector4(horizon, 0),
-                groundColor: Vector4(ground, 0),
-                viewDirection: Vector4(isFirstPerson ? walker.forward : camera.forward, 0),
-                params: Vector4(Float(lights.count / 2), time.exposure, 1.6, 0),
-                gridSize: Vector4(
-                    Float(scene.grid.width), Float(scene.grid.height), Float(scene.grid.depth), Float(voxelsPerMeter)),
-                eye: Vector4(walker.eye, isFirstPerson ? 1 : 0))
+            let (materials, lights, litLamps) = lighting(scene: scene, schedule: schedule)
+            let frame = frameUniforms(
+                scene: scene, time: time, lampCount: litLamps, camera: camera,
+                walker: isFirstPerson ? walker : nil, aspect: canvasSize.x / canvasSize.y)
 
             var shapes = ShapeBatch(canvasSize: canvasSize)
             if showsOverlay {
@@ -248,7 +252,7 @@ struct LightLab: AsyncMain {
                 let clockText = "\(Int(time.hour)):\(minutes < 10 ? "0" : "")\(minutes)"
                 drawStatus(
                     [
-                        "TIME \(clockText)\(timeRuns ? " RUNNING" : "")  LAMPS \(lights.count / 2) LIT  BLOOM \(bloomOn ? "ON" : "OFF")",
+                        "TIME \(clockText)\(timeRuns ? " RUNNING" : "")  LAMPS \(litLamps) LIT  BLOOM \(bloomOn ? "ON" : "OFF")",
                         "TRIANGLES \(renderer.triangleCount)  VOXEL 1/8 M",
                         isFirstPerson
                             ? "WALKING AT \(meters(walker.feet.x)), \(meters(walker.feet.y)), \(meters(walker.feet.z))  WASD WALK  SHIFT RUN  SPACE JUMP  CLICK+MOUSE LOOK  ESC RELEASE  V CAMERA"
@@ -309,10 +313,41 @@ struct LightLab: AsyncMain {
         withExtendedLifetime((system, window, instance, adapter, device, surface, renderer, shapeRenderer)) {}
     }
 
+    /// What the scene's shaders read for a view: from `camera`, or through
+    /// the eyes of `walker` if there is one.
+    static func frameUniforms(
+        scene: Scene, time: TimeOfDay, lampCount: Int, camera: Camera, walker: FirstPerson?, aspect: Float
+    ) -> FrameUniforms {
+        let cells = LightGrid.dimensions(sceneWidth: Scene.size.width, sceneDepth: Scene.size.depth)
+        let (zenith, horizon) = time.skyColors
+        let ground = Vector3<Float>(0.35, 0.3, 0.25) * (horizon.x + horizon.y + horizon.z) / 3
+        return FrameUniforms(
+            viewProjection: walker?.viewProjection(aspectRatio: aspect) ?? camera.viewProjection(aspectRatio: aspect),
+            sunViewProjection: sunViewProjection(toward: time.lightDirection),
+            sunDirection: Vector4(time.lightDirection, 0),
+            sunColor: Vector4(time.lightColor, 0),
+            skyColor: Vector4(zenith, 0),
+            horizonColor: Vector4(horizon, 0),
+            groundColor: Vector4(ground, 0),
+            viewDirection: Vector4(walker?.forward ?? camera.forward, 0),
+            params: Vector4(Float(lampCount), time.exposure, 1.6, 0),
+            gridSize: Vector4(
+                Float(scene.grid.width), Float(scene.grid.height), Float(scene.grid.depth), Float(voxelsPerMeter)),
+            eye: Vector4(walker?.eye ?? .zero, walker == nil ? 0 : 1),
+            lightGrid: Vector4(
+                LightGrid.cellSize, Float(cells.width), Float(cells.depth), 0))
+    }
+
     /// Which lamps and glowing materials are on, and how bright.
     struct ScheduleState {
-        var night: Float
+        var night: Float = 0
         var elapsed: Float
+
+        func at(night: Float) -> Self {
+            var copy = self
+            copy.night = night
+            return copy
+        }
 
         func brightness(_ schedule: Material.Schedule) -> Float {
             switch schedule {
@@ -332,8 +367,8 @@ struct LightLab: AsyncMain {
     }
 
     /// The materials and lamps as the shaders read them: two vectors each.
-    private static func lighting(scene: Scene, schedule: ScheduleState) -> (
-        materials: [Vector4<Float>], lights: [Vector4<Float>]
+    static func lighting(scene: Scene, schedule: ScheduleState) -> (
+        materials: [Vector4<Float>], lights: [Vector4<Float>], litCount: Int
     ) {
         var materials: [Vector4<Float>] = []
         for material in Materials.table {
@@ -341,14 +376,20 @@ struct LightLab: AsyncMain {
             materials.append(Vector4(material.linearColor, emission))
             materials.append(Vector4(Float(material.kind.rawValue), material.roughness, 0, 0))
         }
+        // Every lamp, in the order of the grid; those that are off, in black.
         var lights: [Vector4<Float>] = []
+        var litCount = 0
         for light in scene.lights {
-            let brightness = schedule.brightness(light.schedule)
-            guard brightness > 0.05 else { continue }
+            var brightness = schedule.brightness(light.schedule)
+            if brightness > 0.05 {
+                litCount += 1
+            } else {
+                brightness = 0
+            }
             lights.append(Vector4(light.position, light.radius))
             lights.append(Vector4(light.color * brightness, 0))
         }
-        return (materials, Array(lights.prefix(256)))
+        return (materials, lights, litCount)
     }
 
     /// The sun's view of the whole scene, for its shadow map.
@@ -390,6 +431,6 @@ struct LightLab: AsyncMain {
 }
 
 @MainActor
-private final class Flag {
+final class Flag {
     var isSet = false
 }

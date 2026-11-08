@@ -19,6 +19,8 @@ struct FrameUniforms {
     /// Where the eye is, with 1 for a perspective view, whose direction
     /// differs from pixel to pixel, or 0 for `viewDirection` everywhere.
     var eye: Vector4<Float>
+    /// The width of a square of the lamps' grid, and how many along x and z.
+    var lightGrid: Vector4<Float>
 }
 
 /// Draws the scene in light: depth from the sun for its shadows, then the
@@ -31,6 +33,8 @@ final class Renderer {
     static let depthFormat = TextureFormat.depth32Float
     static let shadowMapSize: UInt32 = 4096
     static let bloomLevels = 6
+    /// How many texels wide the lamps' texture is, two for each lamp.
+    static let lightTextureWidth = 256
     /// How many voxels of the grid a cell of the sky's grid covers each way.
     static let skyCellSize = 4
 
@@ -48,7 +52,8 @@ final class Renderer {
 
     private let frameBuffer: Buffer
     private let materialBuffer: Buffer
-    private let lightBuffer: Buffer
+    private let lightTexture: Texture
+    private let lightTextureHeight: UInt32
     private let settingsBuffer: Buffer
     private let shadowView: TextureView
     private let sceneBindGroup: BindGroup
@@ -97,7 +102,6 @@ final class Renderer {
         }
         frameBuffer = try uniformBuffer("frame", size: MemoryLayout<FrameUniforms>.size)
         materialBuffer = try uniformBuffer("materials", size: 256 * 16)
-        lightBuffer = try uniformBuffer("lights", size: 256 * 16)
         settingsBuffer = try uniformBuffer("post settings", size: 16)
 
         // The sun's shadow map, and the voxels as textures.
@@ -136,6 +140,42 @@ final class Renderer {
                 addressModeU: .clampToEdge, addressModeV: .clampToEdge, magFilter: .linear, minFilter: .linear,
                 compare: .lessEqual))
 
+        // The lamps: their positions and colors, which change as they go on
+        // and off, and which of them reach each square of the ground.
+        let lightTextureHeight = UInt32(max((scene.lights.count * 2 + Self.lightTextureWidth - 1) / Self.lightTextureWidth, 1))
+        self.lightTextureHeight = lightTextureHeight
+        lightTexture = try device.createTexture(
+            descriptor: TextureDescriptor(
+                label: "lamps", usage: [.textureBinding, .copyDst], dimension: .`2D`,
+                size: Extent3D(width: UInt32(Self.lightTextureWidth), height: lightTextureHeight, depthOrArrayLayers: 1),
+                format: .rgba32Float))
+        let lightGrid = LightGrid(lights: scene.lights, sceneWidth: Scene.size.width, sceneDepth: Scene.size.depth)
+        let cellTexture = try device.createTexture(
+            descriptor: TextureDescriptor(
+                label: "lamp cells", usage: [.textureBinding, .copyDst], dimension: .`2D`,
+                size: Extent3D(width: UInt32(lightGrid.width), height: UInt32(lightGrid.depth), depthOrArrayLayers: 1),
+                format: .rg32Uint))
+        lightGrid.cells.withUnsafeBytes { data in
+            queue.writeTexture(
+                destination: TexelCopyTextureInfo(texture: cellTexture), data: data,
+                dataLayout: TexelCopyBufferLayout(bytesPerRow: UInt32(lightGrid.width * 8), rowsPerImage: UInt32(lightGrid.depth)),
+                writeSize: Extent3D(width: UInt32(lightGrid.width), height: UInt32(lightGrid.depth), depthOrArrayLayers: 1))
+        }
+        let indexWidth = 1024
+        let indexHeight = (lightGrid.indices.count + indexWidth - 1) / indexWidth
+        let paddedIndices = lightGrid.indices + [UInt32](repeating: 0, count: indexWidth * indexHeight - lightGrid.indices.count)
+        let indexTexture = try device.createTexture(
+            descriptor: TextureDescriptor(
+                label: "lamp indices", usage: [.textureBinding, .copyDst], dimension: .`2D`,
+                size: Extent3D(width: UInt32(indexWidth), height: UInt32(indexHeight), depthOrArrayLayers: 1),
+                format: .r32Uint))
+        paddedIndices.withUnsafeBytes { data in
+            queue.writeTexture(
+                destination: TexelCopyTextureInfo(texture: indexTexture), data: data,
+                dataLayout: TexelCopyBufferLayout(bytesPerRow: UInt32(indexWidth * 4), rowsPerImage: UInt32(indexHeight)),
+                writeSize: Extent3D(width: UInt32(indexWidth), height: UInt32(indexHeight), depthOrArrayLayers: 1))
+        }
+
         let fragmentAndVertex: ShaderStage = [.vertex, .fragment]
         sceneLayout = try device.createBindGroupLayout(
             descriptor: BindGroupLayoutDescriptor(
@@ -144,7 +184,9 @@ final class Renderer {
                     BindGroupLayoutEntry(
                         binding: 0, visibility: fragmentAndVertex, buffer: BufferBindingLayout(type: .uniform)),
                     BindGroupLayoutEntry(binding: 1, visibility: .fragment, buffer: BufferBindingLayout(type: .uniform)),
-                    BindGroupLayoutEntry(binding: 2, visibility: .fragment, buffer: BufferBindingLayout(type: .uniform)),
+                    BindGroupLayoutEntry(
+                        binding: 2, visibility: .fragment,
+                        texture: TextureBindingLayout(sampleType: .unfilterableFloat, viewDimension: .`2D`)),
                     BindGroupLayoutEntry(
                         binding: 3, visibility: .fragment,
                         texture: TextureBindingLayout(sampleType: .depth, viewDimension: .`2D`)),
@@ -157,6 +199,12 @@ final class Renderer {
                         binding: 6, visibility: .fragment,
                         texture: TextureBindingLayout(sampleType: .float, viewDimension: .`3D`)),
                     BindGroupLayoutEntry(binding: 7, visibility: .fragment, sampler: SamplerBindingLayout(type: .filtering)),
+                    BindGroupLayoutEntry(
+                        binding: 8, visibility: .fragment,
+                        texture: TextureBindingLayout(sampleType: .uint, viewDimension: .`2D`)),
+                    BindGroupLayoutEntry(
+                        binding: 9, visibility: .fragment,
+                        texture: TextureBindingLayout(sampleType: .uint, viewDimension: .`2D`)),
                 ]))
         sceneBindGroup = try device.createBindGroup(
             descriptor: BindGroupDescriptor(
@@ -164,12 +212,14 @@ final class Renderer {
                 entries: [
                     BindGroupEntry(binding: 0, buffer: frameBuffer),
                     BindGroupEntry(binding: 1, buffer: materialBuffer),
-                    BindGroupEntry(binding: 2, buffer: lightBuffer),
+                    BindGroupEntry(binding: 2, textureView: try lightTexture.createView()),
                     BindGroupEntry(binding: 3, textureView: shadowView),
                     BindGroupEntry(binding: 4, sampler: comparisonSampler),
                     BindGroupEntry(binding: 5, textureView: occupancyView),
                     BindGroupEntry(binding: 6, textureView: skyView),
                     BindGroupEntry(binding: 7, sampler: linearSampler),
+                    BindGroupEntry(binding: 8, textureView: try cellTexture.createView()),
+                    BindGroupEntry(binding: 9, textureView: try indexTexture.createView()),
                 ]))
         let shadowLayout = try device.createBindGroupLayout(
             descriptor: BindGroupLayoutDescriptor(
@@ -367,8 +417,15 @@ final class Renderer {
         let targets = try prepareTargets(width: width, height: height)
         withUnsafeBytes(of: frame) { queue.writeBuffer(frameBuffer, bufferOffset: 0, data: $0) }
         materials.withUnsafeBytes { queue.writeBuffer(materialBuffer, bufferOffset: 0, data: $0) }
-        if !lights.isEmpty {
-            lights.withUnsafeBytes { queue.writeBuffer(lightBuffer, bufferOffset: 0, data: $0) }
+        let lightTexels = Self.lightTextureWidth * Int(lightTextureHeight)
+        let paddedLights = lights + [Vector4<Float>](repeating: .zero, count: lightTexels - lights.count)
+        paddedLights.withUnsafeBytes { data in
+            queue.writeTexture(
+                destination: TexelCopyTextureInfo(texture: lightTexture), data: data,
+                dataLayout: TexelCopyBufferLayout(
+                    bytesPerRow: UInt32(Self.lightTextureWidth * 16), rowsPerImage: lightTextureHeight),
+                writeSize: Extent3D(
+                    width: UInt32(Self.lightTextureWidth), height: lightTextureHeight, depthOrArrayLayers: 1))
         }
         let gammaEncodes: Float =
             [.rgba8UnormSrgb, .bgra8UnormSrgb].contains(surfaceFormat) ? 0 : 1

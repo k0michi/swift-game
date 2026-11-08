@@ -22,6 +22,9 @@ enum Shaders {
             gridSize: vec4f,
             // The eye, and 1 if the view is in perspective.
             eye: vec4f,
+            // The width of a square of the lamps' grid, and how many squares
+            // it is along x and z.
+            lightGrid: vec4f,
         }
 
         @group(0) @binding(0) var<uniform> frame: Frame;
@@ -29,12 +32,30 @@ enum Shaders {
         // then its kind and roughness.
         @group(0) @binding(1) var<uniform> materials: array<vec4f, 256>;
         // Each lamp's position and reach, then its color times brightness.
-        @group(0) @binding(2) var<uniform> lights: array<vec4f, 256>;
+        @group(0) @binding(2) var lightData: texture_2d<f32>;
         @group(0) @binding(3) var shadowMap: texture_depth_2d;
         @group(0) @binding(4) var shadowSampler: sampler_comparison;
         @group(0) @binding(5) var occupancy: texture_3d<u32>;
         @group(0) @binding(6) var skyVisibility: texture_3d<f32>;
         @group(0) @binding(7) var linearSampler: sampler;
+        // For each square of the ground, where its lamps start in
+        // lampIndices and how many there are.
+        @group(0) @binding(8) var lampCells: texture_2d<u32>;
+        @group(0) @binding(9) var lampIndices: texture_2d<u32>;
+
+        fn lampTexel(texel: u32) -> vec4f {
+            return textureLoad(lightData, vec2i(i32(texel % 256u), i32(texel / 256u)), 0);
+        }
+
+        fn lampIndex(position: u32) -> u32 {
+            return textureLoad(lampIndices, vec2i(i32(position % 1024u), i32(position / 1024u)), 0).r;
+        }
+
+        // Where the lamps that reach a point start, and how many there are.
+        fn lampsAt(world: vec3f) -> vec2u {
+            let cell = vec2i(floor(world.xz / frame.lightGrid.x));
+            return textureLoad(lampCells, clamp(cell, vec2i(0), vec2i(frame.lightGrid.yz) - 1), 0).rg;
+        }
 
         struct VertexOutput {
             @builtin(position) clip: vec4f,
@@ -144,9 +165,12 @@ enum Shaders {
         // between them.
         fn lampLight(world: vec3f, normal: vec3f, occlusion: f32) -> vec3f {
             var sum = vec3f(0.0);
-            let count = u32(frame.params.x);
-            for (var i = 0u; i < count; i++) {
-                let lamp = lights[i * 2u];
+            let cell = lampsAt(world);
+            for (var k = 0u; k < cell.y; k++) {
+                let i = lampIndex(cell.x + k);
+                let color = lampTexel(i * 2u + 1u).rgb;
+                if color.r + color.g + color.b <= 0.0 { continue; }
+                let lamp = lampTexel(i * 2u);
                 let toLamp = lamp.xyz - world;
                 let d = length(toLamp);
                 if d >= lamp.w { continue; }
@@ -156,7 +180,7 @@ enum Shaders {
                 let window = pow(clamp(1.0 - pow(d / lamp.w, 4.0), 0.0, 1.0), 2.0);
                 let falloff = window / (d * d + 0.5);
                 let visible = clearPath(world + normal * 0.07, lamp.xyz);
-                sum += lights[i * 2u + 1u].rgb * facing * falloff * visible * mix(0.6, 1.0, occlusion);
+                sum += color * facing * falloff * visible * mix(0.6, 1.0, occlusion);
             }
             return sum;
         }
@@ -197,14 +221,15 @@ enum Shaders {
             var reflection = ambientColor(r) * frame.params.z * 1.5;
             let shadow = sunShadow(input.world, n);
             reflection += frame.sunColor.rgb * shadow * pow(max(dot(r, frame.sunDirection.xyz), 0.0), 600.0) * 40.0;
-            let count = u32(frame.params.x);
-            for (var i = 0u; i < count; i++) {
-                let lamp = lights[i * 2u];
+            let cell = lampsAt(input.world);
+            for (var k = 0u; k < cell.y; k++) {
+                let i = lampIndex(cell.x + k);
+                let lamp = lampTexel(i * 2u);
                 let toLamp = lamp.xyz - input.world;
                 let d = length(toLamp);
                 if d >= lamp.w * 1.5 { continue; }
                 let falloff = 1.0 / (d * d + 0.5);
-                reflection += lights[i * 2u + 1u].rgb * pow(max(dot(r, toLamp / d), 0.0), 300.0) * falloff * 30.0;
+                reflection += lampTexel(i * 2u + 1u).rgb * pow(max(dot(r, toLamp / d), 0.0), 300.0) * falloff * 30.0;
             }
             let tint = material.rgb * ambientColor(n) * frame.params.z * 0.15;
             let alpha = clamp(0.1 + fresnel, 0.0, 1.0);
