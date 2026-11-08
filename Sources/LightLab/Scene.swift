@@ -35,14 +35,29 @@ struct Scene {
     var width: Float { Float(voxels.width) / Float(voxelsPerMeter) }
     var depth: Float { Float(voxels.depth) / Float(voxelsPerMeter) }
 
-    /// How far along x and z the middle copy of the street corner starts.
-    var middleTileOffset: Float { ((width / Self.size.width / 2).rounded(.down)) * Self.size.width }
+    /// How far along x and z to shift views made for the street corner, to
+    /// see the middle of what is built.
+    private(set) var middleTileOffset: Float = 0
+    /// Where someone on foot starts, along x and z.
+    private(set) var spawn = Vector2<Float>(16, 20)
+
+    /// A town laid out from `seed`.
+    init(townSeed seed: UInt64) {
+        let town = Town(seed: seed)
+        voxels = SparseVoxels(tile: town.voxels, tiles: 1)
+        grid = VoxelGrid(width: 0, height: 0, depth: 0)
+        lights = town.lights
+        spawn = town.spawn
+        middleTileOffset = Town.size / 2 - 20
+    }
 
     /// `tiles` by `tiles` copies of the street corner, side by side.
     init(tiles: Int) {
         let tile = Scene()
         voxels = SparseVoxels(tile: tile.grid, tiles: tiles)
         grid = VoxelGrid(width: 0, height: 0, depth: 0)
+        middleTileOffset = Float(tiles / 2) * Self.size.width
+        spawn += Vector2(repeating: middleTileOffset)
         for tileZ in 0..<tiles {
             for tileX in 0..<tiles {
                 let offset = Vector3<Float>(Float(tileX) * Self.size.width, 0, Float(tileZ) * Self.size.depth)

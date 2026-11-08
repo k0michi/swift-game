@@ -106,6 +106,27 @@ enum Materials {
         case neonPink
         case neonCyan
         case noren
+        case roofRed
+        case roofBlue
+        case roofBrown
+        case brick
+        case siding
+        case officeWall
+        case awningRed
+        case awningGreen
+        case awningBlue
+        case awningCream
+        case signOrange
+        case signRed
+        case trunk
+        case leaves
+        case leavesLight
+        case gravel
+        case vermilion
+        case carWhite
+        case carRed
+        case carBlue
+        case carBlack
         case skin
         case hair
         case shirt
@@ -174,6 +195,27 @@ enum Materials {
     static let neonPink = ID.neonPink.rawValue
     static let neonCyan = ID.neonCyan.rawValue
     static let noren = ID.noren.rawValue
+    static let roofRed = ID.roofRed.rawValue
+    static let roofBlue = ID.roofBlue.rawValue
+    static let roofBrown = ID.roofBrown.rawValue
+    static let brick = ID.brick.rawValue
+    static let siding = ID.siding.rawValue
+    static let officeWall = ID.officeWall.rawValue
+    static let awningRed = ID.awningRed.rawValue
+    static let awningGreen = ID.awningGreen.rawValue
+    static let awningBlue = ID.awningBlue.rawValue
+    static let awningCream = ID.awningCream.rawValue
+    static let signOrange = ID.signOrange.rawValue
+    static let signRed = ID.signRed.rawValue
+    static let trunk = ID.trunk.rawValue
+    static let leaves = ID.leaves.rawValue
+    static let leavesLight = ID.leavesLight.rawValue
+    static let gravel = ID.gravel.rawValue
+    static let vermilion = ID.vermilion.rawValue
+    static let carWhite = ID.carWhite.rawValue
+    static let carRed = ID.carRed.rawValue
+    static let carBlue = ID.carBlue.rawValue
+    static let carBlack = ID.carBlack.rawValue
     static let skin = ID.skin.rawValue
     static let hair = ID.hair.rawValue
     static let shirt = ID.shirt.rawValue
@@ -246,6 +288,27 @@ enum Materials {
         case .neonPink: Material(color: 0xff3aa8, emission: 9)
         case .neonCyan: Material(color: 0x30e8ff, emission: 9)
         case .noren: Material(color: 0x283a6a)
+        case .roofRed: Material(color: 0x9c4032)
+        case .roofBlue: Material(color: 0x3f5a78)
+        case .roofBrown: Material(color: 0x5e4636)
+        case .brick: Material(color: 0x9a5a44)
+        case .siding: Material(color: 0xbfc4bd)
+        case .officeWall: Material(color: 0x848a92)
+        case .awningRed: Material(color: 0xb83a30)
+        case .awningGreen: Material(color: 0x2f7d4f)
+        case .awningBlue: Material(color: 0x2e5f9e)
+        case .awningCream: Material(color: 0xe8dfc8)
+        case .signOrange: Material(color: 0xf08a24, emission: 3)
+        case .signRed: Material(color: 0xe0352b, emission: 3)
+        case .trunk: Material(color: 0x5b4331)
+        case .leaves: Material(color: 0x3f7a35)
+        case .leavesLight: Material(color: 0x5a9440)
+        case .gravel: Material(color: 0xb5ad9e)
+        case .vermilion: Material(color: 0xc8412a)
+        case .carWhite: Material(color: 0xdfe2e4, roughness: 0.4)
+        case .carRed: Material(color: 0xa82a2a, roughness: 0.4)
+        case .carBlue: Material(color: 0x2d4f8c, roughness: 0.4)
+        case .carBlack: Material(color: 0x222428, roughness: 0.4)
         case .skin: Material(color: 0xe8b894)
         case .hair: Material(color: 0x2a2220)
         case .shirt: Material(color: 0xd8dce6)

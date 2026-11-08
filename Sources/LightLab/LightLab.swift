@@ -21,8 +21,10 @@ let canvasSize = Vector2<Float>(1280, 720)
 /// V walks the street instead: WASD to walk, shift to run, space to jump, and the mouse to
 /// look, after a click holds it; Esc lets it go.
 ///
-/// N switches between the street corner and a town 200 m square.
+/// N switches between the street corner and a town 200 m square, the same
+/// each time for its seed.
 ///
+/// `--town` starts in the town, `--seed N` lays it out from another seed,
 /// `--tiles N` starts with N by N copies of the street, `--benchmark` times
 /// fixed views and quits, and `--extra-lamps N` adds lamps that light nothing,
 /// to time many of them.
@@ -55,10 +57,12 @@ struct LightLab: AsyncMain {
             }
             return Int(CommandLine.arguments[index + 1])
         }
-        var tiles = max(argument(after: "--tiles") ?? 1, 1)
+        let townScene = SceneChoice.town(seed: UInt64(max(argument(after: "--seed") ?? defaultTownSeed, 0)))
+        var choice: SceneChoice =
+            CommandLine.arguments.contains("--town") ? townScene : .tiles(max(argument(after: "--tiles") ?? 1, 1))
         let extraLamps = argument(after: "--extra-lamps") ?? 0
         var (scene, renderer) = try await loadScene(
-            tiles: tiles, extraLamps: extraLamps, device: device, instance: instance, format: configuration.format)
+            choice, extraLamps: extraLamps, device: device, instance: instance, format: configuration.format)
         let shapeRenderer = try ShapeRenderer(device: device, format: configuration.format)
 
         let arguments = CommandLine.arguments
@@ -92,8 +96,8 @@ struct LightLab: AsyncMain {
             return
         }
         // On the plaza, facing south, toward the road and the shops.
-        let spawn = values(after: "--at", count: 2) ?? [16, 20]
-        var walker = FirstPerson(feet: Vector3(spawn[0] + middle, Scene.streetLevel, spawn[1] + middle), yaw: .pi)
+        let spawn = values(after: "--at", count: 2) ?? [scene.spawn.x, scene.spawn.y]
+        var walker = FirstPerson(feet: Vector3(spawn[0], Scene.streetLevel, spawn[1]), yaw: .pi)
         if let look = values(after: "--look", count: 2) {
             walker.yaw = look[0] * .pi / 180
             walker.pitch = look[1] * .pi / 180
@@ -181,14 +185,15 @@ struct LightLab: AsyncMain {
             guard isRunning else { break }
             if framesUntilSwitch == 0 {
                 framesUntilSwitch = nil
-                let middle = scene.middleTileOffset
-                tiles = tiles == townTiles ? 1 : townTiles
+                if case .town = choice { choice = .tiles(1) } else { choice = townScene }
                 (scene, renderer) = try await loadScene(
-                    tiles: tiles, extraLamps: extraLamps, device: device, instance: instance, format: configuration.format)
-                // Stay at the same place of the street corner.
-                let shift = scene.middleTileOffset - middle
-                camera.focus += Vector3(shift, 0, shift)
-                walker.shift(x: shift, z: shift)
+                    choice, extraLamps: extraLamps, device: device, instance: instance, format: configuration.format)
+                // Start again in the middle of what is there now.
+                let middle = scene.middleTileOffset
+                camera.focus = Vector3(20 + middle, 1.5, 24 + middle)
+                let (yaw, pitch) = (walker.yaw, walker.pitch)
+                walker = FirstPerson(feet: Vector3(scene.spawn.x, Scene.streetLevel, scene.spawn.y), yaw: yaw)
+                walker.pitch = pitch
                 lastFrame = clock.now
             }
             if shouldConfigureSurface,
@@ -318,17 +323,26 @@ struct LightLab: AsyncMain {
         withExtendedLifetime((system, window, instance, adapter, device, surface, renderer, shapeRenderer)) {}
     }
 
-    /// How many copies of the street corner across the town is: 200 m.
-    private static let townTiles = 5
+    /// What to show.
+    private enum SceneChoice {
+        /// Copies of the street corner, this many on each side.
+        case tiles(Int)
+        case town(seed: UInt64)
+    }
 
-    /// Builds `tiles` by `tiles` copies of the street corner and what draws
-    /// them.
+    private static let defaultTownSeed = 20_261_108
+
+    /// Builds a scene and what draws it.
     private static func loadScene(
-        tiles: Int, extraLamps: Int, device: Device, instance: Instance, format: TextureFormat
+        _ choice: SceneChoice, extraLamps: Int, device: Device, instance: Instance, format: TextureFormat
     ) async throws -> (Scene, Renderer) {
         let clock = ContinuousClock()
         let start = clock.now
-        var scene = Scene(tiles: tiles)
+        var scene: Scene
+        switch choice {
+        case .tiles(let tiles): scene = Scene(tiles: tiles)
+        case .town(let seed): scene = Scene(townSeed: seed)
+        }
         // Lamps too far away to light anything, for timing many lamps.
         for _ in 0..<extraLamps {
             scene.lights.append(
