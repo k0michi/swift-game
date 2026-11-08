@@ -9,9 +9,37 @@ public enum BuildInfo {
     /// The version of the Swift compiler that built it, such as "6.3.1".
     public static let swiftVersion = String(cString: build_info_swift_version())
 
-    /// The target triple without an OS version, such as
-    /// "arm64-apple-macosx" or "wasm32-unknown-emscripten".
-    public static let triple = String(cString: build_info_triple())
+    /// The operating system and the architecture it was built for, such as
+    /// "macOS arm64" or "Emscripten wasm32".
+    public static let platform: String = {
+        let system: String = {
+            #if os(macOS)
+                "macOS"
+            #elseif os(iOS)
+                "iOS"
+            #elseif os(Windows)
+                "Windows"
+            #elseif os(Linux)
+                "Linux"
+            #elseif os(Emscripten)
+                "Emscripten"
+            #else
+                "unknown OS"
+            #endif
+        }()
+        let architecture: String = {
+            #if arch(arm64)
+                "arm64"
+            #elseif arch(x86_64)
+                "x86_64"
+            #elseif arch(wasm32)
+                "wasm32"
+            #else
+                "unknown architecture"
+            #endif
+        }()
+        return "\(system) \(architecture)"
+    }()
 
     /// "debug" or "release", as SwiftPM built it.
     public static let configuration: String = {

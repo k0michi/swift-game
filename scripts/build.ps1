@@ -24,7 +24,7 @@ Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $RepositoryRoot ".bu
 $BinPath = swift build --package-path $RepositoryRoot --manifest-cache none --show-bin-path @args
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $BinPath = $BinPath | Select-Object -Last 1
-& (Join-Path $PSScriptRoot "generate-build-info.ps1") -BinPath $BinPath
+& (Join-Path $PSScriptRoot "generate-build-info.ps1")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & (Join-Path $PSScriptRoot "build-noto-sans-jp.ps1") -Destination $BinPath
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

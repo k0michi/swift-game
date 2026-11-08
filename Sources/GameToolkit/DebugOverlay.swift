@@ -98,7 +98,7 @@ public struct FPSCounter {
     public func append(to batch: inout ShapeBatch, details: [String] = []) {
         let build = [
             "\(BuildInfo.version) \(BuildInfo.configuration)",
-            "Swift \(BuildInfo.swiftVersion) \(BuildInfo.triple)",
+            "Swift \(BuildInfo.swiftVersion) \(BuildInfo.platform)",
         ]
         let lines: [(text: String, scale: Float)] =
             [(text, 2)] + ([memoryText].compactMap(\.self) + build + details).map { ($0, 1) }
