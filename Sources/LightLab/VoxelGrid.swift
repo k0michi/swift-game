@@ -50,9 +50,9 @@ struct VoxelGrid {
     /// Fills voxels from each lower bound up to, but not including, each
     /// upper one.
     mutating func fill(x: Range<Int>, y: Range<Int>, z: Range<Int>, _ material: UInt8) {
-        let xs = max(x.lowerBound, 0)..<min(x.upperBound, width)
-        let ys = max(y.lowerBound, 0)..<min(y.upperBound, height)
-        let zs = max(z.lowerBound, 0)..<min(z.upperBound, depth)
+        let xs = x.clamped(to: 0..<width)
+        let ys = y.clamped(to: 0..<height)
+        let zs = z.clamped(to: 0..<depth)
         guard !xs.isEmpty, !ys.isEmpty, !zs.isEmpty else { return }
         for yy in ys {
             for zz in zs {

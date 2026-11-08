@@ -8,6 +8,14 @@ struct SeededRandom {
         state = seed
     }
 
+    /// Random numbers for one thing in the world, from what identifies it.
+    init(seed: UInt64, salt: UInt64, _ a: Float, _ b: Float) {
+        var mixer = SeededRandom(seed: seed ^ (salt &* 0x9E37_79B9_7F4A_7C15))
+        let first = mixer.next() ^ UInt64(bitPattern: Int64(cells(a)))
+        var second = SeededRandom(seed: first)
+        self.init(seed: second.next() ^ UInt64(bitPattern: Int64(cells(b))))
+    }
+
     mutating func next() -> UInt64 {
         state = state &+ 0x9E37_79B9_7F4A_7C15
         var z = state
@@ -38,13 +46,21 @@ struct SeededRandom {
     }
 }
 
-/// A town 200 m square, laid out from a seed: a grid of roads of uneven
-/// spacing, all reaching one another and the edges of the town; a railway
-/// from end to end, with a level crossing wherever a road meets it; and
-/// lots of buildings between them.
+/// Any part of an endless town, worked out from a seed alone: roads at
+/// uneven spacing, a railway with a level crossing wherever a road meets it,
+/// and lots of buildings between them.
+///
+/// Everything is placed by where it is, not by what was made before it, so
+/// that a region comes out the same however it is cut up.
 struct Town {
-    static let size: Float = 200
     private static let level = Scene.streetLevel
+    private static let roadSpacing: Float = 52
+    private static let railHalf: Float = 5
+    /// How far past a region to look, for anything that reaches into it.
+    private static let lookAround: Float = 140
+    /// How far apart along the railway the busy places are.
+    private static let stationSpacing: Float = 240
+    private static let stationReach: Float = 62
 
     /// A road along one axis, at `center` on the other.
     private struct Road {
@@ -54,63 +70,92 @@ struct Town {
         var carriageHalf: Float { isMain ? 4 : 2.25 }
     }
 
-    private var grid: VoxelGrid
+    private enum Axis {
+        case x, z
+        var salt: UInt64 { self == .x ? 11 : 12 }
+    }
+
+    /// The voxels of the region.
+    private(set) var grid: VoxelGrid
+    /// The lamps whose positions are in the region.
     private(set) var lights: [PointLight] = []
-    private var random: SeededRandom
+
+    private let seed: UInt64
+    private let originX: Int
+    private let originZ: Int
+    // The region's edges, in meters.
+    private let lowX: Float
+    private let highX: Float
+    private let lowZ: Float
+    private let highZ: Float
+    private let railZ: Float
     /// Roads running along z, by their x; and along x, by their z.
     private var alongZ: [Road] = []
     private var alongX: [Road] = []
-    private var railZ: Float = 0
-    private static let railHalf: Float = 5
 
-    private(set) var spawn = Vector2<Float>(100, 100)
-    var voxels: VoxelGrid { grid }
-
-    @MainActor
-    init(seed: UInt64) async {
-        random = SeededRandom(seed: seed)
-        grid = VoxelGrid(width: cells(Self.size), height: cells(Scene.size.height), depth: cells(Self.size))
-        layOutRoads()
+    /// Builds the voxels over `x` and `z`, a range of voxels each way.
+    init(seed: UInt64, x: Range<Int>, z: Range<Int>) {
+        self.seed = seed
+        originX = x.lowerBound
+        originZ = z.lowerBound
+        let scale = 1 / Float(voxelsPerMeter)
+        lowX = Float(x.lowerBound) * scale
+        highX = Float(x.upperBound) * scale
+        lowZ = Float(z.lowerBound) * scale
+        highZ = Float(z.upperBound) * scale
+        railZ = Self.railZ(seed: seed)
+        grid = VoxelGrid(width: x.count, height: cells(Scene.size.height), depth: z.count)
+        alongZ = Self.roads(.z, from: lowX - Self.lookAround, to: highX + Self.lookAround, seed: seed, railZ: railZ)
+        alongX = Self.roads(.x, from: lowZ - Self.lookAround, to: highZ + Self.lookAround, seed: seed, railZ: railZ)
         buildGround()
         buildRailway()
         buildMarkings()
         buildStreetFurniture()
-        await buildBlocks()
-        let road = alongZ.min { abs($0.center - 100) < abs($1.center - 100) }!
-        let cross = alongX.min { abs($0.center - 100) < abs($1.center - 100) }!
-        spawn = Vector2(road.center, cross.center)
+        buildBlocks()
+    }
+
+    /// Where someone on foot may start: on a road, near a point.
+    static func spawn(seed: UInt64, near point: Vector2<Float>) -> Vector2<Float> {
+        let rail = railZ(seed: seed)
+        func nearest(_ roads: [Road], _ value: Float) -> Float {
+            roads.min { abs($0.center - value) < abs($1.center - value) }?.center ?? value
+        }
+        return Vector2(
+            nearest(roads(.z, from: point.x - 120, to: point.x + 120, seed: seed, railZ: rail), point.x),
+            nearest(roads(.x, from: point.y - 120, to: point.y + 120, seed: seed, railZ: rail), point.y))
     }
 
     // MARK: Layout
 
-    private mutating func spacedRoads() -> [Road] {
-        var roads: [Road] = []
-        var position = random.float(18, 30)
-        while position < Self.size - 15 {
-            roads.append(Road(center: position.rounded(), isMain: random.chance(0.45)))
-            position += random.float(38, 62)
-        }
-        return roads
+    private static func railZ(seed: UInt64) -> Float {
+        var random = SeededRandom(seed: seed, salt: 21, 0, 0)
+        return random.float(92, 108).rounded()
     }
 
-    private mutating func layOutRoads() {
-        alongZ = spacedRoads()
-        railZ = random.float(92, 108).rounded()
-        alongX = spacedRoads().filter { abs($0.center - railZ) > 16 }
-        // The town's main street runs through its middle either way.
-        if let index = alongZ.indices.min(by: { abs(alongZ[$0].center - 100) < abs(alongZ[$1].center - 100) }) {
-            alongZ[index].isMain = true
+    /// The roads along an axis with centers from `low` to `high`. Roads
+    /// along z are spaced over x; those along x, over z, and not too near
+    /// the railway. Each is where its number says, whatever is asked for.
+    private static func roads(_ runsAlong: Axis, from low: Float, to high: Float, seed: UInt64, railZ: Float) -> [Road] {
+        var roads: [Road] = []
+        let first = Int((low / roadSpacing).rounded(.down)) - 1
+        let last = Int((high / roadSpacing).rounded(.up)) + 1
+        for number in first...last {
+            var random = SeededRandom(seed: seed, salt: runsAlong.salt, Float(number), 0)
+            let center = (Float(number) * roadSpacing + random.float(-10, 10)).rounded()
+            guard center >= low, center <= high else { continue }
+            if runsAlong == .x && abs(center - railZ) <= 16 { continue }
+            roads.append(Road(center: center, isMain: number % 3 == 0 || random.chance(0.3)))
         }
-        if let index = alongX.indices.min(by: { abs(alongX[$0].center - 100) < abs(alongX[$1].center - 100) }) {
-            alongX[index].isMain = true
-        }
+        return roads
     }
 
     private mutating func box(
         _ x0: Float, _ x1: Float, _ y0: Float, _ y1: Float, _ z0: Float, _ z1: Float, _ material: UInt8
     ) {
         guard x0 < x1, y0 < y1, z0 < z1 else { return }
-        grid.fill(x: x0...x1, y: y0...y1, z: z0...z1, material)
+        grid.fill(
+            x: (cells(x0) - originX)..<(cells(x1) - originX), y: cells(y0)..<cells(y1),
+            z: (cells(z0) - originZ)..<(cells(z1) - originZ), material)
     }
 
     /// Fills a box given across and along a road, which runs along z or x.
@@ -125,9 +170,14 @@ struct Town {
         }
     }
 
+    private func contains(x: Float, z: Float) -> Bool {
+        x >= lowX && x < highX && z >= lowZ && z < highZ
+    }
+
     private mutating func light(
         _ x: Float, _ y: Float, _ z: Float, color: UInt32, intensity: Float, radius: Float, _ schedule: Material.Schedule
     ) {
+        guard contains(x: x, z: z) else { return }
         lights.append(
             PointLight(
                 position: Vector3(x, y, z), color: Material(color: color).linearColor * intensity, radius: radius,
@@ -135,47 +185,50 @@ struct Town {
     }
 
     private mutating func buildGround() {
-        let (size, level) = (Self.size, Self.level)
-        box(0, size, 0, level, 0, size, Materials.soil)
-        box(0, size, level - 0.125, level, 0, size, Materials.concrete)
+        let level = Self.level
+        let (x0, x1, z0, z1) = (lowX, highX, lowZ, highZ)
+        box(x0, x1, 0, level, z0, z1, Materials.soil)
+        box(x0, x1, level - 0.125, level, z0, z1, Materials.concrete)
         // Sidewalks first, then every carriageway across them, so that the
         // roads open into one another at the intersections.
         for road in alongZ {
-            box(road.center - road.half, road.center + road.half, level, level + 0.125, 0, size, Materials.sidewalk)
+            box(road.center - road.half, road.center + road.half, level, level + 0.125, z0, z1, Materials.sidewalk)
         }
         for road in alongX {
-            box(0, size, level, level + 0.125, road.center - road.half, road.center + road.half, Materials.sidewalk)
+            box(x0, x1, level, level + 0.125, road.center - road.half, road.center + road.half, Materials.sidewalk)
         }
         for road in alongZ {
-            let (x0, x1) = (road.center - road.carriageHalf, road.center + road.carriageHalf)
-            box(x0, x1, level, level + 0.125, 0, size, Materials.air)
-            box(x0, x1, level - 0.125, level, 0, size, Materials.asphalt)
+            let (a, b) = (road.center - road.carriageHalf, road.center + road.carriageHalf)
+            box(a, b, level, level + 0.125, z0, z1, Materials.air)
+            box(a, b, level - 0.125, level, z0, z1, Materials.asphalt)
         }
         for road in alongX {
-            let (z0, z1) = (road.center - road.carriageHalf, road.center + road.carriageHalf)
-            box(0, size, level, level + 0.125, z0, z1, Materials.air)
-            box(0, size, level - 0.125, level, z0, z1, Materials.asphalt)
+            let (a, b) = (road.center - road.carriageHalf, road.center + road.carriageHalf)
+            box(x0, x1, level, level + 0.125, a, b, Materials.air)
+            box(x0, x1, level - 0.125, level, a, b, Materials.asphalt)
         }
     }
 
-    /// The stretches of a line of the town left by what crosses it.
+    /// The stretches between what crosses a line, from one to the next.
+    /// Only those with something at both ends, so as not to depend on how
+    /// far was looked.
     private func stretches(between obstacles: [(center: Float, half: Float)]) -> [(Float, Float)] {
-        var result: [(Float, Float)] = []
-        var start: Float = 0
-        for obstacle in obstacles.sorted(by: { $0.center < $1.center }) {
-            result.append((start, obstacle.center - obstacle.half))
-            start = obstacle.center + obstacle.half
+        let sorted = obstacles.sorted { $0.center < $1.center }
+        guard sorted.count > 1 else { return [] }
+        return (0..<(sorted.count - 1)).compactMap { index in
+            let start = sorted[index].center + sorted[index].half
+            let end = sorted[index + 1].center - sorted[index + 1].half
+            return start < end ? (start, end) : nil
         }
-        result.append((start, Self.size))
-        return result.filter { $0.0 < $0.1 }
     }
 
     // MARK: Railway
 
     private mutating func buildRailway() {
-        let (level, size) = (Self.level, Self.size)
+        let level = Self.level
         let z = railZ
-        for (x0, x1) in stretches(between: alongZ.map { ($0.center, $0.half) }) {
+        guard z + Self.railHalf + 1 > lowZ, z - Self.railHalf - 1 < highZ else { return }
+        for (x0, x1) in stretches(between: alongZ.map { ($0.center, $0.half) }) where x1 > lowX && x0 < highX {
             box(x0, x1, level, level + 0.125, z - 3.5, z + 3.5, Materials.ballast)
             box(x0, x1, level + 0.125, level + 0.25, z - 3, z + 3, Materials.ballast)
             var x = x0 + 0.25
@@ -201,9 +254,9 @@ struct Town {
             crossingSignal(x: road.center - road.carriageHalf - 0.75, z: z - 3.75)
             crossingSignal(x: road.center + road.carriageHalf + 0.5, z: z + 3.5)
         }
-        // The rails run unbroken from one end of the town to the other.
-        for railZ in [z - 0.625, z + 0.5] {
-            box(0, size, level + 0.375, level + 0.625, railZ, railZ + 0.125, Materials.rail)
+        // The rails run unbroken.
+        for rail in [z - 0.625, z + 0.5] {
+            box(lowX, highX, level + 0.375, level + 0.625, rail, rail + 0.125, Materials.rail)
         }
     }
 
@@ -254,7 +307,6 @@ struct Town {
                     for side in [-Float(1), 1] {
                         let near = other.center + side * (other.half + 0.25)
                         let (a0, a1) = side < 0 ? (near - 2.5, near) : (near, near + 2.5)
-                        guard a0 > 0, a1 < Self.size else { continue }
                         var across = road.center - road.carriageHalf + 0.5
                         while across + 0.5 < road.center + road.carriageHalf {
                             band(runsAlongZ: runsAlongZ, across, across + 0.5, y0, y1, a0, a1, Materials.lineWhite)
@@ -272,6 +324,7 @@ struct Town {
                 var obstacles = others.map { (center: $0.center, half: $0.half + 2) }
                 if runsAlongZ { obstacles.append((railZ, Self.railHalf + 1)) }
                 for (a0, a1) in stretches(between: obstacles) {
+                    var random = SeededRandom(seed: seed, salt: runsAlongZ ? 31 : 32, road.center, a0)
                     var along = a0 + random.float(3, 9)
                     var side: Float = random.chance(0.5) ? -1 : 1
                     while along < a1 - 1 {
@@ -340,45 +393,41 @@ struct Town {
         var depth: Float { z1 - z0 }
     }
 
-    @MainActor
-    private mutating func buildBlocks() async {
-        var breather = Breather()
+    private mutating func buildBlocks() {
         let xObstacles = alongZ.map { (center: $0.center, half: $0.half) }
         let zObstacles = alongX.map { (center: $0.center, half: $0.half) } + [(railZ, Self.railHalf)]
-        for (x0, x1) in stretches(between: xObstacles) where x1 - x0 >= 6 {
-            for (z0, z1) in stretches(between: zObstacles) where z1 - z0 >= 6 {
+        for (x0, x1) in stretches(between: xObstacles) where x1 - x0 >= 6 && x1 > lowX && x0 < highX {
+            for (z0, z1) in stretches(between: zObstacles) where z1 - z0 >= 6 && z1 > lowZ && z0 < highZ {
                 let block = Rect(x0: x0, z0: z0, x1: x1, z1: z1)
                 let roadSides = (
                     west: alongZ.contains { $0.center + $0.half == x0 }, east: alongZ.contains { $0.center - $0.half == x1 },
                     north: alongX.contains { $0.center + $0.half == z0 }, south: alongX.contains { $0.center - $0.half == z1 }
                 )
+                var random = SeededRandom(seed: seed, salt: 41, x0, z0)
                 let largest = random.float(13, 22)
                 var lots: [Rect] = []
-                split(block, largest: largest) { _, lot in
-                    lots.append(lot)
-                }
-                for lot in lots {
+                Self.split(block, largest: largest, random: &random, into: &lots)
+                for lot in lots where lot.x1 > lowX && lot.x0 < highX && lot.z1 > lowZ && lot.z0 < highZ {
                     buildLot(lot, in: block, roadSides: roadSides)
-                    await breather.breathe()
                 }
             }
         }
     }
 
-    private mutating func split(_ rect: Rect, largest: Float, _ body: (inout Town, Rect) -> Void) {
+    private static func split(_ rect: Rect, largest: Float, random: inout SeededRandom, into lots: inout [Rect]) {
         let alongX = rect.width >= rect.depth
         let length = alongX ? rect.width : rect.depth
         guard length > largest, length >= 12 else {
-            body(&self, rect)
+            lots.append(rect)
             return
         }
         let cut = (length * random.float(0.38, 0.62)).rounded()
         if alongX {
-            split(Rect(x0: rect.x0, z0: rect.z0, x1: rect.x0 + cut, z1: rect.z1), largest: largest, body)
-            split(Rect(x0: rect.x0 + cut, z0: rect.z0, x1: rect.x1, z1: rect.z1), largest: largest, body)
+            split(Rect(x0: rect.x0, z0: rect.z0, x1: rect.x0 + cut, z1: rect.z1), largest: largest, random: &random, into: &lots)
+            split(Rect(x0: rect.x0 + cut, z0: rect.z0, x1: rect.x1, z1: rect.z1), largest: largest, random: &random, into: &lots)
         } else {
-            split(Rect(x0: rect.x0, z0: rect.z0, x1: rect.x1, z1: rect.z0 + cut), largest: largest, body)
-            split(Rect(x0: rect.x0, z0: rect.z0 + cut, x1: rect.x1, z1: rect.z1), largest: largest, body)
+            split(Rect(x0: rect.x0, z0: rect.z0, x1: rect.x1, z1: rect.z0 + cut), largest: largest, random: &random, into: &lots)
+            split(Rect(x0: rect.x0, z0: rect.z0 + cut, x1: rect.x1, z1: rect.z1), largest: largest, random: &random, into: &lots)
         }
     }
 
@@ -398,19 +447,21 @@ struct Town {
         let sideways = facing == .west || facing == .east
         var plot = Plot(width: sideways ? lot.depth : lot.width, depth: sideways ? lot.width : lot.depth)
 
-        // Busier toward where the main street meets the railway.
+        // Busier around the places along the railway.
         let centerX = (lot.x0 + lot.x1) / 2
         let centerZ = (lot.z0 + lot.z1) / 2
-        let dx = centerX - 100
+        let station = (centerX / Self.stationSpacing).rounded() * Self.stationSpacing
+        let dx = centerX - station
         let dz = centerZ - railZ
-        let isCentral = (dx * dx + dz * dz).squareRoot() < 62
+        let isCentral = (dx * dx + dz * dz).squareRoot() < Self.stationReach
+        var random = SeededRandom(seed: seed, salt: 42, lot.x0, lot.z0)
         plot.build(central: isCentral, random: &random)
         stamp(plot, at: lot, facing: facing)
     }
 
-    /// Copies a plot into the town, turned to face the way it should.
+    /// Copies a plot into the region, turned to face the way it should.
     private mutating func stamp(_ plot: Plot, at lot: Rect, facing: Facing) {
-        let (originX, originZ) = (cells(lot.x0), cells(lot.z0))
+        let (lotX, lotZ) = (cells(lot.x0) - originX, cells(lot.z0) - originZ)
         let (w, d) = (plot.grid.width, plot.grid.depth)
         // The plot's lowest layer is the town's ground layer.
         let lift = cells(Self.level) - 1
@@ -426,13 +477,12 @@ struct Town {
                     case .west: (worldX, worldZ) = (z, w - 1 - x)
                     case .east: (worldX, worldZ) = (d - 1 - z, x)
                     }
-                    grid[originX + worldX, lift + y, originZ + worldZ] = material
+                    grid[lotX + worldX, lift + y, lotZ + worldZ] = material
                 }
             }
         }
         let (width, depth) = (plot.width, plot.depth)
         for lamp in plot.lights {
-            var moved = lamp
             let (x, y, z) = (lamp.position.x, lamp.position.y, lamp.position.z)
             let (worldX, worldZ): (Float, Float)
             switch facing {
@@ -441,6 +491,8 @@ struct Town {
             case .west: (worldX, worldZ) = (z, width - x)
             case .east: (worldX, worldZ) = (depth - z, x)
             }
+            guard contains(x: lot.x0 + worldX, z: lot.z0 + worldZ) else { continue }
+            var moved = lamp
             moved.position = Vector3(lot.x0 + worldX, y + Self.level, lot.z0 + worldZ)
             lights.append(moved)
         }

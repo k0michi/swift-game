@@ -16,7 +16,7 @@ struct SparseVoxels: Sendable {
     private let sectionsX: Int
     private let sectionsY: Int
     private let sectionsZ: Int
-    private let sections: [Section]
+    private var sections: [Section]
 
     /// How many sections hold more than one material, and how many there are.
     var denseCount: Int {
@@ -71,6 +71,51 @@ struct SparseVoxels: Sendable {
             }
         }
         self.sections = sections
+    }
+
+    /// A world of air, of a size in voxels, each a whole number of sections.
+    init(width: Int, height: Int, depth: Int) {
+        let size = Self.sectionSize
+        precondition(width % size == 0 && height % size == 0 && depth % size == 0)
+        self.width = width
+        self.height = height
+        self.depth = depth
+        sectionsX = width / size
+        sectionsY = height / size
+        sectionsZ = depth / size
+        sections = Array(repeating: .uniform(Materials.air), count: sectionsX * sectionsY * sectionsZ)
+    }
+
+    /// Sets the voxels of a column of sections from `grid`, whose corner is
+    /// at voxel (`originX`, 0, `originZ`), and which is a whole number of
+    /// sections. Sections past the world's edges are left out.
+    mutating func set(_ grid: VoxelGrid, originX: Int, originZ: Int) {
+        let size = Self.sectionSize
+        for sy in 0..<sectionsY {
+            for offsetZ in 0..<(grid.depth / size) {
+                for offsetX in 0..<(grid.width / size) {
+                    let sx = originX / size + offsetX
+                    let sz = originZ / size + offsetZ
+                    guard sx < sectionsX, sz < sectionsZ else { continue }
+                    let first = grid.data[grid.index(offsetX * size, sy * size, offsetZ * size)]
+                    var isUniform = true
+                    var voxels = [UInt8](repeating: first, count: size * size * size)
+                    var output = 0
+                    for y in 0..<size {
+                        for z in 0..<size {
+                            let row = grid.index(offsetX * size, sy * size + y, offsetZ * size + z)
+                            for x in 0..<size {
+                                let voxel = grid.data[row + x]
+                                voxels[output] = voxel
+                                output += 1
+                                if voxel != first { isUniform = false }
+                            }
+                        }
+                    }
+                    sections[(sy * sectionsZ + sz) * sectionsX + sx] = isUniform ? .uniform(first) : .dense(voxels)
+                }
+            }
+        }
     }
 
     /// A world with nothing in it.

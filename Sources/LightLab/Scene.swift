@@ -21,6 +21,8 @@ struct PointLight {
 struct Scene {
     static let size = (width: Float(40), height: Float(20), depth: Float(40))
     static let streetLevel: Float = 0.5
+    /// How wide and deep the generated town is.
+    static let townSize: Float = 200
     static let terraceLevel: Float = 3.5
     /// Where the terrace ends, at its retaining wall.
     static let terraceEdge: Float = 12
@@ -41,15 +43,53 @@ struct Scene {
     /// Where someone on foot starts, along x and z.
     private(set) var spawn = Vector2<Float>(16, 20)
 
-    /// A town laid out from `seed`.
+    /// A town laid out from `seed`, one chunk at a time, 200 m square.
     @MainActor
     init(townSeed seed: UInt64) async {
-        let town = await Town(seed: seed)
-        voxels = await SparseVoxels(tile: town.voxels, tiles: 1)
+        let size = cells(Self.townSize)
+        var world = SparseVoxels(width: size, height: cells(Self.size.height), depth: size)
+        var origins: [(x: Int, z: Int)] = []
+        for z in stride(from: 0, to: size, by: SceneChunk.size) {
+            for x in stride(from: 0, to: size, by: SceneChunk.size) {
+                origins.append((x, z))
+            }
+        }
+        func region(_ x: Int, _ z: Int) -> Town {
+            Town(seed: seed, x: x..<(x + SceneChunk.size), z: z..<(z + SceneChunk.size))
+        }
+        var found: [PointLight] = []
+        #if os(Emscripten)
+            var breather = Breather()
+            for origin in origins {
+                let town = region(origin.x, origin.z)
+                world.set(town.grid, originX: origin.x, originZ: origin.z)
+                found += town.lights
+                await breather.breathe()
+            }
+        #else
+            let built = await withTaskGroup(of: (Int, Town).self) { group in
+                for (index, origin) in origins.enumerated() {
+                    let (x, z) = origin
+                    group.addTask { (index, Town(seed: seed, x: x..<(x + SceneChunk.size), z: z..<(z + SceneChunk.size))) }
+                }
+                var built: [(Int, Town)] = []
+                for await result in group {
+                    built.append(result)
+                }
+                return built.sorted { $0.0 < $1.0 }
+            }
+            for (index, town) in built {
+                world.set(town.grid, originX: origins[index].x, originZ: origins[index].z)
+                found += town.lights
+            }
+        #endif
+        let halfway = Self.townSize / 2
+        voxels = world
         grid = VoxelGrid(width: 0, height: 0, depth: 0)
-        lights = town.lights
-        spawn = town.spawn
-        middleTileOffset = Town.size / 2 - 20
+        // Only lamps within the town, as the last chunks reach past it.
+        lights = found.filter { $0.position.x < Self.townSize && $0.position.z < Self.townSize }
+        spawn = Town.spawn(seed: seed, near: Vector2(halfway, halfway))
+        middleTileOffset = halfway - 20
     }
 
     /// `tiles` by `tiles` copies of the street corner, side by side.

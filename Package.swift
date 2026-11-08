@@ -406,6 +406,11 @@ let package = Package(
             dependencies: ["Interop"]
         ),
         .testTarget(
+            name: "LightLabTests",
+            dependencies: ["LightLab"],
+            swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags)]
+        ),
+        .testTarget(
             name: "ShooterTests",
             dependencies: ["Shooter", "VectorMath"],
             swiftSettings: [.unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags)]
