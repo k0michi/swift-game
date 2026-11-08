@@ -474,7 +474,9 @@ final class Renderer {
         let chunkSize = SceneChunk.size
         let chunksPerStep = 3
         let cellsPerChunk = chunkSize / Self.skyCellSize
-        let (chunksX, chunksZ) = (voxels.width / chunkSize, voxels.depth / chunkSize)
+        // A town need not be a whole number of chunks: the last ones count too.
+        let chunksX = (voxels.width + chunkSize - 1) / chunkSize
+        let chunksZ = (voxels.depth + chunkSize - 1) / chunkSize
         for stepZ in stride(from: 0, to: max(chunksZ, 1), by: chunksPerStep) {
             for stepX in stride(from: 0, to: max(chunksX, 1), by: chunksPerStep) {
                 let window = try moveWindow(centerX: stepX + chunksPerStep / 2, centerZ: stepZ + chunksPerStep / 2)

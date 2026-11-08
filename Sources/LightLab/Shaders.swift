@@ -323,8 +323,9 @@ enum Shaders {
         @compute @workgroup_size(4, 4, 4)
         fn main(@builtin(global_invocation_id) invocation: vec3u) {
             let id = invocation + vec3u(u32(bake.area.x), u32(bake.area.y), 0u);
-            let end = vec2u(bake.area.xy + bake.area.zw);
-            if id.x >= end.x || id.y >= end.y || id.z >= textureDimensions(output).z { return; }
+            let dims = textureDimensions(output);
+            let end = min(vec2u(bake.area.xy + bake.area.zw), dims.xy);
+            if id.x >= end.x || id.y >= end.y || id.z >= dims.z { return; }
             let size = bake.world.xyz;
             let factor = f32(bake.world.w);
             // The cell's center, in voxels, as x, y, z.
