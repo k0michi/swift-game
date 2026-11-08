@@ -16,6 +16,9 @@ struct FrameUniforms {
     /// and of bloom.
     var params: Vector4<Float>
     var gridSize: Vector4<Float>
+    /// Where the eye is, with 1 for a perspective view, whose direction
+    /// differs from pixel to pixel, or 0 for `viewDirection` everywhere.
+    var eye: Vector4<Float>
 }
 
 /// Draws the scene in light: depth from the sun for its shadows, then the

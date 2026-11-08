@@ -3,6 +3,9 @@
 
 #ifdef __EMSCRIPTEN__
 
+// Whether the page holds the pointer lock, 1 if so.
+int game_toolkit_web_pointer_is_locked(void);
+
 // Has the browser download `length` bytes as a file named `name`, of the
 // media type `type`.
 void game_toolkit_web_download(const char *name, const unsigned char *bytes, int length, const char *type);

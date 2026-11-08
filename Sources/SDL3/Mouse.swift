@@ -45,6 +45,16 @@ public func getMouseState() -> (flags: MouseButtonFlags, x: Float, y: Float) {
     return (MouseButtonFlags(rawValue: flags), x, y)
 }
 
+// SDL_SetWindowRelativeMouseMode
+/// While on, the cursor is hidden and held in `window`, and motion events
+/// report how far the mouse moved.
+@MainActor
+public func setWindowRelativeMouseMode(window: Window, enabled: Bool) throws {
+    guard SDL_SetWindowRelativeMouseMode(window.cPointer, enabled) else {
+        throw SDLError(operation: "SDL_SetWindowRelativeMouseMode")
+    }
+}
+
 // SDL_ShowCursor
 @MainActor
 public func showCursor() throws {

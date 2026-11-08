@@ -2,7 +2,9 @@ import Dawn
 import Echo
 import SDL3
 
-#if !os(Emscripten)
+#if os(Emscripten)
+    import CGameToolkitWeb
+#else
     import EchoSDL3
 #endif
 
@@ -51,3 +53,15 @@ public let audioWaitsForUserGesture: Bool = {
         false
     #endif
 }()
+
+/// Whether the window really holds the mouse, after asking for relative mouse
+/// mode. A browser answers later, can refuse, and lets the user take the
+/// mouse back with Esc.
+@MainActor
+public func windowHoldsMouse() -> Bool {
+    #if os(Emscripten)
+        game_toolkit_web_pointer_is_locked() != 0
+    #else
+        true
+    #endif
+}

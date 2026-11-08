@@ -18,8 +18,12 @@ let canvasSize = Vector2<Float>(1280, 720)
 /// back and on, T lets it run, and B toggles bloom. F2 saves a screenshot,
 /// and F3 toggles the overlay.
 ///
+/// V walks the street instead: WASD to walk, shift to run, and the mouse to
+/// look, after a click holds it; Esc lets it go.
+///
 /// `--hour H`, `--focus X Y Z`, `--zoom METERS`, `--yaw DEGREES` and
-/// `--pitch DEGREES` set where it starts, and `--screenshot` saves a
+/// `--pitch DEGREES` set where it starts, `--first-person` starts walking,
+/// `--at X Z` and `--look YAW PITCH` set where and which way, and `--screenshot` saves a
 /// screenshot after 150 frames, and quits.
 @main
 struct LightLab: AsyncMain {
@@ -83,9 +87,32 @@ struct LightLab: AsyncMain {
             camera.pitch = pitch[0] * .pi / 180
         }
         let screenshotsAndQuits = arguments.contains("--screenshot")
+        // On the plaza, facing south, toward the road and the shops.
+        let spawn = values(after: "--at", count: 2) ?? [16, 20]
+        var walker = FirstPerson(feet: Vector3(spawn[0], Scene.streetLevel, spawn[1]), yaw: .pi)
+        if let look = values(after: "--look", count: 2) {
+            walker.yaw = look[0] * .pi / 180
+            walker.pitch = look[1] * .pi / 180
+        }
+        var isFirstPerson = arguments.contains("--first-person")
+        var holdsMouse = false
+        // A browser may take a while to grant the mouse, or refuse for good.
+        var framesHoldingMouse = 0
+        var mouseWasEverHeld = false
+        var mouseIsRefused = false
+        func holdMouse(_ holds: Bool) {
+            guard holds != holdsMouse, !(holds && mouseIsRefused) else { return }
+            do {
+                try setWindowRelativeMouseMode(window: window, enabled: holds)
+                holdsMouse = holds
+                framesHoldingMouse = 0
+            } catch {
+                print("Could not hold the mouse: \(error)")
+            }
+        }
 
         print(
-            "Left-drag or WASD to move, right-drag or R/F to turn and tilt, the wheel to zoom, Q/E to turn to a diagonal, [ and ] to change the hour, T to let time run, B to toggle bloom, F2 to save a screenshot, F3 for the overlay."
+            "Left-drag or WASD to move, right-drag or R/F to turn and tilt, the wheel to zoom, Q/E to turn to a diagonal, [ and ] to change the hour, T to let time run, B to toggle bloom, F2 to save a screenshot, F3 for the overlay. V walks: WASD, shift to run, click to look with the mouse, Esc to let it go."
         )
 
         var character = Character(at: Vector3(12, Scene.streetLevel, 18), walking: 10...36)
@@ -108,19 +135,30 @@ struct LightLab: AsyncMain {
                     switch event.key {
                     case .f2: takesScreenshot = true
                     case .f3: showsOverlay.toggle()
-                    case .q: camera.rotate(quarterTurns: -1)
-                    case .e: camera.rotate(quarterTurns: 1)
+                    case .v:
+                        isFirstPerson.toggle()
+                        if !isFirstPerson { holdMouse(false) }
+                    case .escape: holdMouse(false)
+                    case .q where !isFirstPerson: camera.rotate(quarterTurns: -1)
+                    case .e where !isFirstPerson: camera.rotate(quarterTurns: 1)
                     case .minus: camera.zoom *= 1.25
                     case .equals: camera.zoom *= 0.8
                     case .t: timeRuns.toggle()
                     case .b: bloomOn.toggle()
                     default: break
                     }
+                case let event as MouseButtonEvent where isFirstPerson && event.down:
+                    holdMouse(true)
+                case let event as MouseMotionEvent where isFirstPerson:
+                    // Without the mouse held, as when it cannot be, by dragging.
+                    if holdsMouse || !event.state.isEmpty {
+                        walker.look(by: Vector2(event.xrel, event.yrel))
+                    }
                 case let event as MouseMotionEvent where event.state.contains(.left):
                     camera.drag(by: Vector2(event.xrel, event.yrel), canvasHeight: canvasSize.y)
                 case let event as MouseMotionEvent where !event.state.isDisjoint(with: [.right, .middle]):
                     camera.orbit(yaw: event.xrel * 0.006, pitch: event.yrel * 0.006)
-                case let event as MouseWheelEvent:
+                case let event as MouseWheelEvent where !isFirstPerson:
                     camera.zoom *= Float.pow(0.88, event.y)
                 default:
                     if event.type == .quit || event.type == .windowCloseRequested {
@@ -145,18 +183,33 @@ struct LightLab: AsyncMain {
             let seconds = min(frameMilliseconds / 1000, 0.1)
             elapsed += seconds
 
+            if holdsMouse {
+                framesHoldingMouse += 1
+                if windowHoldsMouse() {
+                    mouseWasEverHeld = true
+                } else if framesHoldingMouse > 30 {
+                    // Looks by dragging instead.
+                    mouseIsRefused = !mouseWasEverHeld
+                    holdMouse(false)
+                }
+            }
+
             let keys = getKeyboardState()
             var direction = Vector2<Float>.zero
             if keys[.a] || keys[.left] { direction.x -= 1 }
             if keys[.d] || keys[.right] { direction.x += 1 }
             if keys[.w] || keys[.up] { direction.y += 1 }
             if keys[.s] || keys[.down] { direction.y -= 1 }
-            camera.move(screen: direction * (camera.zoom * 1.5 * seconds))
-            var tilt: Float = 0
-            if keys[.r] { tilt += 1 }
-            if keys[.f] { tilt -= 1 }
-            camera.orbit(yaw: 0, pitch: tilt * 1.2 * seconds)
-            camera.update(duration: seconds)
+            if isFirstPerson {
+                walker.update(input: direction, running: keys[.lShift], duration: seconds, grid: scene.grid)
+            } else {
+                camera.move(screen: direction * (camera.zoom * 1.5 * seconds))
+                var tilt: Float = 0
+                if keys[.r] { tilt += 1 }
+                if keys[.f] { tilt -= 1 }
+                camera.orbit(yaw: 0, pitch: tilt * 1.2 * seconds)
+                camera.update(duration: seconds)
+            }
             var hours: Float = timeRuns ? 0.1 : 0
             if keys[.leftBracket] { hours -= 2 }
             if keys[.rightBracket] { hours += 2 }
@@ -170,17 +223,19 @@ struct LightLab: AsyncMain {
             let ground = Vector3<Float>(0.35, 0.3, 0.25) * (horizon.x + horizon.y + horizon.z) / 3
             let aspect = canvasSize.x / canvasSize.y
             let frame = FrameUniforms(
-                viewProjection: camera.viewProjection(aspectRatio: aspect),
+                viewProjection: isFirstPerson
+                    ? walker.viewProjection(aspectRatio: aspect) : camera.viewProjection(aspectRatio: aspect),
                 sunViewProjection: sunViewProjection(toward: time.lightDirection),
                 sunDirection: Vector4(time.lightDirection, 0),
                 sunColor: Vector4(time.lightColor, 0),
                 skyColor: Vector4(zenith, 0),
                 horizonColor: Vector4(horizon, 0),
                 groundColor: Vector4(ground, 0),
-                viewDirection: Vector4(camera.forward, 0),
+                viewDirection: Vector4(isFirstPerson ? walker.forward : camera.forward, 0),
                 params: Vector4(Float(lights.count / 2), time.exposure, 1.6, 0),
                 gridSize: Vector4(
-                    Float(scene.grid.width), Float(scene.grid.height), Float(scene.grid.depth), Float(voxelsPerMeter)))
+                    Float(scene.grid.width), Float(scene.grid.height), Float(scene.grid.depth), Float(voxelsPerMeter)),
+                eye: Vector4(walker.eye, isFirstPerson ? 1 : 0))
 
             var shapes = ShapeBatch(canvasSize: canvasSize)
             if showsOverlay {
@@ -192,7 +247,9 @@ struct LightLab: AsyncMain {
                     [
                         "TIME \(clockText)\(timeRuns ? " RUNNING" : "")  LAMPS \(lights.count / 2) LIT  BLOOM \(bloomOn ? "ON" : "OFF")",
                         "TRIANGLES \(renderer.triangleCount)  VOXEL 1/8 M",
-                        "L-DRAG/WASD MOVE  R-DRAG/R/F TURN+TILT  WHEEL ZOOM  [ ] HOUR  T RUN  B BLOOM",
+                        isFirstPerson
+                            ? "WALKING AT \(meters(walker.feet.x)), \(meters(walker.feet.y)), \(meters(walker.feet.z))  WASD WALK  SHIFT RUN  CLICK+MOUSE LOOK  ESC RELEASE  V CAMERA"
+                            : "L-DRAG/WASD MOVE  R-DRAG/R/F TURN+TILT  WHEEL ZOOM  [ ] HOUR  T RUN  B BLOOM  V WALK",
                     ], into: &shapes)
             }
 
@@ -315,6 +372,12 @@ struct LightLab: AsyncMain {
             BitmapFont.appendText(line, at: Vector2(8, y), scale: scale, color: Vector4(1, 1, 1, 1), to: &shapes)
             y += lineHeight
         }
+    }
+
+    /// A length to a tenth of a meter.
+    private static func meters(_ value: Float) -> String {
+        let tenths = Int((value * 10).rounded())
+        return "\(tenths / 10).\(abs(tenths % 10))"
     }
 
     private static func milliseconds(_ duration: Duration) -> Float {

@@ -20,6 +20,8 @@ enum Shaders {
             params: vec4f,
             // Voxels along x, y and z, and voxels a meter.
             gridSize: vec4f,
+            // The eye, and 1 if the view is in perspective.
+            eye: vec4f,
         }
 
         @group(0) @binding(0) var<uniform> frame: Frame;
@@ -55,6 +57,12 @@ enum Shaders {
             output.material = info.x;
             output.occlusion = f32(info.y) / 3.0;
             return output;
+        }
+
+        // The direction the camera looks at a point.
+        fn viewAt(world: vec3f) -> vec3f {
+            if frame.eye.w > 0.5 { return normalize(world - frame.eye.xyz); }
+            return frame.viewDirection.xyz;
         }
 
         fn isOpaque(cell: vec3i) -> bool {
@@ -168,7 +176,7 @@ enum Shaders {
             // A highlight of the sun on smooth metal.
             let roughness = surface.y;
             if roughness < 0.6 {
-                let h = normalize(toSun - frame.viewDirection.xyz);
+                let h = normalize(toSun - viewAt(input.world));
                 let shininess = mix(200.0, 8.0, roughness);
                 color += frame.sunColor.rgb * shadow * pow(max(dot(n, h), 0.0), shininess) * (1.0 - roughness) * 0.5;
             }
@@ -181,7 +189,7 @@ enum Shaders {
         fn glassMain(input: VertexOutput) -> @location(0) vec4f {
             let material = materials[input.material * 2u];
             var n = normalize(input.normal);
-            let toEye = -frame.viewDirection.xyz;
+            let toEye = -viewAt(input.world);
             if dot(n, toEye) < 0.0 { n = -n; }
             let cosine = clamp(dot(n, toEye), 0.0, 1.0);
             let fresnel = 0.04 + 0.96 * pow(1.0 - cosine, 5.0);
