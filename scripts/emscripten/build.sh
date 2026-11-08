@@ -7,7 +7,8 @@ set -eu
 #
 # Usage: build.sh [configuration] [product]
 #
-# The product is swift-game, the default, shooter, pong, text, or city.
+# The product is swift-game, the default, shooter, pong, text, city, or
+# light-lab.
 
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 configuration=${1:-debug}
@@ -19,6 +20,7 @@ shooter) target=Shooter ;;
 pong) target=Pong ;;
 text) target=Text ;;
 city) target=City ;;
+light-lab) target=LightLab ;;
 *)
     echo "Unknown product $product" >&2
     exit 1

@@ -148,6 +148,7 @@ let package = Package(
         .executable(name: "pong", targets: ["Pong"]),
         .executable(name: "text", targets: ["Text"]),
         .executable(name: "city", targets: ["City"]),
+        .executable(name: "light-lab", targets: ["LightLab"]),
         .library(name: "GameToolkit", targets: ["GameToolkit"]),
         .library(name: "SDL3", targets: ["SDL3"]),
         .library(name: "Dawn", targets: ["Dawn"]),
@@ -345,6 +346,15 @@ let package = Package(
         .executableTarget(
             name: "Pong",
             dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule],
+            swiftSettings: [
+                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
+            ] + customExecutorSettings
+        ),
+        // A street of 1/8 m voxels for trying out light: sun shadows, colored
+        // lamps, glass and bloom, through a day.
+        .executableTarget(
+            name: "LightLab",
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "GameToolkit", realModule],
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
             ] + customExecutorSettings
