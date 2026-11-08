@@ -1,8 +1,10 @@
 import RealModule
 import VectorMath
 
-/// An orthographic camera looking down on a point on the ground from one of
-/// four diagonals, as in an isometric city builder.
+/// An orthographic camera looking down on a point on the ground, as in an
+/// isometric city builder: from a diagonal at 30° to start with, but turning
+/// to any angle around the vertical and tilting from low over the streets to
+/// straight down.
 struct IsometricCamera {
     /// The point on the ground at the center of the view, in meters, as
     /// doubles to stay precise far from the origin.
@@ -10,15 +12,20 @@ struct IsometricCamera {
     var focusZ: Double = 0
     /// The angle around the vertical the camera looks from, in radians.
     var yaw: Float = .pi / 4
-    /// Where `yaw` turns to, a quarter turn at a time.
+    /// Where `yaw` turns to, as with a quarter turn.
     var targetYaw: Float = .pi / 4
-    /// How far below the horizon the camera looks: 30°, as in 2:1 pixel art.
-    var pitch: Float = .pi / 6
+    /// How far below the horizon the camera looks: 30°, as in 2:1 pixel art,
+    /// to start with.
+    var pitch: Float = .pi / 6 {
+        didSet { pitch = min(max(pitch, Self.pitchRange.lowerBound), Self.pitchRange.upperBound) }
+    }
     /// Half the height of the view, in meters.
     var zoom: Float = 70
 
-    static let zoomRange: ClosedRange<Float> = 12...260
-    private static let eyeDistance: Float = 2000
+    static let zoomRange: ClosedRange<Float> = 12...400
+    /// From 10° above the horizon to straight down.
+    static let pitchRange: ClosedRange<Float> = (.pi / 18)...(.pi / 2)
+    private static let eyeDistance: Float = 4000
 
     /// A whole number of meters near the focus, which positions on the GPU
     /// are relative to.
@@ -55,7 +62,11 @@ struct IsometricCamera {
         let projection = Matrix4x4<Float>.orthographic(
             left: -zoom * aspectRatio, right: zoom * aspectRatio, bottom: -zoom, top: zoom, near: 1,
             far: Self.eyeDistance * 2, handedness: .right, depth: .zeroToOne)
-        let view = Matrix4x4<Float>.lookAt(eye: eye, target: target, up: Vector3(0, 1, 0), handedness: .right)
+        // The screen's up, square to the view, so that it stays defined
+        // looking straight down.
+        let up = Vector3<Float>(
+            screenUp.x * Float.sin(pitch), Float.cos(pitch), screenUp.y * Float.sin(pitch))
+        let view = Matrix4x4<Float>.lookAt(eye: eye, target: target, up: up, handedness: .right)
         return projection * view
     }
 
@@ -80,8 +91,25 @@ struct IsometricCamera {
         zoom = min(max(zoom * factor, Self.zoomRange.lowerBound), Self.zoomRange.upperBound)
     }
 
+    /// Turns to the next of the four diagonals, `quarterTurns` times.
     mutating func rotate(quarterTurns: Int) {
-        targetYaw += Float(quarterTurns) * .pi / 2
+        let quarter = Float.pi / 2
+        let diagonal = ((targetYaw - .pi / 4) / quarter).rounded() * quarter + .pi / 4
+        targetYaw = diagonal + Float(quarterTurns) * quarter
+    }
+
+    /// Turns around the vertical by `yaw` and tilts by `pitch`, in radians,
+    /// at once.
+    mutating func orbit(yaw: Float, pitch: Float) {
+        targetYaw += yaw
+        self.yaw += yaw
+        self.pitch += pitch
+    }
+
+    /// Orbits as a drag of `delta` points would turn the view: across turns
+    /// it around the vertical, and up and down tilts it.
+    mutating func orbitDrag(by delta: Vector2<Float>) {
+        orbit(yaw: delta.x * 0.006, pitch: delta.y * 0.006)
     }
 
     /// Turns toward `targetYaw` for `duration` seconds.

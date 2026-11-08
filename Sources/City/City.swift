@@ -10,13 +10,15 @@ let depthFormat = TextureFormat.depth24Plus
 let skyColor = Vector4<Float>(0.70, 0.80, 0.88, 1)
 
 /// An endless city of 1 m voxels, seen from above at an angle, generated as
-/// the view moves. Drag or use WASD or the arrow keys to move, the wheel or
-/// -/= to zoom, and Q and E to turn. F2 saves a screenshot, and F3 toggles
-/// the debug overlay.
+/// the view moves. Drag with the left button or use WASD or the arrow keys to
+/// move, drag with the right or middle button to turn and tilt, R and F tilt
+/// too, the wheel or -/= zooms, and Q and E turn to the next diagonal. F2
+/// saves a screenshot, and F3 toggles the debug overlay.
 ///
-/// `--focus X Z`, `--zoom METERS` and `--turn QUARTERS` set where the view
-/// starts, and `--screenshot` saves a screenshot once the city around it is
-/// generated, and quits.
+/// `--focus X Z`, `--zoom METERS`, `--turn QUARTERS`, `--yaw DEGREES` and
+/// `--pitch DEGREES` set where the view starts, and `--radius CHUNKS` how
+/// many chunks of 32 m away the city is drawn, 32 by default. `--screenshot`
+/// saves a screenshot once the city around the view is generated, and quits.
 @main
 struct City: AsyncMain {
     static func run() async throws {
@@ -35,10 +37,9 @@ struct City: AsyncMain {
             device: device, width: configuration.width, height: configuration.height, format: depthFormat)
         let chunkRenderer = try ChunkRenderer(device: device, format: configuration.format, depthFormat: depthFormat)
         let shapeRenderer = try ShapeRenderer(device: device, format: configuration.format, depthFormat: depthFormat)
-        let streamer = ChunkStreamer(renderer: chunkRenderer, radius: 12)
 
         print(
-            "Drag or use WASD or the arrow keys to move, the wheel or -/= to zoom, and Q and E to turn. F2 saves a screenshot, and F3 toggles the overlay."
+            "Left-drag or use WASD or the arrow keys to move, right-drag to turn and tilt, R and F to tilt, the wheel or -/= to zoom, and Q and E to turn to the next diagonal. F2 saves a screenshot, and F3 toggles the overlay."
         )
 
         var camera = IsometricCamera()
@@ -58,7 +59,16 @@ struct City: AsyncMain {
             camera.rotate(quarterTurns: Int(turns[0]))
             camera.yaw = camera.targetYaw
         }
+        if let yaw = values(after: "--yaw", count: 1) {
+            camera.yaw = Float(yaw[0]) * .pi / 180
+            camera.targetYaw = camera.yaw
+        }
+        if let pitch = values(after: "--pitch", count: 1) {
+            camera.pitch = Float(pitch[0]) * .pi / 180
+        }
         let screenshotsAndQuits = arguments.contains("--screenshot")
+        let radius = values(after: "--radius", count: 1).map { max(Int($0[0]), 2) } ?? 32
+        let streamer = ChunkStreamer(renderer: chunkRenderer, radius: radius)
         var frameGraph = FrameGraph()
         var fpsCounter = FPSCounter()
         var showsOverlay = true
@@ -80,8 +90,10 @@ struct City: AsyncMain {
                     case .equals: camera.zoom(by: 0.8)
                     default: break
                     }
-                case let event as MouseMotionEvent where !event.state.isEmpty:
+                case let event as MouseMotionEvent where event.state.contains(.left):
                     camera.drag(by: Vector2(event.xrel, event.yrel), canvasHeight: canvasSize.y)
+                case let event as MouseMotionEvent where !event.state.isDisjoint(with: [.right, .middle]):
+                    camera.orbitDrag(by: Vector2(event.xrel, event.yrel))
                 case let event as MouseWheelEvent:
                     camera.zoom(by: Float.pow(0.88, event.y))
                 default:
@@ -115,6 +127,10 @@ struct City: AsyncMain {
             if keys[.w] || keys[.up] { direction.y += 1 }
             if keys[.s] || keys[.down] { direction.y -= 1 }
             camera.move(screen: direction * (camera.zoom * 1.5 * seconds))
+            var tilt: Float = 0
+            if keys[.r] { tilt += 1 }
+            if keys[.f] { tilt -= 1 }
+            camera.orbit(yaw: 0, pitch: tilt * 1.2 * seconds)
             camera.update(duration: seconds)
 
             let anchor = camera.anchor
@@ -128,7 +144,8 @@ struct City: AsyncMain {
             let uniforms = ChunkRenderer.Uniforms(
                 viewProjection: viewProjection,
                 light: Vector4(normalize(Vector3<Float>(-0.45, -1, -0.3)), 0.55),
-                fog: Vector4(focus.x, focus.y, drawDistance * 0.7, drawDistance),
+                // Only the last stretch fades, to hide where the city ends.
+                fog: Vector4(focus.x, focus.y, drawDistance * 0.85, drawDistance),
                 sky: skyColor)
 
             if screenshotsAndQuits && streamer.pendingCount == 0 && !takesScreenshot {
@@ -142,9 +159,9 @@ struct City: AsyncMain {
                 fpsCounter.append(to: &shapes, details: deviceDetails)
                 drawStatus(
                     [
-                        "FOCUS \(Int(camera.focusX.rounded(.down))), \(Int(camera.focusZ.rounded(.down)))  ZOOM \(Int(camera.zoom)) M",
+                        "FOCUS \(Int(camera.focusX.rounded(.down))), \(Int(camera.focusZ.rounded(.down)))  ZOOM \(Int(camera.zoom)) M  YAW \(degrees(camera.yaw))  PITCH \(degrees(camera.pitch))",
                         "CHUNKS \(visible.count) DRAWN / \(streamer.chunks.count) LOADED  TRIANGLES \(streamer.triangleCount)",
-                        "DRAG/WASD MOVE  WHEEL ZOOM  Q/E TURN  F2 SCREENSHOT  F3 OVERLAY",
+                        "L-DRAG/WASD MOVE  R-DRAG/R/F TURN+TILT  WHEEL ZOOM  Q/E DIAGONAL  F2 SHOT  F3 OVERLAY",
                     ], into: &shapes)
             }
 
@@ -215,6 +232,12 @@ struct City: AsyncMain {
             BitmapFont.appendText(line, at: Vector2(8, y), scale: scale, color: Vector4(1, 1, 1, 1), to: &shapes)
             y += lineHeight
         }
+    }
+
+    /// An angle in whole degrees from 0 up to 360.
+    private static func degrees(_ radians: Float) -> Int {
+        let degrees = Int((radians * 180 / .pi).rounded())
+        return (degrees % 360 + 360) % 360
     }
 
     private static func milliseconds(_ duration: Duration) -> Float {
