@@ -634,4 +634,139 @@ struct WebGPUTests {
 
         withExtendedLifetime((instance, adapter, device)) {}
     }
+
+    /// Doubles each of `buffer`'s 32-bit unsigned integers.
+    private static let doublingShader = """
+        @group(0) @binding(0) var<storage, read_write> values: array<u32>;
+
+        @compute @workgroup_size(64)
+        fn main(@builtin(global_invocation_id) id: vec3u) {
+            if id.x < arrayLength(&values) {
+                values[id.x] = values[id.x] * 2u;
+            }
+        }
+        """
+
+    /// Records a dispatch of `doublingShader` over `count` integers in
+    /// `storage`, then a copy of them into `readback`.
+    private static func recordDoubling(
+        device: Device, storage: Buffer, readback: Buffer, count: Int
+    ) throws -> CommandBuffer {
+        let module = try device.createShaderModule(
+            descriptor: ShaderModuleDescriptor(nextInChain: ShaderSourceWGSL(code: doublingShader)))
+        let pipeline = try device.createComputePipeline(
+            descriptor: ComputePipelineDescriptor(
+                label: "doubling", compute: ComputeState(module: module, entryPoint: "main")))
+        let bindGroup = try device.createBindGroup(
+            descriptor: BindGroupDescriptor(
+                layout: try pipeline.getBindGroupLayout(groupIndex: 0),
+                entries: [BindGroupEntry(binding: 0, buffer: storage)]))
+        let encoder = try device.createCommandEncoder()
+        let pass = try encoder.beginComputePass(descriptor: ComputePassDescriptor(label: "doubling"))
+        pass.setPipeline(pipeline)
+        pass.setBindGroup(groupIndex: 0, group: bindGroup)
+        pass.dispatchWorkgroups(x: UInt32((count + 63) / 64))
+        pass.end()
+        encoder.copyBufferToBuffer(source: storage, destination: readback, size: UInt64(count * 4))
+        return try encoder.finish()
+    }
+
+    /// Waits for `operation`, which Dawn answers from processEvents.
+    @MainActor
+    private static func wait<Value: Sendable>(
+        for operation: @escaping @MainActor () async throws -> Value, instance: Instance
+    ) async throws -> Value {
+        var result: Result<Value, any Error>?
+        Task { @MainActor in
+            do {
+                result = .success(try await operation())
+            } catch {
+                result = .failure(error)
+            }
+        }
+        while result == nil {
+            instance.processEvents()
+            await Task.yield()
+        }
+        return try result!.get()
+    }
+
+    @Test
+    @MainActor
+    func dispatchesAComputePipelineWithoutErrors() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let count = 100
+        let storage = try device.createBuffer(
+            descriptor: BufferDescriptor(usage: [.storage, .copySrc, .copyDst], size: UInt64(count * 4)))
+        let readback = try device.createBuffer(
+            descriptor: BufferDescriptor(usage: [.mapRead, .copyDst], size: UInt64(count * 4)))
+
+        device.pushErrorScope(.validation)
+        let commands = try Self.recordDoubling(device: device, storage: storage, readback: readback, count: count)
+        let encoder = try device.createCommandEncoder()
+        encoder.clearBuffer(storage)
+        device.getQueue().submit([try encoder.finish(), commands])
+        let error = try await Self.wait(for: { try await device.popErrorScope() }, instance: instance)
+        #expect(error == nil)
+
+        withExtendedLifetime((instance, adapter, device, storage, readback)) {}
+    }
+
+    @Test
+    @MainActor
+    func reportsAnInvalidComputeDispatch() async throws {
+        let instance = try createInstance()
+        let adapter = try await instance.requestAdapter(
+            options: RequestAdapterOptions(backendType: .null)
+        )
+        let device = try await adapter.requestDevice()
+        let module = try device.createShaderModule(
+            descriptor: ShaderModuleDescriptor(nextInChain: ShaderSourceWGSL(code: Self.doublingShader)))
+        let pipeline = try device.createComputePipeline(
+            descriptor: ComputePipelineDescriptor(compute: ComputeState(module: module, entryPoint: "main")))
+
+        // A dispatch without the bind group the shader needs.
+        device.pushErrorScope(.validation)
+        let encoder = try device.createCommandEncoder()
+        let pass = try encoder.beginComputePass()
+        pass.setPipeline(pipeline)
+        pass.dispatchWorkgroups(x: 1)
+        pass.end()
+        _ = try? encoder.finish()
+        let error = try await Self.wait(for: { try await device.popErrorScope() }, instance: instance)
+        #expect(error?.type == .validation)
+
+        withExtendedLifetime((instance, adapter, device, pipeline)) {}
+    }
+
+    /// Runs on the platform's GPU, where there is one: the null adapter runs
+    /// no shaders.
+    @Test
+    @MainActor
+    func doublesNumbersOnTheGPU() async throws {
+        let instance = try createInstance()
+        guard let adapter = try? await instance.requestAdapter() else { return }
+        let device = try await adapter.requestDevice()
+        let count = 100
+        let values = (0..<UInt32(count)).map { $0 * 3 + 1 }
+        let storage = try device.createBuffer(
+            descriptor: BufferDescriptor(usage: [.storage, .copySrc, .copyDst], size: UInt64(count * 4)))
+        let readback = try device.createBuffer(
+            descriptor: BufferDescriptor(usage: [.mapRead, .copyDst], size: UInt64(count * 4)))
+        values.withUnsafeBytes { device.getQueue().writeBuffer(storage, bufferOffset: 0, data: $0) }
+
+        let commands = try Self.recordDoubling(device: device, storage: storage, readback: readback, count: count)
+        device.getQueue().submit([commands])
+        try await Self.wait(for: { try await readback.mapAsync(mode: .read) }, instance: instance)
+        let bytes = try #require(readback.getConstMappedRange(size: count * 4))
+        let doubled = (0..<count).map { bytes.load(fromByteOffset: $0 * 4, as: UInt32.self) }
+        readback.unmap()
+        #expect(doubled == values.map { $0 * 2 })
+
+        withExtendedLifetime((instance, adapter, device, storage)) {}
+    }
 }

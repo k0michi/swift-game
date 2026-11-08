@@ -19,9 +19,12 @@ public enum WebGPUError: Error, Equatable {
     case shaderSourceSPIRVTooLarge
     case createPipelineLayoutFailed
     case createRenderPipelineFailed
+    case createComputePipelineFailed
+    case getBindGroupLayoutFailed
     case createCommandEncoderFailed
     case createBindGroupLayoutFailed
     case beginRenderPassFailed
+    case beginComputePassFailed
     case finishCommandEncoderFailed
     case presentFailed(status: UInt32)
     case popErrorScopeFailed(status: UInt32, message: String)
@@ -1566,6 +1569,48 @@ public struct RenderPipelineDescriptor {
     }
 }
 
+// WGPUComputeState
+public struct ComputeState {
+    public var nextInChain: (any ChainedStructNode)?
+    public var module: ShaderModule
+    public var entryPoint: String?
+    public var constants: [ConstantEntry]
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        module: ShaderModule,
+        entryPoint: String? = nil,
+        constants: [ConstantEntry] = []
+    ) {
+        self.nextInChain = nextInChain
+        self.module = module
+        self.entryPoint = entryPoint
+        self.constants = constants
+    }
+}
+
+// WGPUComputePipelineDescriptor
+public struct ComputePipelineDescriptor {
+    public var nextInChain: (any ChainedStructNode)?
+    public var label: String?
+    /// nil has the layout made from the shader's bindings, which
+    /// `ComputePipeline.getBindGroupLayout` returns.
+    public var layout: PipelineLayout?
+    public var compute: ComputeState
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        label: String? = nil,
+        layout: PipelineLayout? = nil,
+        compute: ComputeState
+    ) {
+        self.nextInChain = nextInChain
+        self.label = label
+        self.layout = layout
+        self.compute = compute
+    }
+}
+
 // WGPUPresentMode
 public enum PresentMode: UInt32, Sendable {
     case undefined = 0x0000_0000
@@ -1697,6 +1742,21 @@ public struct CommandEncoderDescriptor {
 
 // WGPUCommandBufferDescriptor
 public struct CommandBufferDescriptor {
+    public var nextInChain: (any ChainedStructNode)?
+    public var label: String?
+
+    public init(
+        nextInChain: (any ChainedStructNode)? = nil,
+        label: String? = nil
+    ) {
+        self.nextInChain = nextInChain
+        self.label = label
+    }
+}
+
+// TODO: Migrate WGPUPassTimestampWrites.
+// WGPUComputePassDescriptor
+public struct ComputePassDescriptor {
     public var nextInChain: (any ChainedStructNode)?
     public var label: String?
 
@@ -2066,6 +2126,19 @@ public final class Device: @unchecked Sendable {
         return RenderPipeline(handle: handle, device: self, descriptor: descriptor)
     }
 
+    // wgpuDeviceCreateComputePipeline
+    public func createComputePipeline(
+        descriptor: ComputePipelineDescriptor
+    ) throws -> ComputePipeline {
+        let handle = try withCComputePipelineDescriptor(descriptor) { cDescriptor in
+            guard let handle = wgpuDeviceCreateComputePipeline(self.handle, cDescriptor) else {
+                throw WebGPUError.createComputePipelineFailed
+            }
+            return handle
+        }
+        return ComputePipeline(handle: handle, device: self, descriptor: descriptor)
+    }
+
     // wgpuDeviceCreateSampler
     public func createSampler(
         descriptor: SamplerDescriptor? = nil
@@ -2326,9 +2399,46 @@ public final class RenderPipeline {
         self.descriptor = descriptor
     }
 
+    // wgpuRenderPipelineGetBindGroupLayout
+    /// The layout of bind group `groupIndex`, made from the shaders'
+    /// bindings when the pipeline was made without a layout.
+    public func getBindGroupLayout(groupIndex: UInt32) throws -> BindGroupLayout {
+        guard let layout = wgpuRenderPipelineGetBindGroupLayout(handle, groupIndex) else {
+            throw WebGPUError.getBindGroupLayoutFailed
+        }
+        return BindGroupLayout(handle: layout, device: device)
+    }
+
     deinit {
         // wgpuRenderPipelineRelease
         wgpuRenderPipelineRelease(handle)
+    }
+}
+
+public final class ComputePipeline {
+    let handle: WGPUComputePipeline
+    private let device: Device
+    private let descriptor: ComputePipelineDescriptor
+
+    init(handle: WGPUComputePipeline, device: Device, descriptor: ComputePipelineDescriptor) {
+        self.handle = handle
+        self.device = device
+        self.descriptor = descriptor
+    }
+
+    // wgpuComputePipelineGetBindGroupLayout
+    /// The layout of bind group `groupIndex`, made from the shader's
+    /// bindings when the pipeline was made without a layout.
+    public func getBindGroupLayout(groupIndex: UInt32) throws -> BindGroupLayout {
+        guard let layout = wgpuComputePipelineGetBindGroupLayout(handle, groupIndex) else {
+            throw WebGPUError.getBindGroupLayoutFailed
+        }
+        return BindGroupLayout(handle: layout, device: device)
+    }
+
+    deinit {
+        // wgpuComputePipelineRelease
+        wgpuComputePipelineRelease(handle)
     }
 }
 
@@ -2410,6 +2520,43 @@ public final class CommandEncoder {
             return handle
         }
         return RenderPassEncoder(handle: handle, commandEncoder: self)
+    }
+
+    // wgpuCommandEncoderBeginComputePass
+    public func beginComputePass(
+        descriptor: ComputePassDescriptor = ComputePassDescriptor()
+    ) throws -> ComputePassEncoder {
+        let handle = try withCChain(descriptor.nextInChain) { nextInChain in
+            try withWGPUStringView(descriptor.label) { label in
+                var cDescriptor = WGPUComputePassDescriptor()
+                cDescriptor.nextInChain = nextInChain
+                cDescriptor.label = label
+                guard let handle = wgpuCommandEncoderBeginComputePass(self.handle, &cDescriptor) else {
+                    throw WebGPUError.beginComputePassFailed
+                }
+                return handle
+            }
+        }
+        return ComputePassEncoder(handle: handle, commandEncoder: self)
+    }
+
+    // wgpuCommandEncoderCopyBufferToBuffer
+    public func copyBufferToBuffer(
+        source: Buffer,
+        sourceOffset: UInt64 = 0,
+        destination: Buffer,
+        destinationOffset: UInt64 = 0,
+        size: UInt64
+    ) {
+        wgpuCommandEncoderCopyBufferToBuffer(
+            handle, source.handle, sourceOffset, destination.handle, destinationOffset, size)
+    }
+
+    // wgpuCommandEncoderClearBuffer
+    /// Fills `size` bytes from `offset` with zeros, or the rest of the
+    /// buffer when `size` is `wholeSize`.
+    public func clearBuffer(_ buffer: Buffer, offset: UInt64 = 0, size: UInt64 = wholeSize) {
+        wgpuCommandEncoderClearBuffer(handle, buffer.handle, offset, size)
     }
 
     // wgpuCommandEncoderCopyTextureToBuffer
@@ -2575,6 +2722,60 @@ public final class RenderPassEncoder {
     deinit {
         // wgpuRenderPassEncoderRelease
         wgpuRenderPassEncoderRelease(handle)
+    }
+}
+
+public final class ComputePassEncoder {
+    let handle: WGPUComputePassEncoder
+    private let commandEncoder: CommandEncoder
+
+    init(handle: WGPUComputePassEncoder, commandEncoder: CommandEncoder) {
+        self.handle = handle
+        self.commandEncoder = commandEncoder
+    }
+
+    // wgpuComputePassEncoderSetPipeline
+    public func setPipeline(_ pipeline: ComputePipeline) {
+        wgpuComputePassEncoderSetPipeline(handle, pipeline.handle)
+    }
+
+    // wgpuComputePassEncoderSetBindGroup
+    public func setBindGroup(
+        groupIndex: UInt32,
+        group: BindGroup?,
+        dynamicOffsets: [UInt32] = []
+    ) {
+        dynamicOffsets.withUnsafeBufferPointer { dynamicOffsets in
+            wgpuComputePassEncoderSetBindGroup(
+                handle,
+                groupIndex,
+                group?.handle,
+                dynamicOffsets.count,
+                dynamicOffsets.baseAddress
+            )
+        }
+    }
+
+    // wgpuComputePassEncoderDispatchWorkgroups
+    public func dispatchWorkgroups(x: UInt32, y: UInt32 = 1, z: UInt32 = 1) {
+        wgpuComputePassEncoderDispatchWorkgroups(handle, x, y, z)
+    }
+
+    // wgpuComputePassEncoderDispatchWorkgroupsIndirect
+    /// Dispatches as many workgroups as the three 32-bit counts at
+    /// `indirectOffset` in `indirectBuffer` say.
+    public func dispatchWorkgroupsIndirect(indirectBuffer: Buffer, indirectOffset: UInt64 = 0) {
+        wgpuComputePassEncoderDispatchWorkgroupsIndirect(handle, indirectBuffer.handle, indirectOffset)
+    }
+
+    // wgpuComputePassEncoderEnd
+    public func end() {
+        wgpuComputePassEncoderEnd(handle)
+    }
+
+    deinit {
+        // wgpuComputePassEncoderRelease
+        wgpuComputePassEncoderRelease(handle)
     }
 }
 
@@ -3726,6 +3927,45 @@ private func withCRenderPipelineDescriptor<Result>(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+private func withCComputePipelineDescriptor<Result>(
+    _ descriptor: ComputePipelineDescriptor,
+    body: (UnsafePointer<WGPUComputePipelineDescriptor>) throws -> Result
+) throws -> Result {
+    try withCChain(descriptor.nextInChain) { nextInChain in
+        try withWGPUStringView(descriptor.label) { label in
+            try withCComputeState(descriptor.compute) { compute in
+                var cDescriptor = WGPUComputePipelineDescriptor()
+                cDescriptor.nextInChain = nextInChain
+                cDescriptor.label = label
+                cDescriptor.layout = descriptor.layout?.handle
+                cDescriptor.compute = compute
+                return try withUnsafePointer(to: &cDescriptor, body)
+            }
+        }
+    }
+}
+
+private func withCComputeState<Result>(
+    _ state: ComputeState,
+    body: (WGPUComputeState) throws -> Result
+) throws -> Result {
+    try withCChain(state.nextInChain) { nextInChain in
+        try withWGPUStringView(state.entryPoint) { entryPoint in
+            try withCConstantEntries(state.constants, index: 0, converted: []) { constants in
+                try constants.withUnsafeBufferPointer { constants in
+                    var cState = WGPUComputeState()
+                    cState.nextInChain = nextInChain
+                    cState.module = state.module.handle
+                    cState.entryPoint = entryPoint
+                    cState.constantCount = constants.count
+                    cState.constants = constants.baseAddress
+                    return try body(cState)
                 }
             }
         }
