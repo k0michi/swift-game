@@ -24,7 +24,7 @@ public enum BuildInfo {
             #elseif os(Emscripten)
                 "Emscripten"
             #else
-                "unknown OS"
+                "unknown"
             #endif
         }()
         let architecture: String = {
@@ -35,7 +35,7 @@ public enum BuildInfo {
             #elseif arch(wasm32)
                 "wasm32"
             #else
-                "unknown architecture"
+                "unknown"
             #endif
         }()
         return "\(system) \(architecture)"
