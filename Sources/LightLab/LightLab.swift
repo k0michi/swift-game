@@ -21,10 +21,13 @@ let canvasSize = Vector2<Float>(1280, 720)
 /// V walks the street instead: WASD to walk, shift to run, space to jump, and the mouse to
 /// look, after a click holds it; Esc lets it go.
 ///
-/// `--hour H`, `--focus X Y Z`, `--zoom METERS`, `--yaw DEGREES` and
-/// `--tiles N` lays out N by N copies of the street, `--benchmark` times fixed views and quits, and `--extra-lamps N` adds lamps
-/// that light nothing, to time many of them.
+/// N switches between the street corner and a town 200 m square.
 ///
+/// `--tiles N` starts with N by N copies of the street, `--benchmark` times
+/// fixed views and quits, and `--extra-lamps N` adds lamps that light nothing,
+/// to time many of them.
+///
+/// `--hour H`, `--focus X Y Z`, `--zoom METERS`, `--yaw DEGREES` and
 /// `--pitch DEGREES` set where it starts, `--first-person` starts walking,
 /// `--at X Z` and `--look YAW PITCH` set where and which way, and `--screenshot` saves a
 /// screenshot after 150 frames, and quits.
@@ -46,46 +49,16 @@ struct LightLab: AsyncMain {
         var configuration = try configureSurface(surface, device: device, adapter: adapter, window: window)
 
         let clock = ContinuousClock()
-        var start = clock.now
         func argument(after flag: String) -> Int? {
             guard let index = CommandLine.arguments.firstIndex(of: flag), index + 1 < CommandLine.arguments.count else {
                 return nil
             }
             return Int(CommandLine.arguments[index + 1])
         }
-        var scene = Scene(tiles: max(argument(after: "--tiles") ?? 1, 1))
-        // Lamps too far away to light anything, for timing many lamps.
-        if let count = argument(after: "--extra-lamps") {
-            for _ in 0..<count {
-                scene.lights.append(
-                    PointLight(position: Vector3(-1000, 2, -1000), color: Vector3(1, 1, 1), radius: 5, schedule: .always))
-            }
-        }
-        let built = clock.now - start
-        start = clock.now
-        // Errors in making the pipelines show up once, here, rather than as
-        // a warning about an invalid object each frame.
-        device.pushErrorScope(.validation)
-        let meshes = await SceneMeshes.build(scene.voxels)
-        print(
-            "Voxels: \(scene.voxels.denseBytes / 1_000_000) MB in \(scene.voxels.denseCount) dense sections of \(scene.voxels.sectionCount)."
-        )
-        print("Meshed \(meshes.chunks.count) chunks in \(clock.now - start).")
-        let renderer = try Renderer(device: device, surfaceFormat: configuration.format, scene: scene, meshes: meshes)
-        let popped = Flag()
-        Task {
-            if let error = try? await device.popErrorScope() {
-                print("Could not set up the renderer: \(error.message)")
-            }
-            popped.isSet = true
-        }
-        while !popped.isSet {
-            instance.processEvents()
-            await nextFrame()
-        }
-        print(
-            "Built the scene in \(built), meshed and uploaded it in \(clock.now - start): \(renderer.triangleCount) triangles, \(scene.lights.count) lamps."
-        )
+        var tiles = max(argument(after: "--tiles") ?? 1, 1)
+        let extraLamps = argument(after: "--extra-lamps") ?? 0
+        var (scene, renderer) = try await loadScene(
+            tiles: tiles, extraLamps: extraLamps, device: device, instance: instance, format: configuration.format)
         let shapeRenderer = try ShapeRenderer(device: device, format: configuration.format)
 
         let arguments = CommandLine.arguments
@@ -155,6 +128,9 @@ struct LightLab: AsyncMain {
         var timeRuns = false
         var bloomOn = true
         var takesScreenshot = false
+        // Counts down the frames until the other scene loads, so that the
+        // notice of it is on the screen meanwhile.
+        var framesUntilSwitch: Int?
         var frameCount = 0
         var elapsed: Float = 0
         var lastFrame = clock.now
@@ -178,6 +154,7 @@ struct LightLab: AsyncMain {
                     case .equals: camera.zoom *= 0.8
                     case .t: timeRuns.toggle()
                     case .b: bloomOn.toggle()
+                    case .n where framesUntilSwitch == nil: framesUntilSwitch = 2
                     default: break
                     }
                 case let event as MouseButtonEvent where isFirstPerson && event.down:
@@ -202,6 +179,18 @@ struct LightLab: AsyncMain {
                 }
             }
             guard isRunning else { break }
+            if framesUntilSwitch == 0 {
+                framesUntilSwitch = nil
+                let middle = scene.middleTileOffset
+                tiles = tiles == townTiles ? 1 : townTiles
+                (scene, renderer) = try await loadScene(
+                    tiles: tiles, extraLamps: extraLamps, device: device, instance: instance, format: configuration.format)
+                // Stay at the same place of the street corner.
+                let shift = scene.middleTileOffset - middle
+                camera.focus += Vector3(shift, 0, shift)
+                walker.shift(x: shift, z: shift)
+                lastFrame = clock.now
+            }
             if shouldConfigureSurface,
                 let reconfigured = try? configureSurface(surface, device: device, adapter: adapter, window: window)
             {
@@ -265,7 +254,7 @@ struct LightLab: AsyncMain {
                 let clockText = "\(Int(time.hour)):\(minutes < 10 ? "0" : "")\(minutes)"
                 drawStatus(
                     [
-                        "TIME \(clockText)\(timeRuns ? " RUNNING" : "")  LAMPS \(litLamps) LIT  BLOOM \(bloomOn ? "ON" : "OFF")",
+                        "TIME \(clockText)\(timeRuns ? " RUNNING" : "")  LAMPS \(litLamps) LIT  BLOOM \(bloomOn ? "ON" : "OFF")  \(framesUntilSwitch == nil ? "SCENE \(Int(scene.width)) M  N SWITCH" : "LOADING...")",
                         "TRIANGLES \(renderer.triangleCount)  VOXEL 1/8 M",
                         isFirstPerson
                             ? "WALKING AT \(meters(walker.feet.x)), \(meters(walker.feet.y)), \(meters(walker.feet.z))  WASD WALK  SHIFT RUN  SPACE JUMP  CLICK+MOUSE LOOK  ESC RELEASE  V CAMERA"
@@ -319,11 +308,55 @@ struct LightLab: AsyncMain {
                 _ = try? configureSurface(surface, device: device, adapter: adapter, window: window)
             }
 
+            if let frames = framesUntilSwitch {
+                framesUntilSwitch = frames - 1
+            }
             instance.processEvents()
             await nextFrame()
         }
 
         withExtendedLifetime((system, window, instance, adapter, device, surface, renderer, shapeRenderer)) {}
+    }
+
+    /// How many copies of the street corner across the town is: 200 m.
+    private static let townTiles = 5
+
+    /// Builds `tiles` by `tiles` copies of the street corner and what draws
+    /// them.
+    private static func loadScene(
+        tiles: Int, extraLamps: Int, device: Device, instance: Instance, format: TextureFormat
+    ) async throws -> (Scene, Renderer) {
+        let clock = ContinuousClock()
+        let start = clock.now
+        var scene = Scene(tiles: tiles)
+        // Lamps too far away to light anything, for timing many lamps.
+        for _ in 0..<extraLamps {
+            scene.lights.append(
+                PointLight(position: Vector3(-1000, 2, -1000), color: Vector3(1, 1, 1), radius: 5, schedule: .always))
+        }
+        // Errors in making the pipelines show up once, here, rather than as
+        // a warning about an invalid object each frame.
+        device.pushErrorScope(.validation)
+        let meshes = await SceneMeshes.build(scene.voxels)
+        print(
+            "Voxels: \(scene.voxels.denseBytes / 1_000_000) MB in \(scene.voxels.denseCount) dense sections of \(scene.voxels.sectionCount)."
+        )
+        let renderer = try Renderer(device: device, surfaceFormat: format, scene: scene, meshes: meshes)
+        let popped = Flag()
+        Task {
+            if let error = try? await device.popErrorScope() {
+                print("Could not set up the renderer: \(error.message)")
+            }
+            popped.isSet = true
+        }
+        while !popped.isSet {
+            instance.processEvents()
+            await nextFrame()
+        }
+        print(
+            "Loaded \(Int(scene.width)) m in \(clock.now - start): \(meshes.chunks.count) chunks, \(renderer.triangleCount) triangles, \(scene.lights.count) lamps."
+        )
+        return (scene, renderer)
     }
 
     /// What the scene's shaders read for a view: from `camera`, or through

@@ -40,6 +40,12 @@ struct FirstPerson {
         eyeY = feet.y + Self.eyeHeight
     }
 
+    /// Moves along the ground, as when the world around is replaced.
+    mutating func shift(x: Float, z: Float) {
+        feet.x += x
+        feet.z += z
+    }
+
     var eye: Vector3<Float> { Vector3(feet.x, eyeY, feet.z) }
 
     var forward: Vector3<Float> {
