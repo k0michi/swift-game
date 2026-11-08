@@ -134,10 +134,12 @@ struct City: AsyncMain {
             camera.update(duration: seconds)
 
             let anchor = camera.anchor
-            try streamer.update(
-                around: ChunkStreamer.chunk(containing: anchor.x, anchor.z), budget: .milliseconds(8))
-
             let viewProjection = camera.viewProjection(aspectRatio: canvasSize.x / canvasSize.y)
+            // The view is zoom * 2 meters tall, over the surface's pixels.
+            try streamer.update(
+                anchor: anchor, viewProjection: viewProjection,
+                metersPerPixel: camera.zoom * 2 / Float(configuration.height), budget: .milliseconds(8))
+
             let visible = streamer.visibleChunks(anchor: anchor, viewProjection: viewProjection)
             let focus = camera.focusOffset
             let drawDistance = Float(streamer.radius * ChunkCoordinate.size)
@@ -160,7 +162,7 @@ struct City: AsyncMain {
                 drawStatus(
                     [
                         "FOCUS \(Int(camera.focusX.rounded(.down))), \(Int(camera.focusZ.rounded(.down)))  ZOOM \(Int(camera.zoom)) M  YAW \(degrees(camera.yaw))  PITCH \(degrees(camera.pitch))",
-                        "CHUNKS \(visible.count) DRAWN / \(streamer.chunks.count) LOADED  TRIANGLES \(streamer.triangleCount)",
+                        "CHUNKS \(visible.count) DRAWN / \(streamer.chunks.count) LOADED  TRIANGLES \(streamer.triangleCount)  CELL \(ChunkStreamer.cellSize(metersPerPixel: camera.zoom * 2 / Float(configuration.height))) M",
                         "L-DRAG/WASD MOVE  R-DRAG/R/F TURN+TILT  WHEEL ZOOM  Q/E DIAGONAL  F2 SHOT  F3 OVERLAY",
                     ], into: &shapes)
             }
