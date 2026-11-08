@@ -115,6 +115,8 @@ struct LightLab: AsyncMain {
             "Left-drag or WASD to move, right-drag or R/F to turn and tilt, the wheel to zoom, Q/E to turn to a diagonal, [ and ] to change the hour, T to let time run, B to toggle bloom, F2 to save a screenshot, F3 for the overlay. V walks: WASD, shift to run, space to jump, click to look with the mouse, Esc to let it go."
         )
 
+        // The walking person is left out for now.
+        let showsCharacter = false
         var character = Character(at: Vector3(12, Scene.streetLevel, 18), walking: 10...36)
         var frameGraph = FrameGraph()
         var fpsCounter = FPSCounter()
@@ -216,7 +218,7 @@ struct LightLab: AsyncMain {
             if keys[.rightBracket] { hours += 2 }
             time.hour = (time.hour + hours * seconds).truncatingRemainder(dividingBy: 24)
             if time.hour < 0 { time.hour += 24 }
-            character.update(duration: seconds)
+            if showsCharacter { character.update(duration: seconds) }
 
             let schedule = ScheduleState(night: time.night, elapsed: elapsed)
             let (materials, lights) = lighting(scene: scene, schedule: schedule)
@@ -264,7 +266,7 @@ struct LightLab: AsyncMain {
                 let texture = try surface.getCurrentTexture()
                 let encoder = try device.createCommandEncoder()
                 try renderer.draw(
-                    frame: frame, materials: materials, lights: lights, character: character.mesh(),
+                    frame: frame, materials: materials, lights: lights, character: showsCharacter ? character.mesh() : VoxelMesh(),
                     bloomStrength: bloomOn ? 0.06 : 0, into: try texture.createView(), width: configuration.width,
                     height: configuration.height, encoder: encoder
                 ) { pass in
