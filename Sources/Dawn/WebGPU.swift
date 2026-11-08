@@ -1981,8 +1981,11 @@ public final class Adapter: @unchecked Sendable {
     // wgpuAdapterRequestDevice
     /// A device of the adapter. With `usesAdapterLimits`, it has all the limits
     /// the adapter supports, rather than the defaults, which hold it to 256 MB
-    /// buffers, for one.
-    public func requestDevice(usesAdapterLimits: Bool = false) async throws -> Device {
+    /// buffers, for one. `onLost` is called with Dawn's reason if the device is
+    /// lost, other than by being destroyed or dropped.
+    public func requestDevice(
+        usesAdapterLimits: Bool = false, onLost: (@Sendable (String) -> Void)? = nil
+    ) async throws -> Device {
         let result: DeviceRequestResult = await withCheckedContinuation { continuation in
             let context = DeviceRequestContext(continuation)
             let retainedContext = Unmanaged.passRetained(context).toOpaque()
@@ -1998,16 +2001,28 @@ public final class Adapter: @unchecked Sendable {
                     returning: DeviceRequestResult(status: status, device: device, message: decode(message))
                 )
             }
+            var descriptor = WGPUDeviceDescriptor()
+            if let onLost {
+                // Dawn calls this at most once; it keeps the handler until then.
+                descriptor.deviceLostCallbackInfo.mode = WGPUCallbackMode_AllowSpontaneous
+                descriptor.deviceLostCallbackInfo.userdata1 = Unmanaged.passRetained(DeviceLostContext(onLost)).toOpaque()
+                descriptor.deviceLostCallbackInfo.callback = { _, reason, message, userdata1, _ in
+                    guard let userdata1 else { return }
+                    let context = Unmanaged<DeviceLostContext>.fromOpaque(userdata1).takeRetainedValue()
+                    if reason != WGPUDeviceLostReason_Destroyed && reason != WGPUDeviceLostReason_CallbackCancelled {
+                        context.onLost(decode(message))
+                    }
+                }
+            }
             if usesAdapterLimits {
                 var limits = WGPULimits()
                 _ = wgpuAdapterGetLimits(handle, &limits)
                 withUnsafePointer(to: &limits) { limits in
-                    var descriptor = WGPUDeviceDescriptor()
                     descriptor.requiredLimits = limits
                     _ = wgpuAdapterRequestDevice(handle, &descriptor, callbackInfo)
                 }
             } else {
-                _ = wgpuAdapterRequestDevice(handle, nil, callbackInfo)
+                _ = wgpuAdapterRequestDevice(handle, &descriptor, callbackInfo)
             }
         }
 
@@ -3094,6 +3109,14 @@ private extension AdapterInfo {
             subgroupMinSize: info.subgroupMinSize,
             subgroupMaxSize: info.subgroupMaxSize
         )
+    }
+}
+
+private final class DeviceLostContext {
+    let onLost: @Sendable (String) -> Void
+
+    init(_ onLost: @escaping @Sendable (String) -> Void) {
+        self.onLost = onLost
     }
 }
 

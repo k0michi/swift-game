@@ -40,7 +40,9 @@ struct LightLab: AsyncMain {
         let surface = try instance.createSurface(from: window)
         let adapter = try await instance.requestAdapter(options: platformAdapterOptions())
         // The voxels of a large scene take a texture larger than the defaults allow.
-        let device = try await adapter.requestDevice(usesAdapterLimits: true)
+        let device = try await adapter.requestDevice(usesAdapterLimits: true) { reason in
+            print("The GPU device was lost: \(reason)")
+        }
         let deviceDetails = (try? describe(adapter.getInfo())) ?? []
         var configuration = try configureSurface(surface, device: device, adapter: adapter, window: window)
 
@@ -448,4 +450,5 @@ struct LightLab: AsyncMain {
 @MainActor
 final class Flag {
     var isSet = false
+    var error: (any Error)?
 }

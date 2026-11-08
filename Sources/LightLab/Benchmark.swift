@@ -1,6 +1,23 @@
 import Dawn
 import VectorMath
 
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#elseif canImport(ucrt)
+    import ucrt
+#endif
+
+/// Prints why the benchmark failed, for even a pipe to see: the throw that
+/// follows ends the process, and with it what is buffered.
+private func reportFailure(_ text: String) {
+    print(text)
+    #if canImport(Darwin) || canImport(Glibc) || canImport(ucrt)
+        fflush(nil)
+    #endif
+}
+
 extension LightLab {
     /// A view to time, and the hour to time it at.
     private struct BenchmarkView {
@@ -16,7 +33,8 @@ extension LightLab {
 
     /// Times fixed views at a fixed size, away from the screen and its
     /// refresh, waiting for the GPU to finish every frame, and prints the
-    /// median and the 95th percentile of each view.
+    /// median and the 95th percentile of each view. Throws if the GPU reports
+    /// an error or the device is lost, as then nothing was really drawn.
     static func runBenchmark(
         device: Device, instance: Instance, renderer: Renderer, scene: Scene, format: TextureFormat
     ) async throws {
@@ -58,6 +76,7 @@ extension LightLab {
             let frame = frameUniforms(
                 scene: scene, time: time, lampCount: lit.litCount, camera: view.camera, walker: view.walker,
                 aspect: Float(benchmarkSize.width) / Float(benchmarkSize.height))
+            device.pushErrorScope(.validation)
             var samples: [Double] = []
             for index in 0..<(warmUpFrames + timedFrames) {
                 let start = clock.now
@@ -70,12 +89,20 @@ extension LightLab {
                 device.getQueue().submit([try encoder.finish()])
                 let mapped = Flag()
                 Task {
-                    try? await fenceCopy.mapAsync(mode: .read)
+                    do {
+                        try await fenceCopy.mapAsync(mode: .read)
+                    } catch {
+                        mapped.error = error
+                    }
                     mapped.isSet = true
                 }
                 while !mapped.isSet {
                     instance.processEvents()
                     await Task.yield()
+                }
+                if let error = mapped.error {
+                    reportFailure("benchmark failed at \(view.name): \(error)")
+                    throw error
                 }
                 fenceCopy.unmap()
                 if index >= warmUpFrames {
@@ -83,6 +110,25 @@ extension LightLab {
                     samples.append(Double(seconds) * 1000 + Double(attoseconds) / 1e15)
                 }
             }
+            let scopeDone = Flag()
+            var scopeError: DeviceError?
+            Task {
+                do {
+                    scopeError = try await device.popErrorScope()
+                } catch {
+                    scopeDone.error = error
+                }
+                scopeDone.isSet = true
+            }
+            while !scopeDone.isSet {
+                instance.processEvents()
+                await Task.yield()
+            }
+            if let error = scopeDone.error ?? scopeError {
+                reportFailure("benchmark failed at \(view.name): \(error)")
+                throw error
+            }
+
             samples.sort()
             let median = samples[samples.count / 2]
             let high = samples[samples.count * 95 / 100]
