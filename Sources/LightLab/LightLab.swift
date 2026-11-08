@@ -18,7 +18,7 @@ let canvasSize = Vector2<Float>(1280, 720)
 /// back and on, T lets it run, and B toggles bloom. F2 saves a screenshot,
 /// and F3 toggles the overlay.
 ///
-/// V walks the street instead: WASD to walk, shift to run, and the mouse to
+/// V walks the street instead: WASD to walk, shift to run, space to jump, and the mouse to
 /// look, after a click holds it; Esc lets it go.
 ///
 /// `--hour H`, `--focus X Y Z`, `--zoom METERS`, `--yaw DEGREES` and
@@ -112,7 +112,7 @@ struct LightLab: AsyncMain {
         }
 
         print(
-            "Left-drag or WASD to move, right-drag or R/F to turn and tilt, the wheel to zoom, Q/E to turn to a diagonal, [ and ] to change the hour, T to let time run, B to toggle bloom, F2 to save a screenshot, F3 for the overlay. V walks: WASD, shift to run, click to look with the mouse, Esc to let it go."
+            "Left-drag or WASD to move, right-drag or R/F to turn and tilt, the wheel to zoom, Q/E to turn to a diagonal, [ and ] to change the hour, T to let time run, B to toggle bloom, F2 to save a screenshot, F3 for the overlay. V walks: WASD, shift to run, space to jump, click to look with the mouse, Esc to let it go."
         )
 
         var character = Character(at: Vector3(12, Scene.streetLevel, 18), walking: 10...36)
@@ -201,6 +201,7 @@ struct LightLab: AsyncMain {
             if keys[.w] || keys[.up] { direction.y += 1 }
             if keys[.s] || keys[.down] { direction.y -= 1 }
             if isFirstPerson {
+                if keys[.space] { walker.jump() }
                 walker.update(input: direction, running: keys[.lShift], duration: seconds, grid: scene.grid)
             } else {
                 camera.move(screen: direction * (camera.zoom * 1.5 * seconds))
@@ -248,7 +249,7 @@ struct LightLab: AsyncMain {
                         "TIME \(clockText)\(timeRuns ? " RUNNING" : "")  LAMPS \(lights.count / 2) LIT  BLOOM \(bloomOn ? "ON" : "OFF")",
                         "TRIANGLES \(renderer.triangleCount)  VOXEL 1/8 M",
                         isFirstPerson
-                            ? "WALKING AT \(meters(walker.feet.x)), \(meters(walker.feet.y)), \(meters(walker.feet.z))  WASD WALK  SHIFT RUN  CLICK+MOUSE LOOK  ESC RELEASE  V CAMERA"
+                            ? "WALKING AT \(meters(walker.feet.x)), \(meters(walker.feet.y)), \(meters(walker.feet.z))  WASD WALK  SHIFT RUN  SPACE JUMP  CLICK+MOUSE LOOK  ESC RELEASE  V CAMERA"
                             : "L-DRAG/WASD MOVE  R-DRAG/R/F TURN+TILT  WHEEL ZOOM  [ ] HOUR  T RUN  B BLOOM  V WALK",
                     ], into: &shapes)
             }

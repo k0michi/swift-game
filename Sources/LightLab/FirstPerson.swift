@@ -2,7 +2,7 @@ import RealModule
 import VectorMath
 
 /// A view from the eyes of someone walking through the voxels: stopped by
-/// what is solid, climbing low steps and falling off ledges.
+/// what is solid, climbing low steps, jumping and falling off ledges.
 struct FirstPerson {
     /// Where the feet are, in meters.
     private(set) var feet: Vector3<Float>
@@ -13,7 +13,9 @@ struct FirstPerson {
     var pitch: Float = 0 {
         didSet { pitch = min(max(pitch, -Self.pitchLimit), Self.pitchLimit) }
     }
+    /// How fast the body is falling, or rising if negative.
     private var fallSpeed: Float = 0
+    private var isOnGround = false
     /// The height of the eyes, which eases over steps.
     private var eyeY: Float
 
@@ -25,6 +27,7 @@ struct FirstPerson {
     private static let walkSpeed: Float = 2.2
     private static let runSpeed: Float = 5
     private static let gravity: Float = 12
+    private static let jumpHeight: Float = 1
     private static let pitchLimit: Float = 1.5
     private static let fieldOfView: Float = 70 * .pi / 180
     private static let lookPerPoint: Float = 0.0025
@@ -57,6 +60,13 @@ struct FirstPerson {
         pitch -= delta.y * Self.lookPerPoint
     }
 
+    /// Leaps, if standing on something.
+    mutating func jump() {
+        guard isOnGround else { return }
+        isOnGround = false
+        fallSpeed = -(2 * Self.gravity * Self.jumpHeight).squareRoot()
+    }
+
     /// Walks for `duration` seconds, by `input`: x to the right of the view,
     /// y ahead.
     mutating func update(input: Vector2<Float>, running: Bool, duration: Float, grid: VoxelGrid) {
@@ -78,14 +88,32 @@ struct FirstPerson {
             }
         }
 
+        // The mean speed over the frame, so that a leap is as high at any
+        // frame rate.
+        let speedBefore = fallSpeed
         fallSpeed += Self.gravity * duration
-        var fall = fallSpeed * duration
+        let moved = (speedBefore + fallSpeed) / 2 * duration
+        var rise = -moved
+        while rise > 0 {
+            let lift = min(rise, Self.voxel / 2)
+            if collides(x: feet.x, y: feet.y + lift, z: feet.z, grid: grid) {
+                // A ceiling ends the leap.
+                fallSpeed = 0
+                break
+            }
+            feet.y += lift
+            rise -= lift
+        }
+
+        isOnGround = false
+        var fall = moved
         while fall > 0 {
             let drop = min(fall, Self.voxel / 2)
             if collides(x: feet.x, y: feet.y - drop, z: feet.z, grid: grid) {
                 // Stands on the top of the voxel below.
                 feet.y = (feet.y * Float(voxelsPerMeter)).rounded(.down) * Self.voxel
                 fallSpeed = 0
+                isOnGround = true
                 break
             }
             feet.y -= drop
@@ -114,11 +142,9 @@ struct FirstPerson {
     /// glass included.
     private func collides(x: Float, y: Float, z: Float, grid: VoxelGrid) -> Bool {
         let scale = Float(voxelsPerMeter)
-        // A hair off each face, so that touching a voxel is not being in it.
-        let skin: Float = 0.001
         let xs = Int(((x - Self.radius) * scale).rounded(.down))...Int(((x + Self.radius) * scale).rounded(.down))
         let zs = Int(((z - Self.radius) * scale).rounded(.down))...Int(((z + Self.radius) * scale).rounded(.down))
-        let ys = Int(((y + skin) * scale).rounded(.down))...Int(((y + Self.height) * scale).rounded(.down))
+        let ys = Int((y * scale).rounded(.down))...Int(((y + Self.height) * scale).rounded(.down))
         for cellY in ys {
             for cellZ in zs {
                 for cellX in xs where grid[cellX, cellY, cellZ] != Materials.air {
