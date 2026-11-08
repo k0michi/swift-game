@@ -89,6 +89,15 @@ struct LightLab: AsyncMain {
             camera.pitch = pitch[0] * .pi / 180
         }
         let screenshotsAndQuits = arguments.contains("--screenshot")
+        let startFocus: Vector3<Float>
+        if arguments.contains("--first-person") {
+            let at = values(after: "--at", count: 2) ?? [scene.spawn.x, scene.spawn.y]
+            startFocus = Vector3(at[0], Scene.streetLevel, at[1])
+        } else {
+            startFocus = camera.focus
+        }
+        // Timing and screenshots want the same world every time.
+        try await renderer.load(around: startFocus, everything: screenshotsAndQuits || arguments.contains("--benchmark"))
         if arguments.contains("--benchmark") {
             try await runBenchmark(
                 device: device, instance: instance, renderer: renderer, scene: scene, format: configuration.format)
@@ -194,6 +203,7 @@ struct LightLab: AsyncMain {
                 let (yaw, pitch) = (walker.yaw, walker.pitch)
                 walker = FirstPerson(feet: Vector3(scene.spawn.x, Scene.streetLevel, scene.spawn.y), yaw: yaw)
                 walker.pitch = pitch
+                try await renderer.load(around: isFirstPerson ? walker.eye : camera.focus, everything: false)
                 lastFrame = clock.now
             }
             if shouldConfigureSurface,
@@ -336,12 +346,10 @@ struct LightLab: AsyncMain {
     private static func loadScene(
         _ choice: SceneChoice, extraLamps: Int, device: Device, instance: Instance, format: TextureFormat
     ) async throws -> (Scene, Renderer) {
-        let clock = ContinuousClock()
-        let start = clock.now
         var scene: Scene
         switch choice {
         case .tiles(let tiles): scene = await Scene(tiles: tiles)
-        case .town(let seed): scene = await Scene(townSeed: seed)
+        case .town(let seed): scene = Scene(townSeed: seed)
         }
         // Lamps too far away to light anything, for timing many lamps.
         for _ in 0..<extraLamps {
@@ -351,12 +359,7 @@ struct LightLab: AsyncMain {
         // Errors in making the pipelines show up once, here, rather than as
         // a warning about an invalid object each frame.
         device.pushErrorScope(.validation)
-        let meshes = await SceneMeshes.build(scene.voxels)
-        print(
-            "Voxels: \(scene.voxels.denseBytes / 1_000_000) MB in \(scene.voxels.denseCount) dense sections of \(scene.voxels.sectionCount)."
-        )
-        let renderer = try Renderer(device: device, surfaceFormat: format, scene: scene, meshes: meshes)
-        try await renderer.bakeSkyVisibility()
+        let renderer = try Renderer(device: device, surfaceFormat: format, scene: scene)
         let popped = Flag()
         Task {
             if let error = try? await device.popErrorScope() {
@@ -368,9 +371,6 @@ struct LightLab: AsyncMain {
             instance.processEvents()
             await nextFrame()
         }
-        print(
-            "Loaded \(Int(scene.width)) m in \(clock.now - start): \(meshes.chunks.count) chunks, \(renderer.triangleCount) triangles, \(scene.lights.count) lamps."
-        )
         return (scene, renderer)
     }
 

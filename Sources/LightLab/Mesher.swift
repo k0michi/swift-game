@@ -18,6 +18,13 @@ struct VoxelMesh {
         return byte(normal.x) | byte(normal.y) << 8 | byte(normal.z) << 16
     }
 
+    /// Adds the triangles of another mesh.
+    mutating func append(_ other: VoxelMesh) {
+        let first = UInt32(vertices.count / Self.wordsPerVertex)
+        vertices += other.vertices
+        indices += other.indices.map { $0 + first }
+    }
+
     mutating func appendVertex(position: Vector3<Float>, normal: UInt32, material: UInt8, occlusion: Int) {
         vertices += [
             position.x.bitPattern, position.y.bitPattern, position.z.bitPattern, normal,

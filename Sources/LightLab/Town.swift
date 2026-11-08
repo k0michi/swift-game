@@ -92,9 +92,13 @@ struct Town {
     /// Roads running along z, by their x; and along x, by their z.
     private var alongZ: [Road] = []
     private var alongX: [Road] = []
+    /// The lots still to build, last first.
+    private var pendingLots: [PendingLot] = []
 
-    /// Builds the voxels over `x` and `z`, a range of voxels each way.
-    init(seed: UInt64, x: Range<Int>, z: Range<Int>) {
+    /// Builds the voxels over `x` and `z`, a range of voxels each way. With
+    /// `lotsLater`, the lots wait for `buildNextLot`, so that the work can be
+    /// spread over frames.
+    init(seed: UInt64, x: Range<Int>, z: Range<Int>, lotsLater: Bool = false) {
         self.seed = seed
         originX = x.lowerBound
         originZ = z.lowerBound
@@ -111,7 +115,17 @@ struct Town {
         buildRailway()
         buildMarkings()
         buildStreetFurniture()
-        buildBlocks()
+        findLots()
+        if !lotsLater {
+            while buildNextLot() {}
+        }
+    }
+
+    /// Builds one more lot, and says whether any are left.
+    mutating func buildNextLot() -> Bool {
+        guard let next = pendingLots.popLast() else { return false }
+        buildLot(next.lot, in: next.block, roadSides: next.roadSides)
+        return !pendingLots.isEmpty
     }
 
     /// Where someone on foot may start: on a road, near a point.
@@ -393,7 +407,13 @@ struct Town {
         var depth: Float { z1 - z0 }
     }
 
-    private mutating func buildBlocks() {
+    private struct PendingLot {
+        var lot: Rect
+        var block: Rect
+        var roadSides: (west: Bool, east: Bool, north: Bool, south: Bool)
+    }
+
+    private mutating func findLots() {
         let xObstacles = alongZ.map { (center: $0.center, half: $0.half) }
         let zObstacles = alongX.map { (center: $0.center, half: $0.half) } + [(railZ, Self.railHalf)]
         for (x0, x1) in stretches(between: xObstacles) where x1 - x0 >= 6 && x1 > lowX && x0 < highX {
@@ -408,7 +428,7 @@ struct Town {
                 var lots: [Rect] = []
                 Self.split(block, largest: largest, random: &random, into: &lots)
                 for lot in lots where lot.x1 > lowX && lot.x0 < highX && lot.z1 > lowZ && lot.z0 < highZ {
-                    buildLot(lot, in: block, roadSides: roadSides)
+                    pendingLots.append(PendingLot(lot: lot, block: block, roadSides: roadSides))
                 }
             }
         }

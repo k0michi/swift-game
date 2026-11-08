@@ -46,6 +46,18 @@ final class Renderer {
     static let windowBudget = Duration.milliseconds(2)
     /// How many voxels of the grid a cell of the sky's grid covers each way.
     static let skyCellSize = 4
+    /// How many chunks across the texture the sky is baked from holds: three
+    /// are needed around the chunk being baked, and a ring is a power of two.
+    static let bakeWindowChunks = 4
+    /// How long a frame may spend making chunks.
+    static let streamingBudget = Duration.milliseconds(4)
+    /// How long to work between showing frames while there is nothing to see.
+    static let loadingBudget = Duration.milliseconds(12)
+    /// How many chunks around the focus are made before the first frame.
+    static let startingRadius = 2
+    /// How much room the lamps' grid has for its lists.
+    static let lampIndexWidth = 1024
+    static let lampIndexRows = 128
 
     private let device: Device
     private let queue: Queue
@@ -63,6 +75,8 @@ final class Renderer {
     private let materialBuffer: Buffer
     private let lightTexture: Texture
     private let lightTextureHeight: UInt32
+    private let cellTexture: Texture
+    private let indexTexture: Texture
     private let settingsBuffer: Buffer
     private let shadowView: TextureView
     private let sceneBindGroup: BindGroup
@@ -80,10 +94,36 @@ final class Renderer {
         var opaque: Mesh?
         var glass: Mesh?
     }
-    private let chunks: [Chunk]
-    private let voxels: SparseVoxels
+    private var chunks: [Chunk] = []
+    private let world: World
+    private var voxels: SparseVoxels { world.voxels }
     private let occupancyTexture: Texture
     private let skyTexture: Texture
+    private let bakeOccupancyTexture: Texture
+    private let bakePipeline: ComputePipeline
+    private let bakeLayout: BindGroupLayout
+    private let bakeOccupancyView: TextureView
+    private let bakeOutputView: TextureView
+    /// Which chunk each slot of the baking texture holds.
+    private var bakeSlots = [SIMD2<Int>?](repeating: nil, count: Renderer.bakeWindowChunks * Renderer.bakeWindowChunks)
+
+    /// The piece of making a chunk that is under way.
+    private enum Job {
+        case generating(SIMD2<Int>, Town)
+        case meshing(SIMD2<Int>, ChunkMeshing)
+        /// Loading the chunks around one into the baking texture, the last
+        /// first, from a slice of the last, and then baking.
+        case baking(SIMD2<Int>, pending: [SIMD2<Int>], nextSlice: Int)
+    }
+    private var job: Job?
+    private var isMeshed: [Bool]
+    private var isBaked: [Bool]
+    /// The chunks of the world, nearest the focus first, and that focus.
+    private var chunkOrder: [SIMD2<Int>] = []
+    private var orderCenter: SIMD2<Int>?
+    private var lampsChanged = false
+    /// Whether every chunk has been made.
+    private(set) var isComplete = false
     /// A move of the window that is under way: the chunks still to write,
     /// and the slice next to write of the last of them.
     private struct WindowMove {
@@ -116,7 +156,7 @@ final class Renderer {
     }
     private var targets: Targets?
 
-    init(device: Device, surfaceFormat: TextureFormat, scene: Scene, meshes: SceneMeshes) throws {
+    init(device: Device, surfaceFormat: TextureFormat, scene: Scene) throws {
         self.device = device
         let queue = device.getQueue()
         self.queue = queue
@@ -145,7 +185,9 @@ final class Renderer {
                 format: Self.depthFormat))
         shadowView = try shadowTexture.createView()
         let voxels = scene.voxels
-        self.voxels = voxels
+        world = scene.world
+        isMeshed = [Bool](repeating: false, count: scene.world.chunksX * scene.world.chunksZ)
+        isBaked = isMeshed
         occupancyTexture = try device.createTexture(
             descriptor: TextureDescriptor(
                 label: "occupancy", usage: [.textureBinding, .copyDst], dimension: .`3D`,
@@ -162,6 +204,22 @@ final class Renderer {
                     depthOrArrayLayers: UInt32(voxels.height / Self.skyCellSize)),
                 format: .rgba16Float))
         let skyView = try skyTexture.createView()
+        bakeOutputView = skyView
+        bakeOccupancyTexture = try device.createTexture(
+            descriptor: TextureDescriptor(
+                label: "baking occupancy", usage: [.textureBinding, .copyDst], dimension: .`3D`,
+                size: Extent3D(
+                    width: UInt32(Self.bakeWindowChunks * SceneChunk.size),
+                    height: UInt32(Self.bakeWindowChunks * SceneChunk.size), depthOrArrayLayers: UInt32(voxels.height)),
+                format: .r8Uint))
+        bakeOccupancyView = try bakeOccupancyTexture.createView()
+        let bakeModule = try device.createShaderModule(
+            descriptor: ShaderModuleDescriptor(
+                nextInChain: ShaderSourceWGSL(code: Shaders.skyVisibility), label: "sky visibility"))
+        bakePipeline = try device.createComputePipeline(
+            descriptor: ComputePipelineDescriptor(
+                label: "sky visibility", compute: ComputeState(module: bakeModule, entryPoint: "main")))
+        bakeLayout = try bakePipeline.getBindGroupLayout(groupIndex: 0)
 
         linearSampler = try device.createSampler(
             descriptor: SamplerDescriptor(
@@ -174,39 +232,28 @@ final class Renderer {
 
         // The lamps: their positions and colors, which change as they go on
         // and off, and which of them reach each square of the ground.
-        let lightTextureHeight = UInt32(max((scene.lights.count * 2 + Self.lightTextureWidth - 1) / Self.lightTextureWidth, 1))
+        let lampRoom = max(scene.lights.count, World.maxLamps)
+        let lightTextureHeight = UInt32((lampRoom * 2 + Self.lightTextureWidth - 1) / Self.lightTextureWidth)
         self.lightTextureHeight = lightTextureHeight
         lightTexture = try device.createTexture(
             descriptor: TextureDescriptor(
                 label: "lamps", usage: [.textureBinding, .copyDst], dimension: .`2D`,
                 size: Extent3D(width: UInt32(Self.lightTextureWidth), height: lightTextureHeight, depthOrArrayLayers: 1),
                 format: .rgba32Float))
-        let lightGrid = LightGrid(lights: scene.lights, sceneWidth: scene.width, sceneDepth: scene.depth)
+        let (gridWidth, gridDepth) = LightGrid.dimensions(sceneWidth: scene.width, sceneDepth: scene.depth)
         let cellTexture = try device.createTexture(
             descriptor: TextureDescriptor(
                 label: "lamp cells", usage: [.textureBinding, .copyDst], dimension: .`2D`,
-                size: Extent3D(width: UInt32(lightGrid.width), height: UInt32(lightGrid.depth), depthOrArrayLayers: 1),
+                size: Extent3D(width: UInt32(gridWidth), height: UInt32(gridDepth), depthOrArrayLayers: 1),
                 format: .rg32Uint))
-        lightGrid.cells.withUnsafeBytes { data in
-            queue.writeTexture(
-                destination: TexelCopyTextureInfo(texture: cellTexture), data: data,
-                dataLayout: TexelCopyBufferLayout(bytesPerRow: UInt32(lightGrid.width * 8), rowsPerImage: UInt32(lightGrid.depth)),
-                writeSize: Extent3D(width: UInt32(lightGrid.width), height: UInt32(lightGrid.depth), depthOrArrayLayers: 1))
-        }
-        let indexWidth = 1024
-        let indexHeight = (lightGrid.indices.count + indexWidth - 1) / indexWidth
-        let paddedIndices = lightGrid.indices + [UInt32](repeating: 0, count: indexWidth * indexHeight - lightGrid.indices.count)
+        self.cellTexture = cellTexture
         let indexTexture = try device.createTexture(
             descriptor: TextureDescriptor(
                 label: "lamp indices", usage: [.textureBinding, .copyDst], dimension: .`2D`,
-                size: Extent3D(width: UInt32(indexWidth), height: UInt32(indexHeight), depthOrArrayLayers: 1),
+                size: Extent3D(
+                    width: UInt32(Self.lampIndexWidth), height: UInt32(Self.lampIndexRows), depthOrArrayLayers: 1),
                 format: .r32Uint))
-        paddedIndices.withUnsafeBytes { data in
-            queue.writeTexture(
-                destination: TexelCopyTextureInfo(texture: indexTexture), data: data,
-                dataLayout: TexelCopyBufferLayout(bytesPerRow: UInt32(indexWidth * 4), rowsPerImage: UInt32(indexHeight)),
-                writeSize: Extent3D(width: UInt32(indexWidth), height: UInt32(indexHeight), depthOrArrayLayers: 1))
-        }
+        self.indexTexture = indexTexture
 
         let fragmentAndVertex: ShaderStage = [.vertex, .fragment]
         sceneLayout = try device.createBindGroupLayout(
@@ -327,18 +374,11 @@ final class Renderer {
         upPipeline = try postPipeline("up", format: Self.hdrFormat, blend: additive)
         compositePipeline = try postPipeline("composite", format: surfaceFormat)
 
-        // The scene's meshes, which never change.
-        chunks = try meshes.chunks.map { chunk in
-            Chunk(
-                minimum: chunk.minimum, maximum: chunk.maximum,
-                opaque: try Self.upload(chunk.opaque, device: device, queue: queue),
-                glass: try Self.upload(chunk.glass, device: device, queue: queue))
-        }
-        triangleCount = meshes.chunks.reduce(0) { $0 + $1.opaque.triangleCount + $1.glass.triangleCount }
+        writeLampGrid()
     }
 
-    /// How many triangles the scene is, without the person.
-    let triangleCount: Int
+    /// How many triangles are made so far, without the person.
+    private(set) var triangleCount = 0
 
     private static func upload(_ mesh: VoxelMesh, device: Device, queue: Queue) throws -> Mesh? {
         guard !mesh.indices.isEmpty else { return nil }
@@ -373,16 +413,21 @@ final class Renderer {
 
     /// Writes one slice of a chunk's occupancy into its slot of the texture.
     private func uploadSlice(_ slice: Int, of chunk: SIMD2<Int>) {
+        uploadSlice(slice, of: chunk, into: occupancyTexture, chunksAcross: Self.windowChunks)
+    }
+
+    private func uploadSlice(_ slice: Int, of chunk: SIMD2<Int>, into texture: Texture, chunksAcross: Int) {
         let size = SceneChunk.size
+        func wrapped(_ value: Int) -> Int { ((value % chunksAcross) + chunksAcross) % chunksAcross }
         let occupancy = voxels.occupancySlice(
             x: (chunk.x * size)..<((chunk.x + 1) * size), z: (chunk.y * size)..<((chunk.y + 1) * size), slice: slice)
         let height = SparseVoxels.sliceHeight
         occupancy.withUnsafeBytes { data in
             queue.writeTexture(
                 destination: TexelCopyTextureInfo(
-                    texture: occupancyTexture,
+                    texture: texture,
                     origin: Origin3D(
-                        x: UInt32(Self.modulo(chunk.x) * size), y: UInt32(Self.modulo(chunk.y) * size),
+                        x: UInt32(wrapped(chunk.x) * size), y: UInt32(wrapped(chunk.y) * size),
                         z: UInt32(slice * height))),
                 data: data,
                 dataLayout: TexelCopyBufferLayout(bytesPerRow: UInt32(size), rowsPerImage: UInt32(size)),
@@ -438,11 +483,12 @@ final class Renderer {
             return Self.windowUniform(low: SIMD2(repeating: 0), high: SIMD2(repeating: 0))
         }
         if windowMove == nil {
-            guard center != current else {
+            let missing = missingChunks(centerX: centerX, centerZ: centerZ)
+            guard !missing.isEmpty else {
                 let bounds = Self.windowBounds(current)
                 return Self.windowUniform(low: bounds.low, high: bounds.high)
             }
-            windowMove = WindowMove(center: center, pending: missingChunks(centerX: centerX, centerZ: centerZ))
+            windowMove = WindowMove(center: center, pending: missing)
         }
         var bounds = Self.windowBounds(current)
         guard var move = windowMove else {
@@ -477,57 +523,206 @@ final class Renderer {
         return Self.windowUniform(low: bounds.low, high: bounds.high)
     }
 
-    /// Bakes how much of the sky each cell of a coarse grid sees, with a
-    /// compute shader, a square of chunks at a time, with the window moved so
-    /// that it holds what is around them.
-    func bakeSkyVisibility() async throws {
-        let module = try device.createShaderModule(
-            descriptor: ShaderModuleDescriptor(
-                nextInChain: ShaderSourceWGSL(code: Shaders.skyVisibility), label: "sky visibility"))
-        let pipeline = try device.createComputePipeline(
-            descriptor: ComputePipelineDescriptor(
-                label: "sky visibility", compute: ComputeState(module: module, entryPoint: "main")))
-        let layout = try pipeline.getBindGroupLayout(groupIndex: 0)
-        let occupancyView = try occupancyTexture.createView()
-        let skyView = try skyTexture.createView()
-        let chunkSize = SceneChunk.size
-        let chunksPerStep = 3
-        let cellsPerChunk = chunkSize / Self.skyCellSize
-        // A town need not be a whole number of chunks: the last ones count too.
-        let chunksX = (voxels.width + chunkSize - 1) / chunkSize
-        let chunksZ = (voxels.depth + chunkSize - 1) / chunkSize
-        for stepZ in stride(from: 0, to: max(chunksZ, 1), by: chunksPerStep) {
-            for stepX in stride(from: 0, to: max(chunksX, 1), by: chunksPerStep) {
-                let window = await moveWindow(
-                    centerX: stepX + chunksPerStep / 2, centerZ: stepZ + chunksPerStep / 2)
-                let parameters: [Int32] = [
-                    Int32(window.x), Int32(window.y), Int32(window.z), 0,
-                    Int32(stepX * cellsPerChunk), Int32(stepZ * cellsPerChunk),
-                    Int32(chunksPerStep * cellsPerChunk), Int32(chunksPerStep * cellsPerChunk),
-                    Int32(voxels.width), Int32(voxels.height), Int32(voxels.depth), Int32(Self.skyCellSize),
-                ]
-                let uniform = try device.createBuffer(
-                    descriptor: BufferDescriptor(usage: [.uniform, .copyDst], size: UInt64(parameters.count * 4)))
-                parameters.withUnsafeBytes { queue.writeBuffer(uniform, bufferOffset: 0, data: $0) }
-                let bindGroup = try device.createBindGroup(
-                    descriptor: BindGroupDescriptor(
-                        layout: layout,
-                        entries: [
-                            BindGroupEntry(binding: 0, textureView: occupancyView),
-                            BindGroupEntry(binding: 1, textureView: skyView),
-                            BindGroupEntry(binding: 2, buffer: uniform),
-                        ]))
-                let encoder = try device.createCommandEncoder()
-                let pass = try encoder.beginComputePass(descriptor: ComputePassDescriptor(label: "sky visibility"))
-                pass.setPipeline(pipeline)
-                pass.setBindGroup(groupIndex: 0, group: bindGroup)
-                pass.dispatchWorkgroups(
-                    x: UInt32((chunksPerStep * cellsPerChunk + 3) / 4), y: UInt32((chunksPerStep * cellsPerChunk + 3) / 4),
-                    z: UInt32((voxels.height / Self.skyCellSize + 3) / 4))
-                pass.end()
-                queue.submit([try encoder.finish()])
-            }
+    // MARK: Making chunks
+
+    /// Writes which lamps reach each square of the ground.
+    private func writeLampGrid() {
+        let grid = LightGrid(lights: world.lights, sceneWidth: Float(voxels.width) / Float(voxelsPerMeter), sceneDepth: Float(voxels.depth) / Float(voxelsPerMeter))
+        grid.cells.withUnsafeBytes { data in
+            queue.writeTexture(
+                destination: TexelCopyTextureInfo(texture: cellTexture), data: data,
+                dataLayout: TexelCopyBufferLayout(bytesPerRow: UInt32(grid.width * 8), rowsPerImage: UInt32(grid.depth)),
+                writeSize: Extent3D(width: UInt32(grid.width), height: UInt32(grid.depth), depthOrArrayLayers: 1))
         }
+        let width = Self.lampIndexWidth
+        let rows = min((grid.indices.count + width - 1) / width, Self.lampIndexRows)
+        var indices = Array(grid.indices.prefix(width * rows))
+        indices += [UInt32](repeating: 0, count: width * rows - indices.count)
+        indices.withUnsafeBytes { data in
+            queue.writeTexture(
+                destination: TexelCopyTextureInfo(texture: indexTexture), data: data,
+                dataLayout: TexelCopyBufferLayout(bytesPerRow: UInt32(width * 4), rowsPerImage: UInt32(rows)),
+                writeSize: Extent3D(width: UInt32(width), height: UInt32(rows), depthOrArrayLayers: 1))
+        }
+    }
+
+    /// The chunk the voxels of a point in meters belong to.
+    private static func chunk(at focus: Vector3<Float>) -> SIMD2<Int> {
+        let meters = Float(SceneChunk.size) / Float(voxelsPerMeter)
+        return SIMD2(Int((focus.x / meters).rounded(.down)), Int((focus.z / meters).rounded(.down)))
+    }
+
+    /// What to make next for the chunks nearest `center`, within `radius`
+    /// chunks of it: a chunk is meshed and baked from its voxels and those
+    /// around it, so those come first.
+    private func nextJob(center: SIMD2<Int>, radius: Int) -> Job? {
+        if orderCenter != center {
+            orderCenter = center
+            chunkOrder = (0..<world.chunksZ).flatMap { z in (0..<world.chunksX).map { SIMD2($0, z) } }
+            func distance(_ chunk: SIMD2<Int>) -> Int {
+                let offset = chunk &- center
+                return offset.x * offset.x + offset.y * offset.y
+            }
+            chunkOrder.sort { distance($0) < distance($1) }
+        }
+        for chunk in chunkOrder {
+            guard let index = world.index(of: chunk), !isMeshed[index] || !isBaked[index] else { continue }
+            if abs(chunk.x - center.x) > radius || abs(chunk.y - center.y) > radius { continue }
+            for z in -1...1 {
+                for x in -1...1 where !world.isSettled(chunk &+ SIMD2(x, z)) {
+                    let neighbor = chunk &+ SIMD2(x, z)
+                    return .generating(neighbor, world.startGenerating(neighbor))
+                }
+            }
+            if !isMeshed[index] {
+                let size = SceneChunk.size
+                return .meshing(chunk, ChunkMeshing(x: chunk.x * size, z: chunk.y * size, voxels: voxels))
+            }
+            var pending: [SIMD2<Int>] = []
+            for z in -1...1 {
+                for x in -1...1 {
+                    let around = chunk &+ SIMD2(x, z)
+                    if bakeSlots[bakeSlot(of: around)] != around { pending.append(around) }
+                }
+            }
+            return .baking(chunk, pending: pending, nextSlice: 0)
+        }
+        return nil
+    }
+
+    private func bakeSlot(of chunk: SIMD2<Int>) -> Int {
+        let wide = Self.bakeWindowChunks
+        return ((chunk.y % wide + wide) % wide) * wide + (chunk.x % wide + wide) % wide
+    }
+
+    /// Does one small piece of the job under way.
+    private func runJobStep(_ current: Job) throws -> Job? {
+        switch current {
+        case .generating(let chunk, var town):
+            if town.buildNextLot() {
+                return .generating(chunk, town)
+            }
+            if world.finishGenerating(chunk, town: town) {
+                lampsChanged = true
+            }
+            invalidateWindow(chunk)
+            return nil
+        case .meshing(let chunk, var meshing):
+            if meshing.step() {
+                return .meshing(chunk, meshing)
+            }
+            if let made = meshing.finished() {
+                chunks.append(
+                    Chunk(
+                        minimum: made.minimum, maximum: made.maximum,
+                        opaque: try Self.upload(made.opaque, device: device, queue: queue),
+                        glass: try Self.upload(made.glass, device: device, queue: queue)))
+                triangleCount += made.opaque.triangleCount + made.glass.triangleCount
+            }
+            if let index = world.index(of: chunk) { isMeshed[index] = true }
+            return nil
+        case .baking(let chunk, var pending, var nextSlice):
+            guard let loading = pending.last else {
+                try bake(chunk)
+                if let index = world.index(of: chunk) { isBaked[index] = true }
+                return nil
+            }
+            if nextSlice == 0 { bakeSlots[bakeSlot(of: loading)] = nil }
+            uploadSlice(nextSlice, of: loading, into: bakeOccupancyTexture, chunksAcross: Self.bakeWindowChunks)
+            nextSlice += 1
+            if nextSlice == voxels.sliceCount {
+                bakeSlots[bakeSlot(of: loading)] = loading
+                pending.removeLast()
+                nextSlice = 0
+            }
+            return .baking(chunk, pending: pending, nextSlice: nextSlice)
+        }
+    }
+
+    /// Makes the occupancy window load a chunk again, now that it has changed.
+    private func invalidateWindow(_ chunk: SIMD2<Int>) {
+        if loadedChunks[slot(of: chunk)] == chunk {
+            loadedChunks[slot(of: chunk)] = nil
+        }
+        if windowMove?.pending.last == chunk {
+            windowMove?.nextSlice = 0
+        }
+    }
+
+    /// Bakes how much of the sky each cell of a chunk sees, with a compute
+    /// shader. Rays look a chunk to the side, for the same reach everywhere.
+    private func bake(_ chunk: SIMD2<Int>) throws {
+        let size = SceneChunk.size
+        let cellsPerChunk = size / Self.skyCellSize
+        let parameters: [Int32] = [
+            Int32((chunk.x - 1) * size), Int32((chunk.y - 1) * size), Int32(Self.bakeWindowChunks * size), Int32(size),
+            Int32(chunk.x * cellsPerChunk), Int32(chunk.y * cellsPerChunk), Int32(cellsPerChunk), Int32(cellsPerChunk),
+            Int32(voxels.width), Int32(voxels.height), Int32(voxels.depth), Int32(Self.skyCellSize),
+        ]
+        let uniform = try device.createBuffer(
+            descriptor: BufferDescriptor(usage: [.uniform, .copyDst], size: UInt64(parameters.count * 4)))
+        parameters.withUnsafeBytes { queue.writeBuffer(uniform, bufferOffset: 0, data: $0) }
+        let bindGroup = try device.createBindGroup(
+            descriptor: BindGroupDescriptor(
+                layout: bakeLayout,
+                entries: [
+                    BindGroupEntry(binding: 0, textureView: bakeOccupancyView),
+                    BindGroupEntry(binding: 1, textureView: bakeOutputView),
+                    BindGroupEntry(binding: 2, buffer: uniform),
+                ]))
+        let encoder = try device.createCommandEncoder()
+        let pass = try encoder.beginComputePass(descriptor: ComputePassDescriptor(label: "sky visibility"))
+        pass.setPipeline(bakePipeline)
+        pass.setBindGroup(groupIndex: 0, group: bindGroup)
+        pass.dispatchWorkgroups(
+            x: UInt32((cellsPerChunk + 3) / 4), y: UInt32((cellsPerChunk + 3) / 4),
+            z: UInt32((voxels.height / Self.skyCellSize + 3) / 4))
+        pass.end()
+        queue.submit([try encoder.finish()])
+    }
+
+    /// Works at the chunks nearest `center` for about `budget`. Says whether
+    /// nothing was left to do within `radius`.
+    private func makeChunks(center: SIMD2<Int>, radius: Int, budget: Duration) throws -> Bool {
+        let clock = ContinuousClock()
+        let start = clock.now
+        var isDone = false
+        repeat {
+            if job == nil {
+                job = nextJob(center: center, radius: radius)
+            }
+            guard let current = job else {
+                isDone = true
+                break
+            }
+            // Taken out while it changes, for its arrays not to be copied.
+            job = nil
+            job = try runJobStep(current)
+        } while clock.now - start < budget
+        if lampsChanged {
+            lampsChanged = false
+            writeLampGrid()
+        }
+        return isDone
+    }
+
+    /// Makes the chunks around a point, or all of them, before anything is
+    /// shown, giving way to the browser in between, and holds what is around
+    /// the point in the occupancy window.
+    func load(around focus: Vector3<Float>, everything: Bool) async throws {
+        let clock = ContinuousClock()
+        let start = clock.now
+        let center = Self.chunk(at: focus)
+        let radius = everything ? Int.max / 2 : Self.startingRadius
+        var breather = Breather()
+        while !(try makeChunks(center: center, radius: radius, budget: Self.loadingBudget)) {
+            await breather.breathe()
+        }
+        _ = await moveWindow(centerX: center.x, centerZ: center.y)
+        isComplete = everything
+        print(
+            "Loaded \(chunks.count) chunks of \(world.chunksX * world.chunksZ) in \(clock.now - start): \(triangleCount) triangles, \(world.lights.count) lamps, \(voxels.denseBytes / 1_000_000) MB of voxels."
+        )
     }
 
     /// Makes the targets for a screen `width` by `height` pixels, if they
@@ -595,9 +790,12 @@ final class Renderer {
     ) throws {
         let targets = try prepareTargets(width: width, height: height)
         var frame = baseFrame
-        let chunkMeters = Float(SceneChunk.size) / Float(voxelsPerMeter)
-        frame.window = followCamera(
-            centerX: Int((focus.x / chunkMeters).rounded(.down)), centerZ: Int((focus.z / chunkMeters).rounded(.down)))
+        let center = Self.chunk(at: focus)
+        if !isComplete, try makeChunks(center: center, radius: Int.max / 2, budget: Self.streamingBudget) {
+            isComplete = true
+            print("Made every chunk: \(triangleCount) triangles, \(world.lights.count) lamps.")
+        }
+        frame.window = followCamera(centerX: center.x, centerZ: center.y)
         withUnsafeBytes(of: frame) { queue.writeBuffer(frameBuffer, bufferOffset: 0, data: $0) }
         materials.withUnsafeBytes { queue.writeBuffer(materialBuffer, bufferOffset: 0, data: $0) }
         let lightTexels = Self.lightTextureWidth * Int(lightTextureHeight)

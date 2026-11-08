@@ -163,7 +163,8 @@ enum Shaders {
         fn skyLight(world: vec3f, normal: vec3f) -> f32 {
             let meters = frame.gridSize.xyz / frame.gridSize.w;
             let p = (world + normal * 0.35) / meters;
-            return textureSampleLevel(skyVisibility, linearSampler, vec3f(p.x, p.z, p.y), 0.0).r;
+            // Stored as what is hidden, so that cells not baked yet see it all.
+            return 1.0 - textureSampleLevel(skyVisibility, linearSampler, vec3f(p.x, p.z, p.y), 0.0).r;
         }
 
         // The light of the sky and of the ground around, by which way a
@@ -270,8 +271,8 @@ enum Shaders {
     /// voxels without meeting anything opaque.
     static let skyVisibility = """
         struct Bake {
-            // The voxels the occupancy texture holds: the lowest x and z and
-            // how many along each.
+            // The voxels the occupancy texture holds: the lowest x and z, how
+            // many along each, and how far a ray looks to the side.
             window: vec4i,
             // The cells of the output to bake: the lowest x and z and how many.
             area: vec4i,
@@ -297,6 +298,7 @@ enum Shaders {
         // Whether a ray from a point, in voxels, leaves the grid unblocked.
         fn escapes(origin: vec3f, direction: vec3f, size: vec3i) -> bool {
             var cell = vec3i(floor(origin));
+            let start = cell.xz;
             if isOpaque(cell, size) { return false; }
             let tiny = abs(direction) < vec3f(1e-6);
             let safe = select(direction, vec3f(1e-6), tiny);
@@ -315,6 +317,7 @@ enum Shaders {
                     tMax.z += tDelta.z;
                 }
                 if any(cell < vec3i(0, -1, 0)) || any(cell >= size) { return true; }
+                if any(abs(cell.xz - start) > vec2i(bake.window.w)) { return true; }
                 if isOpaque(cell, size) { return false; }
             }
             return true;
@@ -341,7 +344,7 @@ enum Shaders {
                 let direction = vec3f(sinTheta * cos(phi), cosTheta, sinTheta * sin(phi));
                 if escapes(origin, direction, size) { open += 1.0; }
             }
-            textureStore(output, id, vec4f(open / f32(rayCount), 0.0, 0.0, 1.0));
+            textureStore(output, id, vec4f(1.0 - open / f32(rayCount), 0.0, 0.0, 1.0));
         }
         """
 

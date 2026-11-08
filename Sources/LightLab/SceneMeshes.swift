@@ -1,7 +1,7 @@
 import VectorMath
 
 /// The triangles of a column of the scene, and the box they fill.
-struct SceneChunk: Sendable {
+struct SceneChunk {
     /// How many voxels wide and deep a chunk is: 16 m.
     static let size = 128
 
@@ -11,54 +11,45 @@ struct SceneChunk: Sendable {
     var glass: VoxelMesh
 }
 
-/// The scene's chunks: meshed side by side where there are threads, and in
-/// turn in a browser, giving way to it.
-struct SceneMeshes: Sendable {
-    var chunks: [SceneChunk]
+/// The meshing of a chunk, a few layers at a time, so that it can be spread
+/// over frames.
+struct ChunkMeshing {
+    private let xs: Range<Int>
+    private let zs: Range<Int>
+    private let grid: VoxelGrid
+    private let kinds: [UInt8]
+    private var nextSlice = 0
+    private var opaque = VoxelMesh()
+    private var glass = VoxelMesh()
 
-    @MainActor
-    static func build(_ voxels: SparseVoxels) async -> SceneMeshes {
-        var origins: [(x: Int, z: Int)] = []
-        for z in stride(from: 0, to: voxels.depth, by: SceneChunk.size) {
-            for x in stride(from: 0, to: voxels.width, by: SceneChunk.size) {
-                origins.append((x, z))
-            }
-        }
-        var chunks: [SceneChunk] = []
-        #if os(Emscripten)
-            var breather = Breather()
-            for origin in origins {
-                if let chunk = mesh(x: origin.x, z: origin.z, voxels: voxels) {
-                    chunks.append(chunk)
-                }
-                await breather.breathe()
-            }
-        #else
-            chunks = await withTaskGroup(of: SceneChunk?.self) { group in
-                for origin in origins {
-                    let (x, z) = origin
-                    group.addTask { mesh(x: x, z: z, voxels: voxels) }
-                }
-                var chunks: [SceneChunk] = []
-                for await chunk in group {
-                    if let chunk { chunks.append(chunk) }
-                }
-                return chunks
-            }
-        #endif
-        return SceneMeshes(chunks: chunks)
-    }
+    private static let sliceHeight = SparseVoxels.sliceHeight
 
-    private nonisolated static func mesh(x: Int, z: Int, voxels: SparseVoxels) -> SceneChunk? {
-        let xs = x..<min(x + SceneChunk.size, voxels.width)
-        let zs = z..<min(z + SceneChunk.size, voxels.depth)
+    init(x: Int, z: Int, voxels: SparseVoxels) {
+        xs = x..<min(x + SceneChunk.size, voxels.width)
+        zs = z..<min(z + SceneChunk.size, voxels.depth)
         // With a border a voxel wide, to cull and shade the faces at the
         // chunk's edges.
-        let local = voxels.region(x: (x - 1)..<(xs.upperBound + 1), z: (z - 1)..<(zs.upperBound + 1))
-        let (localOpaque, localGlass) = Mesher.mesh(local, region: (1..<(xs.count + 1), 0..<voxels.height, 1..<(zs.count + 1)))
-        guard !localOpaque.indices.isEmpty || !localGlass.indices.isEmpty else { return nil }
+        grid = voxels.region(x: (x - 1)..<(xs.upperBound + 1), z: (z - 1)..<(zs.upperBound + 1))
+        kinds = Mesher.opacity(of: grid)
+    }
+
+    /// Meshes the next layers, and says whether any are left.
+    mutating func step() -> Bool {
+        let bottom = nextSlice * Self.sliceHeight
+        let (sliceOpaque, sliceGlass) = Mesher.mesh(
+            grid, kinds: kinds,
+            region: (1..<(xs.count + 1), bottom..<min(bottom + Self.sliceHeight, grid.height), 1..<(zs.count + 1)))
+        opaque.append(sliceOpaque)
+        glass.append(sliceGlass)
+        nextSlice += 1
+        return nextSlice * Self.sliceHeight < grid.height
+    }
+
+    /// The chunk, placed in the world, or nothing if it has no faces.
+    func finished() -> SceneChunk? {
+        guard !opaque.indices.isEmpty || !glass.indices.isEmpty else { return nil }
         let scale = 1 / Float(voxelsPerMeter)
-        let (shiftX, shiftZ) = (Float(x - 1) * scale, Float(z - 1) * scale)
+        let (shiftX, shiftZ) = (Float(xs.lowerBound - 1) * scale, Float(zs.lowerBound - 1) * scale)
         var top: Float = 0
         func placed(_ mesh: VoxelMesh) -> VoxelMesh {
             var mesh = mesh
@@ -69,11 +60,11 @@ struct SceneMeshes: Sendable {
             }
             return mesh
         }
-        let opaque = placed(localOpaque)
-        let glass = placed(localGlass)
+        let placedOpaque = placed(opaque)
+        let placedGlass = placed(glass)
         return SceneChunk(
             minimum: Vector3(Float(xs.lowerBound) * scale, 0, Float(zs.lowerBound) * scale),
             maximum: Vector3(Float(xs.upperBound) * scale, top, Float(zs.upperBound) * scale),
-            opaque: opaque, glass: glass)
+            opaque: placedOpaque, glass: placedGlass)
     }
 }
