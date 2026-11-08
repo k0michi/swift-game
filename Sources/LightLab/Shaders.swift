@@ -25,8 +25,8 @@ enum Shaders {
             // The width of a square of the lamps' grid, and how many squares
             // it is along x and z.
             lightGrid: vec4f,
-            // The voxels around the camera that the occupancy texture holds:
-            // the lowest x and z, and how many along each.
+            // The voxels around the camera that the occupancy texture has
+            // ready: the lowest x and z, and how many along x and z.
             window: vec4f,
         }
 
@@ -93,12 +93,11 @@ enum Shaders {
         // kept to integer tests on what clearPath works out once: voxels past
         // the window let the light through, and those past the world, which
         // the window holds as air, too.
-        fn isOpaque(cell: vec3i, low: vec2i, wide: u32, height: u32) -> bool {
+        fn isOpaque(cell: vec3i, low: vec2i, size: vec2u, mask: i32, height: u32) -> bool {
             if cell.y < 0 { return true; }
             if u32(cell.y) >= height { return false; }
             let inWindow = vec2u(cell.xz - low);
-            if inWindow.x >= wide || inWindow.y >= wide { return false; }
-            let mask = i32(wide) - 1;
+            if inWindow.x >= size.x || inWindow.y >= size.y { return false; }
             return textureLoad(occupancy, vec3i(cell.x & mask, cell.z & mask, cell.y), 0).r == 1u;
         }
 
@@ -118,7 +117,8 @@ enum Shaders {
             let tDelta = abs(1.0 / safe);
             var tMax = select((vec3f(cell) + max(vec3f(stepSign), vec3f(0.0)) - a) / safe, vec3f(1e30), tiny);
             let low = vec2i(frame.window.xy);
-            let wide = u32(frame.window.z);
+            let size = vec2u(frame.window.zw);
+            let mask = i32(textureDimensions(occupancy).x) - 1;
             let height = u32(frame.gridSize.y);
             for (var i = 0; i < 256; i++) {
                 var t: f32;
@@ -137,7 +137,7 @@ enum Shaders {
                 }
                 // The lamp sits in the air beside its glowing voxels.
                 if t >= distance - 0.75 { return 1.0; }
-                if isOpaque(cell, low, wide, height) { return 0.0; }
+                if isOpaque(cell, low, size, mask, height) { return 0.0; }
             }
             return 1.0;
         }

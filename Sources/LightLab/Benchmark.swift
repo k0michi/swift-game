@@ -139,7 +139,7 @@ extension LightLab {
             let median = samples[samples.count / 2]
             let high = samples[samples.count * 95 / 100]
             func text(_ value: Double) -> String { "\(Double(Int(value * 10)) / 10)" }
-            print("  \(view.name): min \(text(samples[0])) ms, median \(text(median)) ms, p95 \(text(high)) ms, \(renderer.drawnChunks) chunks, \(renderer.drawnTriangles) triangles in view")
+            print("  \(view.name): median \(text(median)) ms, p95 \(text(high)) ms, max \(text(samples[samples.count - 1])) ms, \(renderer.drawnChunks) chunks, \(renderer.drawnTriangles) triangles in view")
         }
     }
 }
