@@ -25,6 +25,9 @@ extension LightLab {
         var hour: Float
         var camera: Camera
         var walker: FirstPerson?
+        /// Whether the focus crosses a chunk every frame, as moving fast would,
+        /// to time loading voxels into the window.
+        var scrolls = false
     }
 
     private static let benchmarkSize = (width: UInt32(2560), height: UInt32(1440))
@@ -55,6 +58,7 @@ extension LightLab {
             BenchmarkView(name: "night close", hour: 21, camera: close),
             BenchmarkView(name: "night far", hour: 21, camera: far),
             BenchmarkView(name: "night first person", hour: 21, camera: center, walker: walker),
+            BenchmarkView(name: "night scrolling", hour: 21, camera: center, scrolls: true),
         ]
 
         let size = Extent3D(width: benchmarkSize.width, height: benchmarkSize.height, depthOrArrayLayers: 1)
@@ -82,7 +86,9 @@ extension LightLab {
                 let start = clock.now
                 let encoder = try device.createCommandEncoder()
                 try renderer.draw(
-                    frame: frame, materials: lit.materials, lights: lit.lights, character: character, bloomStrength: 0.06,
+                    frame: frame,
+                    focus: (view.walker?.eye ?? view.camera.focus) + Vector3(view.scrolls && index % 2 == 1 ? 16 : 0, 0, 0),
+                    materials: lit.materials, lights: lit.lights, character: character, bloomStrength: 0.06,
                     into: target, width: benchmarkSize.width, height: benchmarkSize.height, encoder: encoder
                 ) { _ in }
                 encoder.copyBufferToBuffer(source: fence, destination: fenceCopy, size: 4)
@@ -133,7 +139,7 @@ extension LightLab {
             let median = samples[samples.count / 2]
             let high = samples[samples.count * 95 / 100]
             func text(_ value: Double) -> String { "\(Double(Int(value * 10)) / 10)" }
-            print("  \(view.name): median \(text(median)) ms, p95 \(text(high)) ms, \(renderer.drawnChunks) chunks, \(renderer.drawnTriangles) triangles in view")
+            print("  \(view.name): min \(text(samples[0])) ms, median \(text(median)) ms, p95 \(text(high)) ms, \(renderer.drawnChunks) chunks, \(renderer.drawnTriangles) triangles in view")
         }
     }
 }

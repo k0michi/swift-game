@@ -25,12 +25,15 @@ struct Scene {
     /// Where the terrace ends, at its retaining wall.
     static let terraceEdge: Float = 12
 
-    var grid: VoxelGrid
+    /// The world.
+    let voxels: SparseVoxels
+    /// A street corner while it is being built.
+    private var grid: VoxelGrid
     var lights: [PointLight] = []
 
     /// How wide and deep it is, in meters.
-    var width: Float { Float(grid.width) / Float(voxelsPerMeter) }
-    var depth: Float { Float(grid.depth) / Float(voxelsPerMeter) }
+    var width: Float { Float(voxels.width) / Float(voxelsPerMeter) }
+    var depth: Float { Float(voxels.depth) / Float(voxelsPerMeter) }
 
     /// How far along x and z the middle copy of the street corner starts.
     var middleTileOffset: Float { ((width / Self.size.width / 2).rounded(.down)) * Self.size.width }
@@ -38,12 +41,8 @@ struct Scene {
     /// `tiles` by `tiles` copies of the street corner, side by side.
     init(tiles: Int) {
         let tile = Scene()
-        guard tiles > 1 else {
-            self = tile
-            return
-        }
-        var grid = VoxelGrid(width: tile.grid.width * tiles, height: tile.grid.height, depth: tile.grid.depth * tiles)
-        var lights: [PointLight] = []
+        voxels = SparseVoxels(tile: tile.grid, tiles: tiles)
+        grid = VoxelGrid(width: 0, height: 0, depth: 0)
         for tileZ in 0..<tiles {
             for tileX in 0..<tiles {
                 let offset = Vector3<Float>(Float(tileX) * Self.size.width, 0, Float(tileZ) * Self.size.depth)
@@ -52,20 +51,12 @@ struct Scene {
                     moved.position = light.position + offset
                     lights.append(moved)
                 }
-                for y in 0..<tile.grid.height {
-                    for z in 0..<tile.grid.depth {
-                        let from = tile.grid.index(0, y, z)
-                        let to = grid.index(tileX * tile.grid.width, y, tileZ * tile.grid.depth + z)
-                        grid.data.replaceSubrange(to..<(to + tile.grid.width), with: tile.grid.data[from..<(from + tile.grid.width)])
-                    }
-                }
             }
         }
-        self.grid = grid
-        self.lights = lights
     }
 
     private init() {
+        voxels = SparseVoxels(tile: VoxelGrid(width: 0, height: 0, depth: 0), tiles: 0)
         grid = VoxelGrid(
             width: cells(Self.size.width), height: cells(Self.size.height), depth: cells(Self.size.depth))
         buildGround()

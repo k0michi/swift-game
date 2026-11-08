@@ -39,8 +39,7 @@ struct LightLab: AsyncMain {
         let instance = try createInstance()
         let surface = try instance.createSurface(from: window)
         let adapter = try await instance.requestAdapter(options: platformAdapterOptions())
-        // The voxels of a large scene take a texture larger than the defaults allow.
-        let device = try await adapter.requestDevice(usesAdapterLimits: true) { reason in
+        let device = try await adapter.requestDevice { reason in
             print("The GPU device was lost: \(reason)")
         }
         let deviceDetails = (try? describe(adapter.getInfo())) ?? []
@@ -67,7 +66,10 @@ struct LightLab: AsyncMain {
         // Errors in making the pipelines show up once, here, rather than as
         // a warning about an invalid object each frame.
         device.pushErrorScope(.validation)
-        let meshes = await SceneMeshes.build(scene.grid)
+        let meshes = await SceneMeshes.build(scene.voxels)
+        print(
+            "Voxels: \(scene.voxels.denseBytes / 1_000_000) MB in \(scene.voxels.denseCount) dense sections of \(scene.voxels.sectionCount)."
+        )
         print("Meshed \(meshes.chunks.count) chunks in \(clock.now - start).")
         let renderer = try Renderer(device: device, surfaceFormat: configuration.format, scene: scene, meshes: meshes)
         let popped = Flag()
@@ -233,7 +235,7 @@ struct LightLab: AsyncMain {
             if keys[.s] || keys[.down] { direction.y -= 1 }
             if isFirstPerson {
                 if keys[.space] { walker.jump() }
-                walker.update(input: direction, running: keys[.lShift], duration: seconds, grid: scene.grid)
+                walker.update(input: direction, running: keys[.lShift], duration: seconds, grid: scene.voxels)
             } else {
                 camera.move(screen: direction * (camera.zoom * 1.5 * seconds))
                 var tilt: Float = 0
@@ -281,7 +283,7 @@ struct LightLab: AsyncMain {
                 let texture = try surface.getCurrentTexture()
                 let encoder = try device.createCommandEncoder()
                 try renderer.draw(
-                    frame: frame, materials: materials, lights: lights, character: showsCharacter ? character.mesh() : VoxelMesh(),
+                    frame: frame, focus: isFirstPerson ? walker.eye : camera.focus, materials: materials, lights: lights, character: showsCharacter ? character.mesh() : VoxelMesh(),
                     bloomStrength: bloomOn ? 0.06 : 0, into: try texture.createView(), width: configuration.width,
                     height: configuration.height, encoder: encoder
                 ) { pass in
@@ -344,7 +346,7 @@ struct LightLab: AsyncMain {
             viewDirection: Vector4(walker?.forward ?? camera.forward, 0),
             params: Vector4(Float(lampCount), time.exposure, 1.6, sun.bias),
             gridSize: Vector4(
-                Float(scene.grid.width), Float(scene.grid.height), Float(scene.grid.depth), Float(voxelsPerMeter)),
+                Float(scene.voxels.width), Float(scene.voxels.height), Float(scene.voxels.depth), Float(voxelsPerMeter)),
             eye: Vector4(walker?.eye ?? .zero, walker == nil ? 0 : 1),
             lightGrid: Vector4(
                 LightGrid.cellSize, Float(cells.width), Float(cells.depth), 0))

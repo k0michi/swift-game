@@ -21,6 +21,9 @@ struct FrameUniforms {
     var eye: Vector4<Float>
     /// The width of a square of the lamps' grid, and how many along x and z.
     var lightGrid: Vector4<Float>
+    /// The voxels the occupancy texture holds: the lowest x and z, and how
+    /// many along each. The renderer fills this in.
+    var window: Vector4<Float> = .zero
 }
 
 /// Draws the scene in light: depth from the sun for its shadows, then the
@@ -35,6 +38,10 @@ final class Renderer {
     static let bloomLevels = 6
     /// How many texels wide the lamps' texture is, two for each lamp.
     static let lightTextureWidth = 256
+    /// How many chunks across the occupancy texture holds around the camera:
+    /// a power of two, for the shaders' wrapping around it to be a mask.
+    static let windowChunks = 8
+    static var windowVoxels: Int { windowChunks * SceneChunk.size }
     /// How many voxels of the grid a cell of the sky's grid covers each way.
     static let skyCellSize = 4
 
@@ -72,6 +79,11 @@ final class Renderer {
         var glass: Mesh?
     }
     private let chunks: [Chunk]
+    private let voxels: SparseVoxels
+    private let occupancyTexture: Texture
+    private let skyTexture: Texture
+    /// Which chunk each slot of the occupancy texture holds.
+    private var loadedChunks = [SIMD2<Int>?](repeating: nil, count: Renderer.windowChunks * Renderer.windowChunks)
     /// How many chunks and triangles the last frame drew from the camera.
     private(set) var drawnChunks = 0
     private(set) var drawnTriangles = 0
@@ -119,22 +131,24 @@ final class Renderer {
                 size: Extent3D(width: Self.shadowMapSize, height: Self.shadowMapSize, depthOrArrayLayers: 1),
                 format: Self.depthFormat))
         shadowView = try shadowTexture.createView()
-        let grid = scene.grid
-        let occupancy = try device.createTexture(
+        let voxels = scene.voxels
+        self.voxels = voxels
+        occupancyTexture = try device.createTexture(
             descriptor: TextureDescriptor(
                 label: "occupancy", usage: [.textureBinding, .copyDst], dimension: .`3D`,
                 size: Extent3D(
-                    width: UInt32(grid.width), height: UInt32(grid.depth), depthOrArrayLayers: UInt32(grid.height)),
+                    width: UInt32(Self.windowVoxels), height: UInt32(Self.windowVoxels),
+                    depthOrArrayLayers: UInt32(voxels.height)),
                 format: .r8Uint))
-        meshes.kinds.withUnsafeBytes { data in
-            queue.writeTexture(
-                destination: TexelCopyTextureInfo(texture: occupancy), data: data,
-                dataLayout: TexelCopyBufferLayout(bytesPerRow: UInt32(grid.width), rowsPerImage: UInt32(grid.depth)),
-                writeSize: Extent3D(
-                    width: UInt32(grid.width), height: UInt32(grid.depth), depthOrArrayLayers: UInt32(grid.height)))
-        }
-        let occupancyView = try occupancy.createView()
-        let skyView = try Self.bakeSkyVisibility(device: device, occupancy: occupancyView, grid: grid)
+        let occupancyView = try occupancyTexture.createView()
+        skyTexture = try device.createTexture(
+            descriptor: TextureDescriptor(
+                label: "sky visibility", usage: [.storageBinding, .textureBinding], dimension: .`3D`,
+                size: Extent3D(
+                    width: UInt32(voxels.width / Self.skyCellSize), height: UInt32(voxels.depth / Self.skyCellSize),
+                    depthOrArrayLayers: UInt32(voxels.height / Self.skyCellSize)),
+                format: .rgba16Float))
+        let skyView = try skyTexture.createView()
 
         linearSampler = try device.createSampler(
             descriptor: SamplerDescriptor(
@@ -308,6 +322,7 @@ final class Renderer {
                 glass: try Self.upload(chunk.glass, device: device, queue: queue))
         }
         triangleCount = meshes.chunks.reduce(0) { $0 + $1.opaque.triangleCount + $1.glass.triangleCount }
+        try bakeSkyVisibility()
     }
 
     /// How many triangles the scene is, without the person.
@@ -324,52 +339,87 @@ final class Renderer {
         return Mesh(vertices: vertices, indices: indices, indexCount: UInt32(mesh.indices.count))
     }
 
+    /// Holds the chunks around one in the occupancy texture, loading only
+    /// those not there already. Each chunk has its slot by its coordinates
+    /// modulo the window, so that moving replaces only what scrolled away.
+    private func moveWindow(centerX: Int, centerZ: Int) throws -> Vector4<Float> {
+        let wide = Self.windowChunks
+        let half = wide / 2
+        func modulo(_ a: Int) -> Int { ((a % wide) + wide) % wide }
+        let size = SceneChunk.size
+        for chunkZ in (centerZ - half)..<(centerZ - half + wide) {
+            for chunkX in (centerX - half)..<(centerX - half + wide) {
+                let slotX = modulo(chunkX)
+                let slotZ = modulo(chunkZ)
+                let slot = slotZ * wide + slotX
+                let chunk = SIMD2(chunkX, chunkZ)
+                if loadedChunks[slot] == chunk { continue }
+                loadedChunks[slot] = chunk
+                let region = voxels.region(
+                    x: (chunkX * size)..<((chunkX + 1) * size), z: (chunkZ * size)..<((chunkZ + 1) * size))
+                Mesher.opacity(of: region).withUnsafeBytes { data in
+                    queue.writeTexture(
+                        destination: TexelCopyTextureInfo(
+                            texture: occupancyTexture,
+                            origin: Origin3D(x: UInt32(slotX * size), y: UInt32(slotZ * size), z: 0)),
+                        data: data,
+                        dataLayout: TexelCopyBufferLayout(bytesPerRow: UInt32(size), rowsPerImage: UInt32(size)),
+                        writeSize: Extent3D(
+                            width: UInt32(size), height: UInt32(size), depthOrArrayLayers: UInt32(voxels.height)))
+                }
+            }
+        }
+        return Vector4(Float((centerX - half) * size), Float((centerZ - half) * size), Float(Self.windowVoxels), 0)
+    }
+
     /// Bakes how much of the sky each cell of a coarse grid sees, with a
-    /// compute shader.
-    private static func bakeSkyVisibility(device: Device, occupancy: TextureView, grid: VoxelGrid) throws
-        -> TextureView
-    {
-        let size = Extent3D(
-            width: UInt32(grid.width / skyCellSize), height: UInt32(grid.depth / skyCellSize),
-            depthOrArrayLayers: UInt32(grid.height / skyCellSize))
-        let texture = try device.createTexture(
-            descriptor: TextureDescriptor(
-                label: "sky visibility", usage: [.storageBinding, .textureBinding], dimension: .`3D`, size: size,
-                format: .rgba16Float))
-        let view = try texture.createView()
+    /// compute shader, a square of chunks at a time, with the window moved so
+    /// that it holds what is around them.
+    private func bakeSkyVisibility() throws {
         let module = try device.createShaderModule(
             descriptor: ShaderModuleDescriptor(
                 nextInChain: ShaderSourceWGSL(code: Shaders.skyVisibility), label: "sky visibility"))
         let pipeline = try device.createComputePipeline(
             descriptor: ComputePipelineDescriptor(
                 label: "sky visibility", compute: ComputeState(module: module, entryPoint: "main")))
-        // In slabs, submitted apart, so that no one submission runs long
-        // enough for the GPU to give up on it.
-        let queue = device.getQueue()
         let layout = try pipeline.getBindGroupLayout(groupIndex: 0)
-        let slabRows: UInt32 = 64
-        for row in stride(from: UInt32(0), to: size.height, by: Int(slabRows)) {
-            let slab = try device.createBuffer(descriptor: BufferDescriptor(usage: [.uniform, .copyDst], size: 16))
-            let origin: [UInt32] = [row, 0, 0, 0]
-            origin.withUnsafeBytes { queue.writeBuffer(slab, bufferOffset: 0, data: $0) }
-            let bindGroup = try device.createBindGroup(
-                descriptor: BindGroupDescriptor(
-                    layout: layout,
-                    entries: [
-                        BindGroupEntry(binding: 0, textureView: occupancy), BindGroupEntry(binding: 1, textureView: view),
-                        BindGroupEntry(binding: 2, buffer: slab),
-                    ]))
-            let encoder = try device.createCommandEncoder()
-            let pass = try encoder.beginComputePass(descriptor: ComputePassDescriptor(label: "sky visibility"))
-            pass.setPipeline(pipeline)
-            pass.setBindGroup(groupIndex: 0, group: bindGroup)
-            pass.dispatchWorkgroups(
-                x: (size.width + 3) / 4, y: (min(slabRows, size.height - row) + 3) / 4,
-                z: (size.depthOrArrayLayers + 3) / 4)
-            pass.end()
-            queue.submit([try encoder.finish()])
+        let occupancyView = try occupancyTexture.createView()
+        let skyView = try skyTexture.createView()
+        let chunkSize = SceneChunk.size
+        let chunksPerStep = 3
+        let cellsPerChunk = chunkSize / Self.skyCellSize
+        let (chunksX, chunksZ) = (voxels.width / chunkSize, voxels.depth / chunkSize)
+        for stepZ in stride(from: 0, to: max(chunksZ, 1), by: chunksPerStep) {
+            for stepX in stride(from: 0, to: max(chunksX, 1), by: chunksPerStep) {
+                let window = try moveWindow(centerX: stepX + chunksPerStep / 2, centerZ: stepZ + chunksPerStep / 2)
+                let parameters: [Int32] = [
+                    Int32(window.x), Int32(window.y), Int32(window.z), 0,
+                    Int32(stepX * cellsPerChunk), Int32(stepZ * cellsPerChunk),
+                    Int32(chunksPerStep * cellsPerChunk), Int32(chunksPerStep * cellsPerChunk),
+                    Int32(voxels.width), Int32(voxels.height), Int32(voxels.depth), Int32(Self.skyCellSize),
+                ]
+                let uniform = try device.createBuffer(
+                    descriptor: BufferDescriptor(usage: [.uniform, .copyDst], size: UInt64(parameters.count * 4)))
+                parameters.withUnsafeBytes { queue.writeBuffer(uniform, bufferOffset: 0, data: $0) }
+                let bindGroup = try device.createBindGroup(
+                    descriptor: BindGroupDescriptor(
+                        layout: layout,
+                        entries: [
+                            BindGroupEntry(binding: 0, textureView: occupancyView),
+                            BindGroupEntry(binding: 1, textureView: skyView),
+                            BindGroupEntry(binding: 2, buffer: uniform),
+                        ]))
+                let encoder = try device.createCommandEncoder()
+                let pass = try encoder.beginComputePass(descriptor: ComputePassDescriptor(label: "sky visibility"))
+                pass.setPipeline(pipeline)
+                pass.setBindGroup(groupIndex: 0, group: bindGroup)
+                pass.dispatchWorkgroups(
+                    x: UInt32((chunksPerStep * cellsPerChunk + 3) / 4), y: UInt32((chunksPerStep * cellsPerChunk + 3) / 4),
+                    z: UInt32((voxels.height / Self.skyCellSize + 3) / 4))
+                pass.end()
+                queue.submit([try encoder.finish()])
+            }
         }
-        return view
     }
 
     /// Makes the targets for a screen `width` by `height` pixels, if they
@@ -431,11 +481,15 @@ final class Renderer {
 
     /// Records a frame into `surface`, then `drawOverlay` over it.
     func draw(
-        frame: FrameUniforms, materials: [Vector4<Float>], lights: [Vector4<Float>], character: VoxelMesh,
+        frame baseFrame: FrameUniforms, focus: Vector3<Float>, materials: [Vector4<Float>], lights: [Vector4<Float>], character: VoxelMesh,
         bloomStrength: Float, into surface: TextureView, width: UInt32, height: UInt32, encoder: CommandEncoder,
         drawOverlay: (RenderPassEncoder) throws -> Void
     ) throws {
         let targets = try prepareTargets(width: width, height: height)
+        var frame = baseFrame
+        let chunkMeters = Float(SceneChunk.size) / Float(voxelsPerMeter)
+        frame.window = try moveWindow(
+            centerX: Int((focus.x / chunkMeters).rounded(.down)), centerZ: Int((focus.z / chunkMeters).rounded(.down)))
         withUnsafeBytes(of: frame) { queue.writeBuffer(frameBuffer, bufferOffset: 0, data: $0) }
         materials.withUnsafeBytes { queue.writeBuffer(materialBuffer, bufferOffset: 0, data: $0) }
         let lightTexels = Self.lightTextureWidth * Int(lightTextureHeight)

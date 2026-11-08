@@ -69,7 +69,7 @@ struct FirstPerson {
 
     /// Walks for `duration` seconds, by `input`: x to the right of the view,
     /// y ahead.
-    mutating func update(input: Vector2<Float>, running: Bool, duration: Float, grid: VoxelGrid) {
+    mutating func update(input: Vector2<Float>, running: Bool, duration: Float, grid: SparseVoxels) {
         // Placed inside something, as on a raised sidewalk, rises out of it.
         while collides(x: feet.x, y: feet.y, z: feet.z, grid: grid) {
             feet.y += Self.voxel
@@ -125,7 +125,7 @@ struct FirstPerson {
     }
 
     /// Moves along the ground if the way is clear, or up a low step.
-    private mutating func walk(dx: Float, dz: Float, grid: VoxelGrid) {
+    private mutating func walk(dx: Float, dz: Float, grid: SparseVoxels) {
         let margin = Self.radius + 0.01
         let x = min(max(feet.x + dx, margin), Float(grid.width) * Self.voxel - margin)
         let z = min(max(feet.z + dz, margin), Float(grid.depth) * Self.voxel - margin)
@@ -140,7 +140,7 @@ struct FirstPerson {
 
     /// Whether a body with its feet at a point would be inside anything,
     /// glass included.
-    private func collides(x: Float, y: Float, z: Float, grid: VoxelGrid) -> Bool {
+    private func collides(x: Float, y: Float, z: Float, grid: SparseVoxels) -> Bool {
         let scale = Float(voxelsPerMeter)
         let xs = Int(((x - Self.radius) * scale).rounded(.down))...Int(((x + Self.radius) * scale).rounded(.down))
         let zs = Int(((z - Self.radius) * scale).rounded(.down))...Int(((z + Self.radius) * scale).rounded(.down))

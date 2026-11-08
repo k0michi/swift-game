@@ -25,6 +25,9 @@ enum Shaders {
             // The width of a square of the lamps' grid, and how many squares
             // it is along x and z.
             lightGrid: vec4f,
+            // The voxels around the camera that the occupancy texture holds:
+            // the lowest x and z, and how many along each.
+            window: vec4f,
         }
 
         @group(0) @binding(0) var<uniform> frame: Frame;
@@ -86,11 +89,17 @@ enum Shaders {
             return frame.viewDirection.xyz;
         }
 
-        fn isOpaque(cell: vec3i) -> bool {
-            let size = vec3i(frame.gridSize.xyz);
+        // Whether a voxel stops light. Run for every step of every ray, so
+        // kept to integer tests on what clearPath works out once: voxels past
+        // the window let the light through, and those past the world, which
+        // the window holds as air, too.
+        fn isOpaque(cell: vec3i, low: vec2i, wide: u32, height: u32) -> bool {
             if cell.y < 0 { return true; }
-            if any(cell < vec3i(0)) || any(cell >= size) { return false; }
-            return textureLoad(occupancy, vec3i(cell.x, cell.z, cell.y), 0).r == 1u;
+            if u32(cell.y) >= height { return false; }
+            let inWindow = vec2u(cell.xz - low);
+            if inWindow.x >= wide || inWindow.y >= wide { return false; }
+            let mask = i32(wide) - 1;
+            return textureLoad(occupancy, vec3i(cell.x & mask, cell.z & mask, cell.y), 0).r == 1u;
         }
 
         // 1 if the straight path from start to end, in meters, passes no
@@ -108,6 +117,9 @@ enum Shaders {
             let stepSign = vec3i(sign(direction));
             let tDelta = abs(1.0 / safe);
             var tMax = select((vec3f(cell) + max(vec3f(stepSign), vec3f(0.0)) - a) / safe, vec3f(1e30), tiny);
+            let low = vec2i(frame.window.xy);
+            let wide = u32(frame.window.z);
+            let height = u32(frame.gridSize.y);
             for (var i = 0; i < 256; i++) {
                 var t: f32;
                 if tMax.x < tMax.y && tMax.x < tMax.z {
@@ -125,7 +137,7 @@ enum Shaders {
                 }
                 // The lamp sits in the air beside its glowing voxels.
                 if t >= distance - 0.75 { return 1.0; }
-                if isOpaque(cell) { return 0.0; }
+                if isOpaque(cell, low, wide, height) { return 0.0; }
             }
             return 1.0;
         }
@@ -257,17 +269,29 @@ enum Shaders {
     /// rays, spread over the upper half of directions, that leave the
     /// voxels without meeting anything opaque.
     static let skyVisibility = """
+        struct Bake {
+            // The voxels the occupancy texture holds: the lowest x and z and
+            // how many along each.
+            window: vec4i,
+            // The cells of the output to bake: the lowest x and z and how many.
+            area: vec4i,
+            // The size of the world in voxels, and voxels per cell.
+            world: vec4i,
+        }
+
         @group(0) @binding(0) var occupancy: texture_3d<u32>;
         @group(0) @binding(1) var output: texture_storage_3d<rgba16float, write>;
-        // The row of the output, along z, that this dispatch starts at.
-        @group(0) @binding(2) var<uniform> slab: vec4u;
+        @group(0) @binding(2) var<uniform> bake: Bake;
 
         const rayCount = 24u;
 
         fn isOpaque(cell: vec3i, size: vec3i) -> bool {
             if cell.y < 0 { return true; }
             if any(cell < vec3i(0)) || any(cell >= size) { return false; }
-            return textureLoad(occupancy, vec3i(cell.x, cell.z, cell.y), 0).r == 1u;
+            let wide = bake.window.z;
+            let inWindow = cell.xz - bake.window.xy;
+            if any(inWindow < vec2i(0)) || any(inWindow >= vec2i(wide)) { return false; }
+            return textureLoad(occupancy, vec3i(cell.x % wide, cell.z % wide, cell.y), 0).r == 1u;
         }
 
         // Whether a ray from a point, in voxels, leaves the grid unblocked.
@@ -298,12 +322,11 @@ enum Shaders {
 
         @compute @workgroup_size(4, 4, 4)
         fn main(@builtin(global_invocation_id) invocation: vec3u) {
-            let id = invocation + vec3u(0u, slab.x, 0u);
-            let dims = textureDimensions(output);
-            if any(id >= dims) { return; }
-            let fine = vec3i(textureDimensions(occupancy));
-            let size = vec3i(fine.x, fine.z, fine.y);
-            let factor = f32(fine.x) / f32(dims.x);
+            let id = invocation + vec3u(u32(bake.area.x), u32(bake.area.y), 0u);
+            let end = vec2u(bake.area.xy + bake.area.zw);
+            if id.x >= end.x || id.y >= end.y || id.z >= textureDimensions(output).z { return; }
+            let size = bake.world.xyz;
+            let factor = f32(bake.world.w);
             // The cell's center, in voxels, as x, y, z.
             let origin = (vec3f(f32(id.x), f32(id.z), f32(id.y)) + 0.5) * factor;
             var open = 0.0;
