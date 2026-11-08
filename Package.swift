@@ -147,6 +147,7 @@ let package = Package(
         .executable(name: "shooter", targets: ["Shooter"]),
         .executable(name: "pong", targets: ["Pong"]),
         .executable(name: "text", targets: ["Text"]),
+        .executable(name: "city", targets: ["City"]),
         .library(name: "GameToolkit", targets: ["GameToolkit"]),
         .library(name: "SDL3", targets: ["SDL3"]),
         .library(name: "Dawn", targets: ["Dawn"]),
@@ -344,6 +345,14 @@ let package = Package(
         .executableTarget(
             name: "Pong",
             dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "Echo", "GameToolkit", realModule],
+            swiftSettings: [
+                .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
+            ] + customExecutorSettings
+        ),
+        // An endless city of 1 m voxels, seen from above at an angle.
+        .executableTarget(
+            name: "City",
+            dependencies: ["SDL3", "Dawn", "SDL3Dawn", "MainLoop", "VectorMath", "GameToolkit", realModule],
             swiftSettings: [
                 .unsafeFlags(sdlSwiftCompilerFlags + dawnSwiftCompilerFlags + stbSwiftCompilerFlags),
             ] + customExecutorSettings
