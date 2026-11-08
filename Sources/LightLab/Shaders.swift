@@ -32,7 +32,8 @@ enum Shaders {
 
         @group(0) @binding(0) var<uniform> frame: Frame;
         // Each material's color in linear light and how bright it glows,
-        // then its kind and roughness.
+        // then its kind, roughness, and how much each voxel strays from it
+        // in brightness and in hue.
         @group(0) @binding(1) var<uniform> materials: array<vec4f, 256>;
         // Each lamp's position and reach, then its color times brightness.
         @group(0) @binding(2) var lightData: texture_2d<f32>;
@@ -198,18 +199,46 @@ enum Shaders {
             return sum;
         }
 
+        // Three random numbers from 0 to 1 for a voxel.
+        fn voxelRandom(cell: vec3i) -> vec3f {
+            var v = bitcast<vec3u>(cell) * 1664525u + 1013904223u;
+            v.x += v.y * v.z;
+            v.y += v.z * v.x;
+            v.z += v.x * v.y;
+            v ^= v >> vec3u(16u);
+            v.x += v.y * v.z;
+            v.y += v.z * v.x;
+            v.z += v.x * v.y;
+            return vec3f(v >> vec3u(8u)) / 16777216.0;
+        }
+
+        // What to multiply the color of the voxel behind a surface by, for
+        // no two voxels of a material to match. It fades out where voxels
+        // get smaller than the pixels, which would only shimmer.
+        fn voxelTint(world: vec3f, normal: vec3f, brightness: f32, hue: f32) -> vec3f {
+            let p = world * frame.gridSize.w;
+            let footprint = max(length(dpdx(p)), length(dpdy(p)));
+            let strength = 1.0 - smoothstep(0.6, 1.6, footprint);
+            let random = voxelRandom(vec3i(floor(p - normal * 0.5)));
+            // Weighted to the middle: most voxels stray only a little.
+            let level = (random.x + random.y - 1.0) * brightness;
+            let channels = (fract(random.zxy * 7.0 + random.z) - 0.5) * 2.0 * hue;
+            return vec3f(1.0) + (vec3f(level) + channels) * strength;
+        }
+
         @fragment
         fn opaqueMain(input: VertexOutput) -> @location(0) vec4f {
             let material = materials[input.material * 2u];
             let surface = materials[input.material * 2u + 1u];
             let n = normalize(input.normal);
+            let albedo = material.rgb * voxelTint(input.world, n, surface.z, surface.w);
             let occlusion = mix(0.4, 1.0, input.occlusion);
             let shadow = sunShadow(input.world, n);
             let toSun = frame.sunDirection.xyz;
             let sun = frame.sunColor.rgb * max(dot(n, toSun), 0.0) * shadow;
             let ambient = ambientColor(n) * skyLight(input.world, n) * occlusion * frame.params.z;
             let lamps = lampLight(input.world, n, input.occlusion);
-            var color = material.rgb * (sun + ambient + lamps) + material.rgb * material.w;
+            var color = albedo * (sun + ambient + lamps) + albedo * material.w;
             // A highlight of the sun on smooth metal.
             let roughness = surface.y;
             if roughness < 0.6 {

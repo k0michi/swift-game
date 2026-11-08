@@ -436,7 +436,7 @@ struct LightLab: AsyncMain {
         for material in Materials.table {
             let emission = material.emission * schedule.brightness(material.schedule)
             materials.append(Vector4(material.linearColor, emission))
-            materials.append(Vector4(Float(material.kind.rawValue), material.roughness, 0, 0))
+            materials.append(Vector4(Float(material.kind.rawValue), material.roughness, material.variation, material.hueVariation))
         }
         // Every lamp, in the order of the grid; those that are off, in black.
         var lights: [Vector4<Float>] = []
