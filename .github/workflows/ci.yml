@@ -48,6 +48,13 @@ jobs:
             libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
           sudo apt-get install --yes libx11-xcb-dev patchelf
 
+      # The object files depend on the system's headers, dated when the runner
+      # image was made: from a build on an older image, they are all out of date.
+      - name: Find the runner image
+        id: runner-image
+        shell: bash
+        run: echo "version=$ImageVersion" >> "$GITHUB_OUTPUT"
+
       # Only SDL, Dawn, stb, FreeType, HarfBuzz and Noto Sans JP, which CMake
       # builds or downloads, from what only the CMake files and their build
       # scripts choose. The Swift code builds quickly.
@@ -56,8 +63,9 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .build/dependencies
-          key: dependencies-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/build-sdl.*', 'scripts/build-dawn.*', 'scripts/build-stb.*', 'scripts/build-freetype.*', 'scripts/build-harfbuzz.*', 'scripts/build-noto-sans-jp.*') }}
+          key: dependencies-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-image-${{ steps.runner-image.outputs.version }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/build-sdl.*', 'scripts/build-dawn.*', 'scripts/build-stb.*', 'scripts/build-freetype.*', 'scripts/build-harfbuzz.*', 'scripts/build-noto-sans-jp.*') }}
           restore-keys: |
+            dependencies-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-image-${{ steps.runner-image.outputs.version }}-
             dependencies-v${{ env.BUILD_CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ env.SWIFT_VERSION }}-
 
       - name: Build the games (debug)
