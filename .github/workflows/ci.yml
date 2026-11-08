@@ -47,6 +47,8 @@ jobs:
             libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev libusb-1.0-0-dev \
             libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
           sudo apt-get install --yes libx11-xcb-dev patchelf
+          # lavapipe, a Vulkan driver on the CPU, for tests that run shaders.
+          sudo apt-get install --yes mesa-vulkan-drivers
 
       # Only SDL, Dawn, stb, FreeType, HarfBuzz and Noto Sans JP, which CMake
       # builds or downloads, from what only the CMake files and their build

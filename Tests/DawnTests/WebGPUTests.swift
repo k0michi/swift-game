@@ -749,7 +749,10 @@ struct WebGPUTests {
     @MainActor
     func doublesNumbersOnTheGPU() async throws {
         let instance = try createInstance()
-        guard let adapter = try? await instance.requestAdapter() else { return }
+        // Without a GPU, as on CI, Dawn may answer with the null adapter.
+        guard let adapter = try? await instance.requestAdapter(), try adapter.getInfo().backendType != .null else {
+            return
+        }
         let device = try await adapter.requestDevice()
         let count = 100
         let values = (0..<UInt32(count)).map { $0 * 3 + 1 }
