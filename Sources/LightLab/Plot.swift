@@ -17,6 +17,8 @@ struct Plot {
     private var bodyDepth: Float { back - front }
 
     private static let maximumHeight: Float = 19
+    /// How far outside a lit window its light is.
+    private static let windowLightOffset: Float = 0.5
 
     init(width: Float, depth: Float) {
         self.width = width
@@ -69,6 +71,18 @@ struct Plot {
         slab(face, 0, 0.25, a0, a1, y0, y1, Materials.frame)
         slab(face, 0, 0.25, a0 + 0.125, a1 - 0.125, y0 + 0.125, y1 - 0.125, lit ? Materials.roomLight : Materials.frame)
         slab(face, 0, 0.125, a0 + 0.125, a1 - 0.125, y0 + 0.125, y1 - 0.125, Materials.glass)
+        guard lit else { return }
+        // The room's light, falling out of the window just outside it.
+        let along = (a0 + a1) / 2
+        let height = (y0 + y1) / 2
+        let (x, z): (Float, Float)
+        switch face {
+        case .front: (x, z) = (left + along, front - Self.windowLightOffset)
+        case .back: (x, z) = (left + along, back + Self.windowLightOffset)
+        case .left: (x, z) = (left - Self.windowLightOffset, front + along)
+        case .right: (x, z) = (right + Self.windowLightOffset, front + along)
+        }
+        light(x, height, z, color: 0xffd8a8, intensity: 1.5, radius: 4)
     }
 
     private mutating func rowOfWindows(
